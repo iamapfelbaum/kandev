@@ -50,6 +50,7 @@ const CAPTURE_X264RGB_THREADS = 3;
 const CAPTURE_X264_THREADS = 3;
 const ENCODER_PROBE_DURATION_MS = 3_000;
 const ENCODER_PROBE_STARTUP_ALLOWANCE_MS = 750;
+const BROWSER_CLOSE_TIMEOUT_MS = 2_000;
 const CAPTURE_CONTENT_BOUNDS = Object.freeze({
   maxVisibleDomTextRecords: 512,
   maxVisibleDomTextBytes: 65_536,
@@ -846,8 +847,64 @@ export async function startFfmpegRecorder({
   }
 }
 
-export async function connectCaptureBrowser({ chromiumApi, endpoint } = {}) {
+function browserIsDisconnected(browser) {
+  return (
+    typeof browser?.isConnected === "function" && !browser.isConnected()
+  );
+}
+
+function withDeadline(operation, timeoutMs, label) {
+  let timeout;
+  return Promise.race([
+    Promise.resolve().then(operation),
+    new Promise((_, reject) => {
+      timeout = setTimeout(
+        () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+        timeoutMs,
+      );
+    }),
+  ]).finally(() => clearTimeout(timeout));
+}
+
+async function waitForBrowserDisconnect(browser, timeoutMs) {
+  if (browserIsDisconnected(browser)) return true;
+  if (typeof browser?.once !== "function") {
+    await new Promise((resolve) => setTimeout(resolve, timeoutMs));
+    return browserIsDisconnected(browser);
+  }
+  return new Promise((resolve) => {
+    let timeout;
+    const finish = (disconnected) => {
+      clearTimeout(timeout);
+      if (typeof browser.off === "function") {
+        browser.off("disconnected", onDisconnected);
+      } else if (typeof browser.removeListener === "function") {
+        browser.removeListener("disconnected", onDisconnected);
+      }
+      resolve(disconnected);
+    };
+    const onDisconnected = () => finish(true);
+    browser.once("disconnected", onDisconnected);
+    timeout = setTimeout(
+      () => finish(browserIsDisconnected(browser)),
+      timeoutMs,
+    );
+  });
+}
+
+export async function connectCaptureBrowser({
+  chromiumApi,
+  endpoint,
+  closeTimeoutMs = BROWSER_CLOSE_TIMEOUT_MS,
+} = {}) {
   if (!chromiumApi) throw new Error("Playwright Chromium API is unavailable");
+  if (
+    !Number.isInteger(closeTimeoutMs) ||
+    closeTimeoutMs < 1 ||
+    closeTimeoutMs > 10_000
+  ) {
+    throw new Error("browser close timeout must be an integer from 1 to 10000ms");
+  }
   const browser = await chromiumApi.connectOverCDP(endpoint);
   const context = browser.contexts()[0];
   if (!context)
@@ -855,35 +912,72 @@ export async function connectCaptureBrowser({ chromiumApi, endpoint } = {}) {
   const pages = context.pages();
   const page = pages[0] ?? (await context.newPage());
   const cdp = await context.newCDPSession(page);
+  let closing;
   return {
     browser,
     context,
     page,
     cdp,
-    async close() {
-      let chromiumCloseError;
-      try {
-        await cdp.send("Browser.close");
-      } catch (error) {
-        chromiumCloseError = error;
-      }
-      await cdp.detach().catch(() => {});
-      let playwrightCloseError;
-      try {
-        await browser.close();
-      } catch (error) {
-        const disconnected =
-          typeof browser.isConnected === "function" &&
-          !browser.isConnected();
-        if (!disconnected) playwrightCloseError = error;
-      }
-      if (chromiumCloseError) {
-        throw new Error(
-          `Chromium Browser.close failed: ${chromiumCloseError.message}`,
-          { cause: chromiumCloseError },
-        );
-      }
-      if (playwrightCloseError) throw playwrightCloseError;
+    close() {
+      closing ??= (async () => {
+        let chromiumCloseError;
+        try {
+          await withDeadline(
+            () => cdp.send("Browser.close"),
+            closeTimeoutMs,
+            "Chromium Browser.close",
+          );
+        } catch (error) {
+          chromiumCloseError = error;
+        }
+        let disconnected = browserIsDisconnected(browser);
+        if (!disconnected && !chromiumCloseError) {
+          disconnected = await waitForBrowserDisconnect(
+            browser,
+            closeTimeoutMs,
+          );
+        }
+        if (disconnected) return;
+        let detachError;
+        try {
+          await withDeadline(
+            () => cdp.detach(),
+            closeTimeoutMs,
+            "CDP session detach",
+          );
+        } catch (error) {
+          detachError = error;
+        }
+        let playwrightCloseError;
+        if (!disconnected) {
+          try {
+            await withDeadline(
+              () => browser.close(),
+              closeTimeoutMs,
+              "Playwright browser close",
+            );
+          } catch (error) {
+            const closedDuringFallback = browserIsDisconnected(browser);
+            if (!closedDuringFallback) playwrightCloseError = error;
+          }
+        }
+        if (playwrightCloseError && (chromiumCloseError || detachError)) {
+          const errors = [chromiumCloseError, detachError, playwrightCloseError]
+            .filter(Boolean);
+          throw new AggregateError(
+            errors,
+            errors.map((error) => error.message).join("; "),
+          );
+        }
+        if (playwrightCloseError) throw playwrightCloseError;
+        if (chromiumCloseError) {
+          throw new Error(
+            `Chromium Browser.close failed: ${chromiumCloseError.message}`,
+            { cause: chromiumCloseError },
+          );
+        }
+      })();
+      return closing;
     },
   };
 }

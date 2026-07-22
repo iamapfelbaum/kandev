@@ -262,45 +262,58 @@ test("resolves Chromium from native ESM or Playwright CommonJS default interop",
   );
 });
 
-test("remote browser teardown asks Chromium to exit before Playwright disconnects", async () => {
+test("remote browser teardown returns after Chromium disconnects without awaiting stale sessions", async () => {
   const events = [];
   let connected = true;
+  let releaseDetach;
   const page = {};
   const cdp = {
     async send(method) {
       events.push(`send:${method}`);
       assert.equal(method, "Browser.close");
-      connected = false;
+      setTimeout(() => {
+        connected = false;
+        browser.emit("disconnected");
+      }, 5);
     },
     async detach() {
       events.push("detach");
-      throw new Error("Target page, context or browser has been closed");
+      await new Promise((resolve) => {
+        releaseDetach = resolve;
+      });
     },
   };
   const context = {
     pages: () => [page],
     newCDPSession: async () => cdp,
   };
-  const browser = {
+  const browser = Object.assign(new EventEmitter(), {
     contexts: () => [context],
     isConnected: () => connected,
     async close() {
       events.push("playwright:close");
-      throw new Error("Browser has been closed");
     },
-  };
+  });
   const connection = await connectCaptureBrowser({
     chromiumApi: { connectOverCDP: async () => browser },
     endpoint: "http://127.0.0.1:49261",
+    closeTimeoutMs: 50,
   });
 
-  await connection.close();
-
-  assert.deepEqual(events, [
-    "send:Browser.close",
-    "detach",
-    "playwright:close",
+  const closing = connection.close();
+  let timeout;
+  const outcome = await Promise.race([
+    closing.then(() => "closed"),
+    new Promise((resolve) => {
+      timeout = setTimeout(() => resolve("timed-out"), 20);
+    }),
   ]);
+  clearTimeout(timeout);
+  releaseDetach?.();
+  await closing;
+
+  assert.equal(outcome, "closed");
+  assert.deepEqual(events, ["send:Browser.close"]);
 });
 
 test("remote browser teardown surfaces a rejected Chromium close command", async () => {
@@ -340,6 +353,52 @@ test("remote browser teardown surfaces a rejected Chromium close command", async
     "detach",
     "playwright:close",
   ]);
+});
+
+test("remote browser teardown bounds stalled cleanup and remains idempotent", async () => {
+  const calls = { send: 0, detach: 0, close: 0 };
+  const page = {};
+  const cdp = {
+    async send() {
+      calls.send += 1;
+    },
+    async detach() {
+      calls.detach += 1;
+      return new Promise(() => {});
+    },
+  };
+  const context = {
+    pages: () => [page],
+    newCDPSession: async () => cdp,
+  };
+  const browser = {
+    contexts: () => [context],
+    isConnected: () => true,
+    async close() {
+      calls.close += 1;
+      return new Promise(() => {});
+    },
+  };
+  const connection = await connectCaptureBrowser({
+    chromiumApi: { connectOverCDP: async () => browser },
+    endpoint: "http://127.0.0.1:49261",
+    closeTimeoutMs: 5,
+  });
+
+  const first = connection.close();
+  const second = connection.close();
+  assert.equal(first, second);
+  const outcome = await Promise.race([
+    first.then(
+      () => "unexpected-success",
+      (error) => error,
+    ),
+    new Promise((resolve) => setTimeout(() => resolve("timed-out"), 50)),
+  ]);
+
+  assert.notEqual(outcome, "timed-out");
+  assert.match(outcome.message, /browser close timed out/i);
+  assert.deepEqual(calls, { send: 1, detach: 1, close: 1 });
 });
 
 test("encoder readiness plan amortizes cold startup while proving sustained full-source throughput", () => {
