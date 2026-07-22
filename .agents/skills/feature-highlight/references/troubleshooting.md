@@ -58,6 +58,38 @@ intent or runtime source; never patch delivery bytes or provenance after QA.
 - player crops controls: reject `cover` behavior; verify actual responsive source
   and native mobile selection.
 
+## Runtime, Recovery, And Trust Errors
+
+- origin mismatch or popup violation: capture must remain on the seeded app
+  origin and must not open a popup. Fix the declared route/action or product
+  flow; do not broaden navigation policy, inject a redirect, or crop evidence.
+- build mismatch: preserve `runtime-builds/<run-id>` and compare its manifest
+  with runtime request/capture receipts. Rebuild from the selected source; do
+  not reuse an output directory from another checkout.
+- source mismatch: stop. For `pr_head`, checked-out HEAD and selected PR head
+  must match; for `current_main`, HEAD and freshly fetched `origin/main` must
+  match. Never relabel the captured SHA.
+- lock conflict: first verify whether the recorded process still owns the lock.
+  Let owned teardown finish; remove only a proven stale, attempt-local lock.
+  Never delete another run's lock or kill an unowned process.
+- host failure: inspect `runtime-host/<run-id>/failure.json`, `result.json`, the
+  bounded host log, worker result, and teardown receipt. Fix the first failed
+  invariant before a capture retry; a capture retry always uses a new run ID.
+- retry after capture succeeded: keep the run ID and execute the printed
+  render/QA/stage recovery command. Do not recapture when only a downstream
+  landing encoder, media probe, browser QA, or stage step failed.
+- run selection failure: more than one attempt exists. Choose the intended
+  immutable attempt with `--run-id <run-id>`; never guess by modification time.
+- stage tamper failure: a path, byte count, digest, contract, or report changed
+  after staging. Restore the exact external evidence or rerun the affected
+  phase; do not edit `review.json` or recompute one field by hand.
+- scan finding: inspect the redacted rule and covered source, remove the
+  sensitive fixture/content at seed or product source, then recapture or rerun
+  the required phase. Never suppress mandatory built-in rules.
+- mobile mismatch: desktop and native-mobile reviews disagree on delivery,
+  source, seed, runtime/tool, or landing identity. Rebuild the incorrect native
+  form; never pair unrelated reviews or relabel desktop media.
+
 ## Source Gate And Stage Errors
 
 - `current_main requires HEAD ... to equal origin/main`: fetch, build clean

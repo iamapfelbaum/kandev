@@ -1,13 +1,49 @@
 # Authoring A Highlight Scenario
 
 Scenario is checked-in intent. Raw captures and QA remain disposable external
-artifacts. Start from scaffold example
-`scripts/highlights/examples/quick-start.scenario.json`;
-validate against `scripts/highlights/scenario.schema.json` and use
-`scripts/highlights/scenario.d.ts` when generating typed tooling.
-Executable integration fixture is
-`apps/web/e2e/highlights/quick-start.scenario.json`, exercised by
-`cd apps/web && pnpm e2e:highlight-capture`.
+artifacts. For the exact canonical executable story, run:
+
+```bash
+node scripts/highlights.mjs scaffold ./quick-start.scenario.json --template quick-start
+```
+
+`--template quick-start` is canonical and cannot override identity or delivery
+metadata. `--id`, `--title`, and `--profile` are rejected and not accepted with
+that template, even when the supplied value would equal the canonical value.
+Use the separate general scaffold for customization:
+
+```bash
+node scripts/highlights.mjs scaffold ./my-highlight.scenario.json --id my-highlight --title "My highlight" --profile desktop
+```
+
+The checked template is
+`scripts/highlights/examples/quick-start.scenario.json`; validate against
+`scripts/highlights/scenario.schema.json` and use
+`scripts/highlights/scenario.d.ts` when generating typed tooling. Executable
+runtime fixture is `apps/web/e2e/highlights/quick-start.scenario.json`.
+The forthcoming canonical integration/eval command is
+`pnpm e2e:highlight-pipeline`. App-local `e2e:highlight-capture` is a lower-level
+runtime contract test, not the authoring or production pipeline entry point.
+
+## Runtime And Source
+
+`capture` and `run` default to the only closed runtime,
+`kandev-isolated-e2e`. Pass `--runtime kandev-isolated-e2e` explicitly in
+durable instructions. The allowlisted runtime, seed recipe, route, profiles,
+primitives, and scanner coverage are checked in at
+`scripts/highlights/runtime-catalog.mjs`; an unknown ID fails before capture.
+
+Feature work uses `--source pr_head`. Its checked-out HEAD must match the
+selected head SHA. Pass `--pr-number <number>` and
+`--pr-base-sha <40-char-sha>`, or let the tool resolve the same values with
+`gh pr view`; mismatched PR/head metadata fails. `--source current_main` is only
+for deliberate backfill from a clean checkout equal to freshly fetched
+`origin/main`.
+
+Pass `--landing-root <landing-repo>` when the compatible checkout is not the
+configured default. Every real capture gets a unique automatic run ID. An
+explicit safe `--run-id` is useful for deterministic evaluation and is required
+to select recovery input when an artifact root contains multiple runs.
 
 ## Top-Level Shape
 
@@ -106,22 +142,22 @@ product setup.
 
 ## Actions
 
-| Kind | Intent | Key fields |
-| --- | --- | --- |
-| `click` | Smooth cursor arrival, then trusted activation | `target`, optional `button`, `clickCount`, `cursorDurationMs`, `settleMs` |
-| `type` | Focus by real input, optionally clear, then type | `target`, `text`, `clear`, `keystrokeDelayMs` |
-| `press` | Press key on semantic target | `target`, `key` |
-| `hover` | Smooth trusted pointer travel and hover | `target`, `durationMs` |
-| `moveCursor` | Move pointer without activation | `target`, `durationMs`, `easing` |
-| `waitForVisible` | Zero-duration assertion that target is visible | `target`, failure-bound `timeoutMs` |
-| `waitForState` | Zero-duration assertion of attached/detached/visible/hidden/enabled/disabled/checked/unchecked | `target`, `state`, failure-bound `timeoutMs` |
-| `drag` | Smooth approach and real drag between targets | `from`, `to`, `approachDurationMs`, `durationMs` |
-| `pause` | Readable source hold | `durationMs` |
-| `cameraFocus` | Pan to semantic target at current depth | `target`, `durationMs` |
-| `cameraZoom` | Explicitly change depth around current focus | `zoom`, `durationMs` |
-| `cameraHold` | Hold identical camera state | `durationMs` |
-| `cameraReturn` | Return to centered 1x identity | `durationMs` |
-| `extension` | Allowlisted narrow primitive | `primitiveId`, JSON `input` |
+| Kind             | Intent                                                                                         | Key fields                                                                |
+| ---------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `click`          | Smooth cursor arrival, then trusted activation                                                 | `target`, optional `button`, `clickCount`, `cursorDurationMs`, `settleMs` |
+| `type`           | Focus by real input, optionally clear, then type                                               | `target`, `text`, `clear`, `keystrokeDelayMs`                             |
+| `press`          | Press key on semantic target                                                                   | `target`, `key`                                                           |
+| `hover`          | Smooth trusted pointer travel and hover                                                        | `target`, `durationMs`                                                    |
+| `moveCursor`     | Move pointer without activation                                                                | `target`, `durationMs`, `easing`                                          |
+| `waitForVisible` | Zero-duration assertion that target is visible                                                 | `target`, failure-bound `timeoutMs`                                       |
+| `waitForState`   | Zero-duration assertion of attached/detached/visible/hidden/enabled/disabled/checked/unchecked | `target`, `state`, failure-bound `timeoutMs`                              |
+| `drag`           | Smooth approach and real drag between targets                                                  | `from`, `to`, `approachDurationMs`, `durationMs`                          |
+| `pause`          | Readable source hold                                                                           | `durationMs`                                                              |
+| `cameraFocus`    | Pan to semantic target at current depth                                                        | `target`, `durationMs`                                                    |
+| `cameraZoom`     | Explicitly change depth around current focus                                                   | `zoom`, `durationMs`                                                      |
+| `cameraHold`     | Hold identical camera state                                                                    | `durationMs`                                                              |
+| `cameraReturn`   | Return to centered 1x identity                                                                 | `durationMs`                                                              |
+| `extension`      | Allowlisted narrow primitive                                                                   | `primitiveId`, JSON `input`                                               |
 
 Wait actions reserve `0ms` in storyboard. `timeoutMs` only caps assertion
 failure; it never becomes recorded hold time. Seed state so waits resolve within
@@ -164,5 +200,6 @@ semantic subject, `cameraZoom` only when explicit depth improves readability,
   never chases pointer micro-jitter or moves against active cursor travel.
 
 The compiler emits sequential intent for landing's shared
-`scripts/product-loop-highlight.mjs` adapter. Do not hand-author keyframes or
-copy the landing camera implementation into Kandev.
+`scripts/product-loop-highlight.mjs` adapter. The landing adapter owns both
+camera compilation and encoding. Do not hand-author keyframes or copy its
+camera/encoder implementation into Kandev.

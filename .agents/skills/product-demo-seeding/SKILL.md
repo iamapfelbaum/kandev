@@ -14,6 +14,10 @@ schema-v1 scenario, not a temporary bespoke harness. Use
 `scripts/highlights/scenario.schema.json` and scaffold example
 `scripts/highlights/examples/quick-start.scenario.json`; use
 `apps/web/e2e/highlights/quick-start.scenario.json` as executable fixture.
+`scaffold --template quick-start` preserves that canonical fixture identity and
+does not accept `--id`, `--title`, or `--profile`; use the general `--id`
+scaffold for customization. The only closed runtime and default is
+`kandev-isolated-e2e`, registered by `scripts/highlights/runtime-catalog.mjs`.
 Express deterministic state as `seed.recipe` plus allowlisted
 `setup.primitives`, and visible work as stable semantic selectors in
 `story.actions`.
@@ -22,6 +26,8 @@ This skill supplies seed design and isolation. `/feature-highlight` owns
 validation, storyboard, capture, render, automatic QA, external staging, and
 immutable promotion. Continue with manual handoff to `/product-video-capture`
 only for long-form or currently unmodeled media outside the short Highlight DSL.
+The forthcoming full fresh-agent eval is `pnpm e2e:highlight-pipeline`;
+app-local `e2e:highlight-capture` is only a lower-level runtime fixture test.
 
 Feature-PR Highlights use exact clean `pr_head` provenance so scenario and media
 ship with reviewed code. The current-main gate below applies to deliberate

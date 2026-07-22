@@ -15,10 +15,16 @@ camera JSON, encoder wrappers, and manual promotion. Review storyboard before
 capture, then use:
 
 ```bash
-node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --source pr_head
-node scripts/highlights.mjs promote /external/highlights/my-highlight/<id>/stages/<review-digest>/review.json --accept-reviewed-by reviewer-42 --dry-run
-node scripts/highlights.mjs promote /external/highlights/my-highlight/<id>/stages/<review-digest>/review.json --accept-reviewed-by reviewer-42
+node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights --source pr_head --pr-number 123 --pr-base-sha <40-char-sha> --landing-root <landing-repo> --runtime kandev-isolated-e2e
+node scripts/highlights.mjs promote /external/highlights/<id>/stages/<manifest-digest>/review.json --accept-reviewed-by reviewer-42 --dry-run
+node scripts/highlights.mjs promote /external/highlights/<id>/stages/<manifest-digest>/review.json --accept-reviewed-by reviewer-42
 ```
+
+`kandev-isolated-e2e` is the only closed Highlight runtime and the default;
+`scripts/highlights/runtime-catalog.mjs` is its allowlist. Use
+`pnpm e2e:highlight-pipeline` as the forthcoming canonical fresh-agent
+integration/eval. App-local `e2e:highlight-capture` remains a lower-level
+runtime fixture test.
 
 Raw and QA stay outside repositories in content-addressed staging. A
 `technical_pass` review is not promotable until the stable reviewer ID is
@@ -36,14 +42,14 @@ unmodeled capture work that cannot fit the validated Highlight action DSL.
 
 ## Choose Deliverable
 
-| Request | Path |
-| --- | --- |
-| Short release Highlight | Seed with `/product-demo-seeding`, then use `/feature-highlight` |
-| New long-form feature/story | Seed with `/product-demo-seeding`, then capture desktop and mobile masters manually |
-| Different zoom/crop/pacing | Invoke `/product-demo-seeding` to re-prove source/isolation/provenance, then reuse an approved raw master and change camera config only |
-| New poster/static image | Extract a settled pointer-free frame from approved master or recapture native screenshot |
-| Longer walkthrough | Keep continuous 1x source; add a tested delivery profile instead of speed ramps |
-| Actual GIF required | Derive from approved video last; retain WebM/MP4 as primary web formats |
+| Request                     | Path                                                                                                                                    |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Short release Highlight     | Seed with `/product-demo-seeding`, then use `/feature-highlight`                                                                        |
+| New long-form feature/story | Seed with `/product-demo-seeding`, then capture desktop and mobile masters manually                                                     |
+| Different zoom/crop/pacing  | Invoke `/product-demo-seeding` to re-prove source/isolation/provenance, then reuse an approved raw master and change camera config only |
+| New poster/static image     | Extract a settled pointer-free frame from approved master or recapture native screenshot                                                |
+| Longer walkthrough          | Keep continuous 1x source; add a tested delivery profile instead of speed ramps                                                         |
+| Actual GIF required         | Derive from approved video last; retain WebM/MP4 as primary web formats                                                                 |
 
 ## Pipeline
 

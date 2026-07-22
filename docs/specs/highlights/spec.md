@@ -69,6 +69,20 @@ targets, registered seed recipes, allowlisted setup/extensions, bounded actions,
 and sequential camera intent. Inline shell, JavaScript, CSS, XPath, raw
 coordinates, and unregistered callbacks are outside contract.
 
+`scaffold --template quick-start` copies the canonical example byte-for-byte.
+Its identity, desktop profile, seed, story, and delivery metadata are pinned;
+`--id`, `--title`, and `--profile` cannot override it. General scaffolding uses
+`--id` plus optional `--title`/`--profile` and is the customization path.
+
+Capture and `run` default to the only closed runtime,
+`kandev-isolated-e2e`, registered in
+`scripts/highlights/runtime-catalog.mjs`. The catalog is authoritative for
+profiles, seed recipes, routes, primitives, and sensitive-scan coverage. Feature
+delivery uses exact `pr_head` plus PR number/base SHA; its selected head SHA must
+match checked-out HEAD. `current_main` is deliberate backfill and requires a
+clean checkout equal to freshly fetched `origin/main`. A selected clean landing
+root supplies the camera/encoder adapter contract.
+
 No camera directive means centered 1x identity. `cameraFocus` pans at current
 depth; `cameraZoom` is the only depth change; `cameraHold` preserves state;
 `cameraReturn` restores identity. Camera and cursor timelines are independent.
@@ -143,16 +157,46 @@ acceleration, jerk, and zoom rate are validated.
 ## Media workflow
 
 `run` executes validate, storyboard, capture, render, QA, then external stage in
-that order. Storyboard and `--dry-run` are cheap gates before recording. Raw
-masters, logs, keyframes, contact sheets, browser evidence, and full QA remain
-under a content-addressed artifact root outside repository. `review.json` pins
-scenario, source, seed, capture, report, review, and delivery hashes/bytes while
-remaining non-promotable until explicit human acceptance.
+that order. Storyboard and `--dry-run` are cheap gates before recording; dry-run
+has zero writes and does not build or reserve an attempt. Every capture receives
+a unique run ID and writes this recoverable external tree:
+
+```text
+<artifact-root>/
+├── runtime-builds/<run-id>/
+├── runtime-host/<run-id>/
+└── <id>/
+    ├── runs/<run-id>/
+    │   ├── evidence/
+    │   ├── capture/
+    │   ├── render/
+    │   └── qa/
+    └── stages/<manifest-digest>/review.json
+```
+
+Render, QA, and stage recover from the same successful capture with explicit
+`--run-id`; multiple runs require selection. Capture retry uses a fresh run ID,
+preserving failed evidence. Raw masters, runtime/console/DOM logs, keyframes,
+contact sheets, browser evidence, and full QA remain outside the repository.
+`review.json` pins scenario, source, seed, capture, report, review, and delivery
+hashes/bytes while remaining non-promotable until explicit human acceptance.
+
+Automatic QA covers schema/selectors/timing, duration/FPS/dimensions/audio,
+codec/faststart, exact hashes/bytes, pointer and glyph containment, camera
+velocity/acceleration/jerk/zoom rate/safe margins, opening/end settle,
+keyframes/contact sheet, and browser playback. Sensitive scanning truthfully
+declares `metadata: true`, `visibleDomText: true`, `browserConsole: true`,
+`runtimeLogs: false`, and `renderedPixelOcr: false`. Human visual review remains
+required; compact provenance stores coverage, results, and evidence digests,
+not raw DOM/logs/masters/QA.
 
 Promotion is a separate explicit operation. It requires `--accept-reviewed-by`,
 rechecks all bytes and digests, refuses existing revision/destination collisions,
 copies to a temporary destination, validates catalog, and swaps only after
-success. A required native-mobile form is passed with `--mobile-review`; pair
+success. Normal CLI promotion accepts only
+`kandev-highlight-review-stage-v2`; legacy stage input has no CLI route.
+`technical_pass` is never promotable. A required native-mobile form is passed
+with `--mobile-review`; pair
 identity is exact and profiles are never relabeled. Only explicitly accepted
 delivery media, scenarios, and compact provenance enter Git.
 
@@ -161,17 +205,18 @@ delivery media, scenarios, and compact provenance enter Git.
 The stable CLI contract is:
 
 ```bash
-node scripts/highlights.mjs scaffold ./my-highlight.scenario.json --id my-highlight
+node scripts/highlights.mjs scaffold ./quick-start.scenario.json --template quick-start
+node scripts/highlights.mjs scaffold ./my-highlight.scenario.json --id my-highlight --title "My highlight" --profile desktop
 node scripts/highlights.mjs validate ./my-highlight.scenario.json --dry-run
 node scripts/highlights.mjs storyboard ./my-highlight.scenario.json --dry-run
-node scripts/highlights.mjs capture ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --source pr_head --dry-run
-node scripts/highlights.mjs render ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --dry-run
-node scripts/highlights.mjs qa ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --dry-run
-node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --source pr_head --dry-run
-node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --source pr_head
-node scripts/highlights.mjs promote /external/stages/<digest>/review.json --accept-reviewed-by reviewer-42 --dry-run
-node scripts/highlights.mjs promote /external/stages/<digest>/review.json --accept-reviewed-by reviewer-42
-# Add `--mobile-review /external/mobile-stages/<digest>/review.json` when mobileRequired is true.
+node scripts/highlights.mjs capture ./my-highlight.scenario.json --artifact-root /external/highlights --source pr_head --pr-number 123 --pr-base-sha <40-char-sha> --landing-root <landing-repo> --runtime kandev-isolated-e2e --dry-run
+node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights --source pr_head --pr-number 123 --pr-base-sha <40-char-sha> --landing-root <landing-repo> --runtime kandev-isolated-e2e
+node scripts/highlights.mjs render ./my-highlight.scenario.json --artifact-root /external/highlights --landing-root <landing-repo> --run-id <run-id>
+node scripts/highlights.mjs qa ./my-highlight.scenario.json --artifact-root /external/highlights --landing-root <landing-repo> --run-id <run-id>
+node scripts/highlights.mjs stage ./my-highlight.scenario.json --artifact-root /external/highlights --run-id <run-id>
+node scripts/highlights.mjs promote /external/highlights/<id>/stages/<manifest-digest>/review.json --accept-reviewed-by reviewer-42 --dry-run
+node scripts/highlights.mjs promote /external/highlights/<id>/stages/<manifest-digest>/review.json --accept-reviewed-by reviewer-42
+# Add `--mobile-review /external/mobile/<id>/stages/<manifest-digest>/review.json` when mobileRequired is true.
 node scripts/validate-highlights.mjs
 node scripts/highlight-source-digest.mjs docs/public/media/highlights/my-highlight
 node scripts/promote-highlight.mjs docs/public/media/highlights/my-highlight
@@ -180,19 +225,23 @@ node scripts/activate-highlights-release.mjs 0.20.0
 node scripts/highlight-pr-snippet.mjs docs/public/media/highlights/my-highlight <40-char-sha>
 ```
 
+The forthcoming canonical fresh-agent executable evaluation is
+`pnpm e2e:highlight-pipeline`. The app-local `e2e:highlight-capture` command is a
+lower-level runtime fixture test and is not a substitute for the pipeline eval.
+
 `validate-public-docs.mjs` also validates the Highlights tree when present.
 The opt-in GitHub workflow runs the PR gate on pull-request label and head
 changes. Release tooling never rewrites prior history entries.
 
 ## Implementation status
 
-Content lifecycle, scenario schema/validation/storyboard, execution contracts,
-landing adapter boundary, QA/staging contracts, and immutable promotion live in
-checked-in modules under `scripts/highlights`. Runtime capture still depends on
-a clean eligible Kandev source, isolated app fixture, Chrome/Xvfb, FFmpeg,
-Playwright, and a clean compatible landing checkout. Documentation does not
-assert a successful capture: each run must pass its source gate, dry-run,
-executable integration/eval, automatic QA, and human review.
+Content lifecycle, scenario schema/validation/storyboard, the closed runtime
+catalog/host boundary, recovery, landing adapter boundary, QA/staging contracts,
+and immutable promotion live in checked-in modules under `scripts/highlights`.
+Runtime capture depends on a clean eligible Kandev source, isolated app fixture,
+Chrome/Xvfb, FFmpeg, Playwright, and a clean compatible landing checkout. A run
+is successful only after source/build/runtime binding, executable integration,
+automatic QA, and human review pass.
 
 Use `pr_head` for feature-PR delivery. `current_main` exists only for deliberate
 backfill from a clean checkout proven equal to freshly fetched `origin/main`.

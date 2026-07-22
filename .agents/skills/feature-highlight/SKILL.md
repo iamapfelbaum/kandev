@@ -12,14 +12,28 @@ camera JSON, encoder wrapper, or promotion copy command.
 
 1. Invoke `/product-demo-seeding`. Pick a deterministic seed recipe and prove
    current source, isolation, reset, and teardown ownership.
-2. Scaffold beside durable feature docs or another reviewed source location:
+2. Scaffold beside durable feature docs or another reviewed source location.
+   Use the canonical executable story unchanged when evaluating the pipeline:
 
    ```bash
-   node scripts/highlights.mjs scaffold ./my-highlight.scenario.json --id my-highlight --profile desktop
+   node scripts/highlights.mjs scaffold ./quick-start.scenario.json --template quick-start
    ```
 
-3. Replace placeholders using
-   [authoring.md](references/authoring.md) and scaffold example
+   The `quick-start` template has pinned identity and delivery metadata.
+   `--template quick-start` does not accept `--id`, `--title`, or `--profile`;
+   those flags cannot override the canonical fixture. For a general story, use
+   the customizable scaffold instead:
+   - `--template quick-start` with `--id` is rejected and cannot override ID.
+   - `--template quick-start` with `--title` is rejected and cannot override title.
+   - `--template quick-start` with `--profile` is rejected and cannot override profile.
+
+   ```bash
+   node scripts/highlights.mjs scaffold ./my-highlight.scenario.json --id my-highlight --title "My highlight" --profile desktop
+   ```
+
+3. Leave the canonical quick-start bytes unchanged. For a general scaffold,
+   replace its placeholders using [authoring.md](references/authoring.md) and
+   compare structure with
    `scripts/highlights/examples/quick-start.scenario.json`.
 4. Validate and inspect the cheap timeline before recording:
 
@@ -32,9 +46,16 @@ camera JSON, encoder wrapper, or promotion copy command.
    new artifact root outside every repository:
 
    ```bash
-   node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --source pr_head --dry-run
-   node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --source pr_head
+   node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights --source pr_head --pr-number 123 --pr-base-sha <40-char-sha> --landing-root <landing-repo> --runtime kandev-isolated-e2e --dry-run
+   node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights --source pr_head --pr-number 123 --pr-base-sha <40-char-sha> --landing-root <landing-repo> --runtime kandev-isolated-e2e
    ```
+
+   The default is the only closed runtime: `kandev-isolated-e2e`. Showing
+   `--runtime kandev-isolated-e2e` makes that trust boundary explicit. It owns
+   the registered seed, route, profiles, primitives, and scanner coverage in
+   `scripts/highlights/runtime-catalog.mjs`. `--landing-root` selects the clean
+   compatible landing checkout whose adapter owns camera compilation and
+   encoding.
 
    `run` validates, storyboards, captures, renders, runs automatic QA, then
    writes a content-addressed technical review bundle with `review.json` under
@@ -46,11 +67,11 @@ camera JSON, encoder wrapper, or promotion copy command.
    Promotion stays separate. After explicit acceptance:
 
    ```bash
-   node scripts/highlights.mjs promote /external/highlights/my-highlight/my-highlight/stages/<review-digest>/review.json --accept-reviewed-by reviewer-42 --dry-run
-   node scripts/highlights.mjs promote /external/highlights/my-highlight/my-highlight/stages/<review-digest>/review.json --accept-reviewed-by reviewer-42
+   node scripts/highlights.mjs promote /external/highlights/my-highlight/stages/<manifest-digest>/review.json --accept-reviewed-by reviewer-42 --dry-run
+   node scripts/highlights.mjs promote /external/highlights/my-highlight/stages/<manifest-digest>/review.json --accept-reviewed-by reviewer-42
    ```
 
-   `technical_pass` is never approval and cannot promote alone. The stable
+   `technical_pass` is never approval and is never promotable alone. The stable
    reviewer ID is recorded in descriptor and compact provenance. Promotion
    creates one immutable revision and refuses overwrite or revision collision.
 
@@ -66,19 +87,25 @@ camera JSON, encoder wrapper, or promotion copy command.
 Use these for recovery or focused diagnosis; do not change their order:
 
 ```bash
-node scripts/highlights.mjs capture ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --source pr_head --dry-run
-node scripts/highlights.mjs render ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --dry-run
-node scripts/highlights.mjs qa ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --dry-run
+node scripts/highlights.mjs capture ./my-highlight.scenario.json --artifact-root /external/highlights --source pr_head --pr-number 123 --pr-base-sha <40-char-sha> --landing-root <landing-repo> --runtime kandev-isolated-e2e --dry-run
+node scripts/highlights.mjs render ./my-highlight.scenario.json --artifact-root /external/highlights --landing-root <landing-repo> --run-id <run-id> --dry-run
+node scripts/highlights.mjs qa ./my-highlight.scenario.json --artifact-root /external/highlights --landing-root <landing-repo> --run-id <run-id> --dry-run
+node scripts/highlights.mjs stage ./my-highlight.scenario.json --artifact-root /external/highlights --run-id <run-id> --dry-run
 ```
 
 `storyboard` always runs before expensive capture. Static `--dry-run` resolves
-schema, timeline, profiles, stage paths, and planned commands without recording,
-encoding, promoting, or overwriting files. Selector resolution and app-state
-checks occur only when a seeded app runtime is available to that dry run.
+schema, timeline, profiles, source plan, runtime, run ID, exact paths, and planned
+commands with zero writes. It does not build, reserve a run, record, encode,
+stage, promote, or overwrite. Selector resolution and app-state checks occur in
+the trusted runtime during real capture.
 
-Use `--source pr_head` for feature work: exact clean PR head stays with scenario
-and delivery changes. `--source current_main` is only a deliberate backfill from
-a clean checkout proven equal to freshly fetched `origin/main`.
+Use `--source pr_head` for feature work. It binds checked-out HEAD: it must match
+the selected head SHA. Supply `--pr-number` and `--pr-base-sha` explicitly, or
+allow exact `gh pr view` lookup. Use `--source current_main` only for deliberate
+backfill from a clean checkout equal to freshly fetched `origin/main`. A new
+capture gets a unique automatic run ID. Preserve the printed ID; use explicit
+`--run-id` for render/QA/stage recovery and whenever more than one run exists.
+A unique automatic run ID is printed; use `--run-id` to select recovery input.
 
 ## Hard Contracts
 
@@ -86,6 +113,10 @@ a clean checkout proven equal to freshly fetched `origin/main`.
   `scripts/highlights/scenario.d.ts`; checked example:
   `scripts/highlights/examples/quick-start.scenario.json`; executable E2E fixture:
   `apps/web/e2e/highlights/quick-start.scenario.json`.
+- Runtime catalog: `scripts/highlights/runtime-catalog.mjs`. The canonical
+  end-to-end integration/eval entry point is forthcoming as
+  `pnpm e2e:highlight-pipeline`; app-local `e2e:highlight-capture` remains only
+  a lower-level runtime contract test, not the production pipeline command.
 - Stable selectors only: `testId`, or role plus exact accessible name. No CSS,
   XPath, coordinates, regex names, or arbitrary code.
 - Default without camera directives is centered 1x identity: no zoom. Camera

@@ -7,22 +7,57 @@ Run validation and storyboard before capture:
 ```bash
 node scripts/highlights.mjs validate ./my-highlight.scenario.json --dry-run
 node scripts/highlights.mjs storyboard ./my-highlight.scenario.json --format markdown --dry-run
-node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --source pr_head --dry-run
+node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights --source pr_head --pr-number 123 --pr-base-sha <40-char-sha> --landing-root <landing-repo> --runtime kandev-isolated-e2e --dry-run
 ```
 
 Review story order, planned duration, seed/setup, exact profile, selector intent,
 cursor journeys, default identity camera, explicit camera directives, output
-paths, and source gate. Static dry-run does not promise live selector resolution;
-runtime-backed rehearsal adds it when seeded app is available. Dry-run writes no
-raw, delivery, QA, repository media, or descriptor.
+paths, source gate, and allocated run ID. `--dry-run` performs zero writes: it
+does not build, reserve directories, capture, render, stage, or modify Git. Live
+selector resolution happens only in the trusted runtime during real capture.
 
 ## Content-Addressed Stage
 
-Use a unique artifact root outside Kandev and landing repositories. Pipeline
-creates recoverable attempts there and gives a technically passing candidate a
-content-addressed review directory keyed by manifest digest. External stage keeps
-raw masters and QA reports together; failed attempts remain diagnosable without
-dirtying Git.
+Use one artifact root outside Kandev and landing repositories. A capture gets a
+unique automatic run ID; an explicitly supplied run ID must also be new. The
+exact external tree is:
+
+```text
+<artifact-root>/
+├── runtime-builds/<run-id>/
+├── runtime-host/<run-id>/
+└── <id>/
+    ├── runs/<run-id>/
+    │   ├── evidence/
+    │   ├── capture/
+    │   ├── render/
+    │   └── qa/
+    └── stages/<manifest-digest>/review.json
+```
+
+In path form those roots are `runtime-builds/<run-id>`,
+`runtime-host/<run-id>`, `<id>/runs/<run-id>/evidence`,
+`<id>/runs/<run-id>/capture`, `<id>/runs/<run-id>/render`,
+`<id>/runs/<run-id>/qa`, and `<id>/stages/<manifest-digest>/review.json`.
+The content-addressed `<id>/stages/<manifest-digest>/review.json` is keyed by
+the stage manifest digest. Failed attempts remain diagnosable without dirtying
+Git, and no phase overwrites an existing immutable file.
+
+## Resume And Recover
+
+Capture is not resumed in place. A capture retry uses a fresh run ID so the
+failed run remains evidence. Once capture succeeds, resume the same attempt:
+
+```bash
+node scripts/highlights.mjs render ./my-highlight.scenario.json --artifact-root /external/highlights --landing-root <landing-repo> --run-id <run-id>
+node scripts/highlights.mjs qa ./my-highlight.scenario.json --artifact-root /external/highlights --landing-root <landing-repo> --run-id <run-id>
+node scripts/highlights.mjs stage ./my-highlight.scenario.json --artifact-root /external/highlights --run-id <run-id>
+```
+
+Each error prints an actionable next command. With one recoverable attempt the
+phase may select it automatically; with multiple runs, run selection is
+ambiguous and `--run-id` is required. Preserve a failed run or attempt until its
+host, phase, and teardown evidence explains the failure.
 
 Expected evidence includes scenario and capture digests, semantic cursor ledger,
 camera plan/config, raw master, WebM/MP4/WebP delivery candidates, probes,
@@ -52,6 +87,23 @@ Raw masters, full QA, browser logs, and contact sheets stay external.
 - exact scenario, seed, source, landing, capture, report, stage, and delivery
   provenance.
 
+Scanner coverage is truthful and bound to the closed runtime catalog:
+
+| Surface            | Covered |
+| ------------------ | ------- |
+| `metadata`         | `true`  |
+| `visibleDomText`   | `true`  |
+| `browserConsole`   | `true`  |
+| `runtimeLogs`      | `false` |
+| `renderedPixelOcr` | `false` |
+
+Raw visible DOM text and browser console logs remain outside Git in external
+evidence. Runtime-host logs, masters, and full QA stay there too. OCR is not covered and
+`renderedPixelOcr: false` means no pixel OCR claim is made. Compact provenance
+stores scanner coverage, result status, and evidence digests only. A passing
+scan is necessary; human review is mandatory and required because neither the
+scanner nor browser probes can judge the complete visual story.
+
 `technical_pass` is necessary, not approval, and never permits promotion alone.
 Reviewer watches full loop and checks
 opening context, action legibility, cursor continuity, calm ending, native mobile
@@ -64,8 +116,8 @@ manufacture acceptance.
 Promotion is separate from capture and requires explicit acceptance:
 
 ```bash
-node scripts/highlights.mjs promote /external/highlights/my-highlight/<id>/stages/<review-digest>/review.json --accept-reviewed-by reviewer-42 --dry-run
-node scripts/highlights.mjs promote /external/highlights/my-highlight/<id>/stages/<review-digest>/review.json --accept-reviewed-by reviewer-42
+node scripts/highlights.mjs promote /external/highlights/<id>/stages/<manifest-digest>/review.json --accept-reviewed-by reviewer-42 --dry-run
+node scripts/highlights.mjs promote /external/highlights/<id>/stages/<manifest-digest>/review.json --accept-reviewed-by reviewer-42
 ```
 
 The reviewer ID uses stable lowercase ID/email-safe characters, not a display
@@ -73,8 +125,11 @@ name. `promote --dry-run` re-reads every source, capture, QA, and asset digest
 and validates acceptance and pairing without creating a destination or lock.
 Real promotion uses copy-validate-swap. It creates an immutable revision once,
 refuses overwrite or collision, validates catalog before swap, and leaves no
-partial destination on failure. Legacy already-accepted `stage.json` manifests
-remain readable, but new `run` output is always a non-promotable review bundle.
+partial destination on failure. Normal CLI promote only accepts the exact `kandev-highlight-review-stage-v2` contract.
+Legacy accepted-stage-v1 data may
+remain programmatically readable for migration, but legacy input has no CLI
+promotion route and is never accepted by normal `promote`. New `run` output is
+always a non-promotable review-stage-v2 bundle.
 
 ## Native-Mobile Pairing
 

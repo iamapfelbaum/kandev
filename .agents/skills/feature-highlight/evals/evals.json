@@ -3,19 +3,22 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Act as a fresh agent. Scaffold and render a deterministic eight-second desktop Highlight that creates one task. Show me the scenario shape, cheap storyboard review, dry-run, external stage review, and separate promotion command. I do not want custom capture, camera, or encoder scripts.",
-      "expected_output": "A schema-v1 scenario flow using stable semantic selectors, deterministic seed/setup, exact desktop profile, no zoom by default, storyboard before capture, one run command through technical QA into a content-addressed review bundle, then a separate explicit reviewer-acceptance promotion dry-run and collision-refusing promotion.",
+      "prompt": "Act as a fresh agent. Use `--template quick-start` to scaffold and render the canonical deterministic desktop Highlight that creates one task. Show cheap storyboard review, a zero-write dry-run, the explicit closed runtime and PR source proof, recoverable run selection, external review-stage-v2 evidence, and separate promotion. I do not want custom capture, camera, or encoder scripts.",
+      "expected_output": "A schema-v1 flow where the canonical quick-start cannot override its pinned identity, stable selectors and deterministic seed/setup use the exact desktop profile, default no zoom is preserved, and `--runtime kandev-isolated-e2e` runs with `--source pr_head`, `--pr-number`, and `--pr-base-sha`. It preserves the run ID for `--run-id` recovery, stages `kandev-highlight-review-stage-v2`, reports truthful `runtimeLogs: false` and `renderedPixelOcr: false` coverage, and promotes only after explicit human acceptance.",
       "files": [
         "scripts/highlights/examples/quick-start.scenario.json",
         "apps/web/e2e/highlights/quick-start.scenario.json"
       ],
       "expectations": [
-        "Uses node scripts/highlights.mjs scaffold, validate, storyboard, run, and promote",
+        "Uses node scripts/highlights.mjs scaffold, validate, storyboard, run, and promote with --template quick-start",
+        "Uses --runtime kandev-isolated-e2e and --source pr_head with --pr-number and --pr-base-sha",
+        "Preserves the automatic run ID and uses --run-id for render, QA, or stage recovery",
+        "Identifies pnpm e2e:highlight-pipeline as the forthcoming canonical fresh-agent integration/eval",
         "Uses testId or role plus exact accessible name and no arbitrary JavaScript or shell",
         "States that default camera is centered 1x with no zoom by default",
         "Keeps raw masters and QA outside the repository",
-        "Requires automatic media, containment, motion, sensitive-data, contact-sheet, browser, hash, and byte QA",
-        "Promotes only after accepted review and refuses an existing immutable revision"
+        "Requires automatic media, containment, motion, sensitive-data, contact-sheet, browser, hash, and byte QA while declaring runtimeLogs false and renderedPixelOcr false",
+        "Promotes only kandev-highlight-review-stage-v2 after accepted review and refuses an existing immutable revision"
       ]
     },
     {
