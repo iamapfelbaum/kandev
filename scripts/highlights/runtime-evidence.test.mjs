@@ -7,13 +7,22 @@ import test from "node:test";
 
 import { computeScenarioDigest } from "./scenario.mjs";
 
-const runtimeEvidence = await import("./runtime-evidence.mjs").catch(() => ({}));
+const runtimeEvidence = await import("./runtime-evidence.mjs").catch(
+  () => ({}),
+);
 
 const SOURCE_SHA = "1".repeat(40);
 const MAIN_SHA = "2".repeat(40);
 const BASE_SHA = "3".repeat(40);
-const SOURCE_DIGEST = `sha256:${"5".repeat(64)}`;
-const BUILD_DIGEST = `sha256:${"6".repeat(64)}`;
+const SOURCE_DIGEST = digestBytes(
+  canonicalJson({
+    captureMode: "pr_head",
+    sourceSha: SOURCE_SHA,
+    prNumber: 42,
+    prBaseSha: BASE_SHA,
+    prHeadSha: SOURCE_SHA,
+  }),
+);
 
 test("runtime evidence exposes typed scan inputs and digest-only provenance", async () => {
   const declarations = await fs.readFile(
@@ -61,12 +70,21 @@ async function evidenceFixture(
     visibleDomText = ["Quick start", "Review API"],
     browserConsole = [],
     runtimeLog = "worker launched from /home/capture/repo and connected to http://127.0.0.1:4173\n",
+    runtimeLogLimitBytes = 8 * 1024 * 1024,
+    runtimeLogDiscardedBytes = 0,
     teardown = {},
+    substituteRequestScenario = false,
+    sourceDigest = SOURCE_DIGEST,
+    hostHeadSha = SOURCE_SHA,
     mutateSummary,
+    mutateBuildManifest,
     mutateCaptureReceipt,
+    mutateRuntimeReceipt,
   } = {},
 ) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "highlight-runtime-evidence-"));
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "highlight-runtime-evidence-"),
+  );
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const repositoryRoot = path.join(root, "repo");
   const artifactRoot = path.join(root, "artifacts");
@@ -82,11 +100,30 @@ async function evidenceFixture(
   );
   const attemptRoot = path.join(artifactRoot, scenarioId, "runs", runId);
   const hostRoot = path.join(artifactRoot, "runtime-host", runId);
-  const captureEvidencePath = path.join(attemptRoot, "capture", "evidence", "capture-content.json");
-  const captureManifestPath = path.join(attemptRoot, "capture", "evidence", "capture.json");
+  const captureEvidencePath = path.join(
+    attemptRoot,
+    "capture",
+    "evidence",
+    "capture-content.json",
+  );
+  const captureManifestPath = path.join(
+    attemptRoot,
+    "capture",
+    "evidence",
+    "capture.json",
+  );
   const phaseManifestPath = path.join(attemptRoot, "evidence", "capture.json");
-  const runtimeReceiptPath = path.join(attemptRoot, "evidence", "application-runtime.json");
-  const rawMasterPath = path.join(attemptRoot, "capture", "raw", `${scenarioId}.source.mp4`);
+  const runtimeReceiptPath = path.join(
+    attemptRoot,
+    "evidence",
+    "application-runtime.json",
+  );
+  const rawMasterPath = path.join(
+    attemptRoot,
+    "capture",
+    "raw",
+    `${scenarioId}.source.mp4`,
+  );
   const requestPath = path.join(hostRoot, "request.json");
   const workerResultPath = path.join(hostRoot, "worker-result.json");
   const logPath = path.join(hostRoot, "playwright.log");
@@ -98,12 +135,24 @@ async function evidenceFixture(
   await fs.mkdir(path.dirname(rawMasterPath), { recursive: true });
   await fs.mkdir(hostRoot, { recursive: true });
   const scenario = JSON.parse(
-    await fs.readFile(new URL("./examples/quick-start.scenario.json", import.meta.url), "utf8"),
+    await fs.readFile(
+      new URL("./examples/quick-start.scenario.json", import.meta.url),
+      "utf8",
+    ),
   );
   const scenarioBytes = Buffer.from(`${JSON.stringify(scenario, null, 2)}\n`);
   const scenarioDigest = computeScenarioDigest(scenario);
   await fs.writeFile(scenarioPath, scenarioBytes, { flag: "wx" });
-  await fs.writeFile(buildManifestPath, "{}\n", { flag: "wx" });
+  const requestScenarioPath = substituteRequestScenario
+    ? path.join(repositoryRoot, "substituted.scenario.json")
+    : scenarioPath;
+  if (substituteRequestScenario) {
+    await fs.writeFile(
+      requestScenarioPath,
+      `${JSON.stringify({ ...scenario, id: "substituted-story" }, null, 2)}\n`,
+      { flag: "wx" },
+    );
+  }
   const rawMaster = Buffer.from("raw-master");
   await fs.writeFile(rawMasterPath, rawMaster, { flag: "wx" });
 
@@ -120,7 +169,10 @@ async function evidenceFixture(
     browserConsole,
     truncated: { visibleDomText: false, browserConsole: false },
   };
-  const captureContentIdentity = await writeJson(captureEvidencePath, captureContent);
+  const captureContentIdentity = await writeJson(
+    captureEvidencePath,
+    captureContent,
+  );
   const captureEvidence = {
     contract: "kandev-highlight-capture-evidence-v1",
     version: 1,
@@ -129,13 +181,19 @@ async function evidenceFixture(
     digest: captureContentIdentity.digest,
     visibleDomText: {
       records: visibleDomText.length,
-      bytes: visibleDomText.reduce((sum, value) => sum + Buffer.byteLength(value), 0),
+      bytes: visibleDomText.reduce(
+        (sum, value) => sum + Buffer.byteLength(value),
+        0,
+      ),
       digest: digestBytes(canonicalJson(visibleDomText)),
       truncated: false,
     },
     browserConsole: {
       records: browserConsole.length,
-      bytes: browserConsole.reduce((sum, value) => sum + Buffer.byteLength(value.text), 0),
+      bytes: browserConsole.reduce(
+        (sum, value) => sum + Buffer.byteLength(value.text),
+        0,
+      ),
       digest: digestBytes(canonicalJson(browserConsole)),
       truncated: false,
     },
@@ -152,21 +210,47 @@ async function evidenceFixture(
     clean: true,
     status: "",
   };
-  const build = {
+  const buildOutputs = {
+    backend: { digest: `sha256:${"a".repeat(64)}`, bytes: 101 },
+    mockAgent: { digest: `sha256:${"b".repeat(64)}`, bytes: 102 },
+    webDist: { digest: `sha256:${"c".repeat(64)}`, bytes: 103, fileCount: 4 },
+  };
+  const buildManifestBody = {
     contract: "kandev-highlight-build-provenance-v1",
-    manifestDigest: BUILD_DIGEST,
-    sourceSha: SOURCE_SHA,
+    builtAt: "2026-07-22T00:00:00.000Z",
+    source: sourceProof,
+    commands: [],
+    environment: {},
     outputs: {
-      backend: { digest: `sha256:${"a".repeat(64)}`, bytes: 101 },
-      mockAgent: { digest: `sha256:${"b".repeat(64)}`, bytes: 102 },
-      webDist: { digest: `sha256:${"c".repeat(64)}`, bytes: 103, fileCount: 4 },
+      backend: {
+        path: path.join(repositoryRoot, "apps/backend/bin/kandev"),
+        ...buildOutputs.backend,
+      },
+      mockAgent: {
+        path: path.join(repositoryRoot, "apps/backend/bin/mock-agent"),
+        ...buildOutputs.mockAgent,
+      },
+      webDist: {
+        path: path.join(repositoryRoot, "apps/web/dist"),
+        ...buildOutputs.webDist,
+        files: [],
+      },
     },
+  };
+  mutateBuildManifest?.(buildManifestBody);
+  const buildManifest = withDigest(buildManifestBody, "manifestDigest");
+  await writeJson(buildManifestPath, buildManifest);
+  const build = {
+    contract: buildManifest.contract,
+    manifestDigest: buildManifest.manifestDigest,
+    sourceSha: SOURCE_SHA,
+    outputs: buildOutputs,
   };
   const workerRequest = {
     contract: "kandev-highlight-runtime-worker-request-v1",
     version: 1,
     runtimeId: "kandev-isolated-e2e",
-    scenarioPath,
+    scenarioPath: requestScenarioPath,
     artifactRoot,
     repositoryRoot,
     buildManifestPath,
@@ -216,7 +300,7 @@ async function evidenceFixture(
     },
     build: {
       contract: "kandev-highlight-build-provenance-v1",
-      manifestDigest: BUILD_DIGEST,
+      manifestDigest: build.manifestDigest,
       sourceSha: SOURCE_SHA,
       outputs: {
         backend: build.outputs.backend.digest,
@@ -228,20 +312,20 @@ async function evidenceFixture(
   const captureReceipt = {
     contract: "kandev-highlight-source-capture-v1",
     scenarioDigest,
-    sourceDigest: SOURCE_DIGEST,
+    sourceDigest,
     source: sourceProof,
     build: {
       contract: build.contract,
       manifestDigest: build.manifestDigest,
       sourceSha: SOURCE_SHA,
-      outputs: build.outputs,
+      outputs: structuredClone(build.outputs),
     },
     buildVerification: {
       contract: "kandev-highlight-build-verification-v1",
       stable: true,
       beforeStory: {
         contract: "kandev-highlight-build-boundary-v1",
-        manifestDigest: BUILD_DIGEST,
+        manifestDigest: build.manifestDigest,
         sourceSha: SOURCE_SHA,
         outputs: {
           backend: build.outputs.backend.digest,
@@ -251,7 +335,7 @@ async function evidenceFixture(
       },
       afterStory: {
         contract: "kandev-highlight-build-boundary-v1",
-        manifestDigest: BUILD_DIGEST,
+        manifestDigest: build.manifestDigest,
         sourceSha: SOURCE_SHA,
         outputs: {
           backend: build.outputs.backend.digest,
@@ -328,7 +412,7 @@ async function evidenceFixture(
       captureManifestPath,
       rawMasterPath,
       scenarioDigest,
-      sourceDigest: SOURCE_DIGEST,
+      sourceDigest,
       rawMasterDigest: captureReceipt.rawMaster.digest,
       captureEvidence,
     },
@@ -336,19 +420,24 @@ async function evidenceFixture(
   await writeJson(workerResultPath, workerResult);
   await fs.writeFile(logPath, runtimeLog, { flag: "wx" });
 
-  const [requestIdentity, workerIdentity, logIdentity, phaseIdentity, captureIdentity] =
-    await Promise.all([
-      fileIdentity(requestPath),
-      fileIdentity(workerResultPath),
-      fileIdentity(logPath),
-      fileIdentity(phaseManifestPath),
-      fileIdentity(captureManifestPath),
-    ]);
+  const [
+    requestIdentity,
+    workerIdentity,
+    logIdentity,
+    phaseIdentity,
+    captureIdentity,
+  ] = await Promise.all([
+    fileIdentity(requestPath),
+    fileIdentity(workerResultPath),
+    fileIdentity(logPath),
+    fileIdentity(phaseManifestPath),
+    fileIdentity(captureManifestPath),
+  ]);
   const hostSourceProof = {
     contract: "kandev-highlight-source-v1",
     mode: "pr_head",
     selectedSha: SOURCE_SHA,
-    headSha: SOURCE_SHA,
+    headSha: hostHeadSha,
     currentMainSha: MAIN_SHA,
   };
   const hostSource = {
@@ -375,10 +464,10 @@ async function evidenceFixture(
       gone: true,
     },
     log: {
-      limitBytes: 8 * 1024 * 1024,
+      limitBytes: runtimeLogLimitBytes,
       capturedBytes: logIdentity.bytes,
-      discardedBytes: 0,
-      truncated: false,
+      discardedBytes: runtimeLogDiscardedBytes,
+      truncated: runtimeLogDiscardedBytes > 0,
     },
   };
   const hostTeardown = {
@@ -400,8 +489,9 @@ async function evidenceFixture(
     ...teardown,
   };
   const succeeded =
-    Object.entries(hostTeardown).every(([key, value]) => key === "capture" || value === true) &&
-    Object.values(hostTeardown.capture).every((value) => value === true);
+    Object.entries(hostTeardown).every(
+      ([key, value]) => key === "capture" || value === true,
+    ) && Object.values(hostTeardown.capture).every((value) => value === true);
   const runtimeReceiptBody = {
     contract: "kandev-highlight-application-runtime-v1",
     version: 1,
@@ -411,7 +501,7 @@ async function evidenceFixture(
     preTeardown,
     source: hostSource,
     build: {
-      manifestDigest: BUILD_DIGEST,
+      manifestDigest: build.manifestDigest,
       sourceSha: SOURCE_SHA,
       outputs: {
         backend: build.outputs.backend.digest,
@@ -426,7 +516,7 @@ async function evidenceFixture(
       captureManifestDigest: captureIdentity.digest,
       attemptRoot,
       scenarioDigest,
-      sourceDigest: SOURCE_DIGEST,
+      sourceDigest,
       rawMaster: captureReceipt.rawMaster,
       rawMasterDigest: captureReceipt.rawMaster.digest,
       captureEvidenceDigest: captureEvidence.digest,
@@ -437,6 +527,7 @@ async function evidenceFixture(
     workerResult: workerIdentity,
     completedAt: "2026-07-22T00:02:00.000Z",
   };
+  mutateRuntimeReceipt?.(runtimeReceiptBody);
   const runtimeReceipt = withDigest(runtimeReceiptBody, "receiptDigest");
   await writeJson(runtimeReceiptPath, runtimeReceipt);
   const resultBody = {
@@ -458,11 +549,14 @@ async function evidenceFixture(
     request: requestIdentity,
     workerResult: workerIdentity,
     log: logIdentity,
-    applicationRuntime: { receiptPath: runtimeReceiptPath, digest: runtimeReceipt.receiptDigest },
+    applicationRuntime: {
+      receiptPath: runtimeReceiptPath,
+      digest: runtimeReceipt.receiptDigest,
+    },
     capture: {
       attemptRoot,
       scenarioDigest,
-      sourceDigest: SOURCE_DIGEST,
+      sourceDigest,
       phaseManifestPath,
       phaseManifestDigest: phaseIdentity.digest,
       captureManifestPath,
@@ -527,12 +621,18 @@ test("verified loader never relabels infrastructure logs as application scan evi
     browserConsole: [],
   });
   assert.deepEqual(loaded.runtimeEvidence.logs, []);
-  assert.equal(loaded.provenance.contract, "kandev-highlight-runtime-provenance-v1");
+  assert.equal(
+    loaded.provenance.contract,
+    "kandev-highlight-runtime-provenance-v1",
+  );
   assert.equal(loaded.provenance.runtimeId, "kandev-isolated-e2e");
   assert.equal(
     loaded.provenance.receiptDigest,
-    (await fs.readFile(fixture.runtimeReceiptPath, "utf8")).includes("receiptDigest")
-      ? JSON.parse(await fs.readFile(fixture.runtimeReceiptPath, "utf8")).receiptDigest
+    (await fs.readFile(fixture.runtimeReceiptPath, "utf8")).includes(
+      "receiptDigest",
+    )
+      ? JSON.parse(await fs.readFile(fixture.runtimeReceiptPath, "utf8"))
+          .receiptDigest
       : null,
   );
   assert.deepEqual(loaded.provenance.scanner.coverage, {
@@ -548,10 +648,78 @@ test("verified loader never relabels infrastructure logs as application scan evi
   );
 });
 
+test("verified loader rejects a worker request substituted from another scenario", async (t) => {
+  const substituted = await evidenceFixture(t, {
+    substituteRequestScenario: true,
+  });
+  await assert.rejects(
+    loader()(substituted.options),
+    /worker request.*scenario|scenario.*substitut|scenarioPath/i,
+  );
+});
+
+test("verified loader independently rejects a propagated but false source digest", async (t) => {
+  const substituted = await evidenceFixture(t, {
+    sourceDigest: `sha256:${"9".repeat(64)}`,
+  });
+  await assert.rejects(
+    loader()(substituted.options),
+    /source digest.*recomputed|source.*identity.*digest/i,
+  );
+});
+
+test("verified loader binds the full compact host source proof", async (t) => {
+  const substituted = await evidenceFixture(t, {
+    hostHeadSha: "8".repeat(40),
+  });
+  await assert.rejects(
+    loader()(substituted.options),
+    /host source.*worker request|source proof.*mismatch/i,
+  );
+});
+
+for (const { label, fixtureOptions } of [
+  {
+    label: "build manifest identity mismatch",
+    fixtureOptions: {
+      mutateBuildManifest: (manifest) => {
+        manifest.outputs.backend.digest = `sha256:${"7".repeat(64)}`;
+      },
+    },
+  },
+  {
+    label: "capture build output omission",
+    fixtureOptions: {
+      mutateCaptureReceipt: (receipt) => {
+        delete receipt.build.outputs.webDist;
+      },
+    },
+  },
+  {
+    label: "application receipt build output mismatch",
+    fixtureOptions: {
+      mutateRuntimeReceipt: (receipt) => {
+        receipt.build.outputs.mockAgent = `sha256:${"7".repeat(64)}`;
+      },
+    },
+  },
+]) {
+  test(`verified loader rejects ${label}`, async (t) => {
+    const substituted = await evidenceFixture(t, fixtureOptions);
+    await assert.rejects(
+      loader()(substituted.options),
+      /build.*output|output.*identity|backend|mockAgent|webDist/i,
+    );
+  });
+}
+
 test("verified loader rejects tampered, escaped, and symlinked capture evidence", async (t) => {
   const tampered = await evidenceFixture(t);
   await fs.appendFile(tampered.captureEvidencePath, "tampered");
-  await assert.rejects(loader()(tampered.options), /capture.*evidence.*digest|bytes/i);
+  await assert.rejects(
+    loader()(tampered.options),
+    /capture.*evidence.*digest|bytes/i,
+  );
 
   const escaped = await evidenceFixture(t);
   const outside = path.join(path.dirname(escaped.artifactRoot), "outside.json");
@@ -564,11 +732,17 @@ test("verified loader rejects tampered, escaped, and symlinked capture evidence"
   );
 
   const linked = await evidenceFixture(t);
-  const target = path.join(path.dirname(linked.artifactRoot), "linked-content.json");
+  const target = path.join(
+    path.dirname(linked.artifactRoot),
+    "linked-content.json",
+  );
   await fs.copyFile(linked.captureEvidencePath, target);
   await fs.unlink(linked.captureEvidencePath);
   await fs.symlink(target, linked.captureEvidencePath);
-  await assert.rejects(loader()(linked.options), /symlink|non-symlink|canonical/i);
+  await assert.rejects(
+    loader()(linked.options),
+    /symlink|non-symlink|canonical/i,
+  );
 });
 
 test("verified loader recomputes summaries and requires nonempty visible DOM evidence", async (t) => {
@@ -577,7 +751,10 @@ test("verified loader recomputes summaries and requires nonempty visible DOM evi
       summary.visibleDomText.records += 1;
     },
   });
-  await assert.rejects(loader()(badSummary.options), /visibleDomText.*records|summary/i);
+  await assert.rejects(
+    loader()(badSummary.options),
+    /visibleDomText.*records|summary/i,
+  );
 
   const emptyDom = await evidenceFixture(t, { visibleDomText: [] });
   await assert.rejects(
@@ -601,7 +778,22 @@ test("verified loader rejects incomplete teardown and missing typed runtime logs
   await assert.rejects(loader()(incomplete.options), /teardown|succeeded/i);
 
   const noLogs = await evidenceFixture(t, { runtimeLog: "" });
-  await assert.rejects(loader()(noLogs.options), /runtime log.*nonempty|runtimeLogs.*evidence/i);
+  await assert.rejects(
+    loader()(noLogs.options),
+    /runtime log.*nonempty|runtimeLogs.*evidence/i,
+  );
+});
+
+test("verified loader accepts truthful bounded host log truncation without exposing infrastructure", async (t) => {
+  const runtimeLog = "bounded host log\n";
+  const truncated = await evidenceFixture(t, {
+    runtimeLog,
+    runtimeLogLimitBytes: Buffer.byteLength(runtimeLog),
+    runtimeLogDiscardedBytes: 2_048,
+  });
+
+  const loaded = await loader()(truncated.options);
+  assert.deepEqual(loaded.runtimeEvidence.logs, []);
 });
 
 test("verified loader binds immutable scenario bytes and canonical digest", async (t) => {
@@ -645,7 +837,10 @@ test("verified loader requires stable build, media alignment, and host input att
       });
     },
   });
-  assert.deepEqual((await loader()(trustedInput.options)).runtimeEvidence.logs, []);
+  assert.deepEqual(
+    (await loader()(trustedInput.options)).runtimeEvidence.logs,
+    [],
+  );
 
   const unstableBuild = await evidenceFixture(t, {
     mutateCaptureReceipt(receipt) {
@@ -662,7 +857,10 @@ test("verified loader requires stable build, media alignment, and host input att
       receipt.capture.frameAlignment.frameDelta = 2;
     },
   });
-  await assert.rejects(loader()(misaligned.options), /frame alignment.*tolerance/i);
+  await assert.rejects(
+    loader()(misaligned.options),
+    /frame alignment.*tolerance/i,
+  );
 
   const untrustedInput = await evidenceFixture(t, {
     mutateCaptureReceipt(receipt) {

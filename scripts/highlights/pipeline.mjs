@@ -31,6 +31,7 @@ import {
 } from "./stage.mjs";
 import {
   assertExternalArtifactRoot,
+  computeSourceCaptureDigest,
   verifySourceGate as defaultVerifySourceGate,
 } from "./source-gate.mjs";
 import { runBrowserPlaybackQa } from "./browser-qa.mjs";
@@ -634,7 +635,9 @@ async function loadRuntimeQaEvidence(context, capture) {
     !Array.isArray(loaded.captureEvidence?.browserConsole) ||
     !Array.isArray(loaded.runtimeEvidence?.logs)
   ) {
-    throw new Error("verified runtime evidence loader returned incomplete typed evidence");
+    throw new Error(
+      "verified runtime evidence loader returned incomplete typed evidence",
+    );
   }
   validateRuntimeProvenance(loaded.provenance, {
     sourceMode: context.sourceProvenance?.captureMode,
@@ -658,11 +661,18 @@ function sensitiveScannerForRuntime(context, provenance) {
     context.deps.sensitiveScanner ?? context.captureBindings?.sensitiveScanner;
   if (injected !== undefined) {
     if (typeof injected !== "function") {
-      throw new Error("custom sensitive scanner must be a trusted scanner function");
+      throw new Error(
+        "custom sensitive scanner must be a trusted scanner function",
+      );
     }
     const declared = getTrustedSensitiveScannerCoverage(injected);
-    if (!declared || canonicalJson(declared) !== canonicalJson(expectedCoverage)) {
-      throw new Error("custom sensitive scanner coverage must exactly match catalog runtime coverage");
+    if (
+      !declared ||
+      canonicalJson(declared) !== canonicalJson(expectedCoverage)
+    ) {
+      throw new Error(
+        "custom sensitive scanner coverage must exactly match catalog runtime coverage",
+      );
     }
     return injected;
   }
@@ -691,7 +701,9 @@ async function validateRecoveredQa(context, render, qa) {
   try {
     const loaded = await loadRuntimeQaEvidence(context, context.capture);
     if (canonicalJson(qa.runtime) !== canonicalJson(loaded.provenance)) {
-      fail("QA runtime provenance does not match verified external runtime evidence");
+      fail(
+        "QA runtime provenance does not match verified external runtime evidence",
+      );
     }
     validateSensitiveScanResult(qa.sensitiveData, {
       expectedCoverage: loaded.provenance.scanner.coverage,
@@ -890,21 +902,6 @@ async function resolveSourceProvenance({
     capturedAt,
     gate,
   };
-}
-
-function computeSourceCaptureDigest(provenance) {
-  const source = {
-    captureMode: provenance.captureMode,
-    sourceSha: provenance.sourceSha,
-    ...(provenance.captureMode === "pr_head"
-      ? {
-          prNumber: provenance.prNumber,
-          prBaseSha: provenance.prBaseSha,
-          prHeadSha: provenance.prHeadSha,
-        }
-      : { sourceRef: provenance.sourceRef }),
-  };
-  return `sha256:${sha256(canonicalJson(source))}`;
 }
 
 function landingEvidence(adapter) {

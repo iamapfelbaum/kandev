@@ -7,7 +7,9 @@ import test from "node:test";
 
 import { computeScenarioDigest } from "./scenario.mjs";
 
-const runtimeDispatch = await import("./runtime-dispatch.mjs").catch(() => ({}));
+const runtimeDispatch = await import("./runtime-dispatch.mjs").catch(
+  () => ({}),
+);
 
 const SOURCE_SHA = "1".repeat(40);
 const MAIN_SHA = "2".repeat(40);
@@ -75,7 +77,9 @@ function scenario({ delivery = true } = {}) {
 }
 
 async function fixture(t, options = {}) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "highlight-runtime-dispatch-"));
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "highlight-runtime-dispatch-"),
+  );
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const repoRoot = path.join(root, "repo");
   const artifactRoot = path.join(root, "artifacts");
@@ -111,7 +115,11 @@ function sourceProof(repoRoot) {
 }
 
 function successfulHostResult(request, fixtureValue) {
-  const hostRoot = path.join(request.artifactRoot, "runtime-host", request.runId);
+  const hostRoot = path.join(
+    request.artifactRoot,
+    "runtime-host",
+    request.runId,
+  );
   const attemptRoot = path.join(
     request.artifactRoot,
     fixtureValue.scenario.id,
@@ -151,10 +159,22 @@ function successfulHostResult(request, fixtureValue) {
       resultPath: path.join(hostRoot, "result.json"),
     },
     request: { path: "/external/request", bytes: 1, digest: digest("request") },
-    workerResult: { path: "/external/worker", bytes: 1, digest: digest("worker") },
-    log: { path: "/external/log", bytes: 1, digest: digest("log") },
+    workerResult: {
+      path: "/external/worker",
+      bytes: 1,
+      digest: digest("worker"),
+    },
+    log: {
+      path: path.join(hostRoot, "playwright.log"),
+      bytes: 1,
+      digest: digest("log"),
+    },
     applicationRuntime: {
-      receiptPath: path.join(attemptRoot, "evidence", "application-runtime.json"),
+      receiptPath: path.join(
+        attemptRoot,
+        "evidence",
+        "application-runtime.json",
+      ),
       digest: digest("runtime"),
     },
     capture: {
@@ -163,7 +183,12 @@ function successfulHostResult(request, fixtureValue) {
       sourceDigest: digest("source"),
       phaseManifestPath: path.join(attemptRoot, "evidence", "capture.json"),
       phaseManifestDigest: digest("capture-phase"),
-      captureManifestPath: path.join(attemptRoot, "capture", "evidence", "capture.json"),
+      captureManifestPath: path.join(
+        attemptRoot,
+        "capture",
+        "evidence",
+        "capture.json",
+      ),
       captureManifestDigest: digest("capture"),
       rawMasterPath: path.join(
         attemptRoot,
@@ -173,7 +198,12 @@ function successfulHostResult(request, fixtureValue) {
       ),
       rawMasterDigest: digest("raw"),
       rawMaster: {
-        path: path.join(attemptRoot, "capture", "raw", `${fixtureValue.scenario.id}.source.mp4`),
+        path: path.join(
+          attemptRoot,
+          "capture",
+          "raw",
+          `${fixtureValue.scenario.id}.source.mp4`,
+        ),
         bytes: 1,
         digest: digest("raw"),
       },
@@ -183,8 +213,18 @@ function successfulHostResult(request, fixtureValue) {
         path: "/external/capture-content.json",
         bytes: 1,
         digest: digest("content"),
-        visibleDomText: { records: 1, bytes: 4, digest: digest("dom"), truncated: false },
-        browserConsole: { records: 0, bytes: 0, digest: digest("[]"), truncated: false },
+        visibleDomText: {
+          records: 1,
+          bytes: 4,
+          digest: digest("dom"),
+          truncated: false,
+        },
+        browserConsole: {
+          records: 0,
+          bytes: 0,
+          digest: digest("[]"),
+          truncated: false,
+        },
       },
     },
     execution: {
@@ -250,10 +290,17 @@ function dependencies(events, fixtureValue) {
     },
     buildCaptureCheckout: async ({ artifactRoot, source }) => {
       events.push("build");
-      assert.equal(artifactRoot, path.join(fixtureValue.artifactRoot, "runtime-builds", "run-001"));
+      assert.equal(
+        artifactRoot,
+        path.join(fixtureValue.artifactRoot, "runtime-builds", "run-001"),
+      );
       assert.equal(source, "pr_head");
       return {
-        manifestPath: path.join(artifactRoot, "evidence", "build-provenance.json"),
+        manifestPath: path.join(
+          artifactRoot,
+          "evidence",
+          "build-provenance.json",
+        ),
         manifest: {
           contract: "kandev-highlight-build-provenance-v1",
           manifestDigest: digest("build"),
@@ -263,7 +310,10 @@ function dependencies(events, fixtureValue) {
     },
     runRuntimeHost: async ({ request }) => {
       events.push("host");
-      assert.equal(request.contract, "kandev-highlight-runtime-host-request-v1");
+      assert.equal(
+        request.contract,
+        "kandev-highlight-runtime-host-request-v1",
+      );
       assert.equal(request.runtimeId, "kandev-isolated-e2e");
       assert.equal(request.runId, "run-001");
       assert.deepEqual(request.pullRequest, { number: 42, baseSha: BASE_SHA });
@@ -290,7 +340,11 @@ test("trusted capture defaults to the closed runtime and never calls the pipelin
   const deps = dependencies(events, value);
   const pipeline = deps.pipelineRunner;
   deps.pipelineRunner = async (options) => {
-    assert.notEqual(options.command, "capture", "CLI dispatch must never invoke pipeline capture");
+    assert.notEqual(
+      options.command,
+      "capture",
+      "CLI dispatch must never invoke pipeline capture",
+    );
     return pipeline(options);
   };
 
@@ -312,6 +366,41 @@ test("trusted capture defaults to the closed runtime and never calls the pipelin
   assert.deepEqual(result.order, ["validate", "storyboard", "capture"]);
 });
 
+test("trusted dispatch accepts truthful host log truncation at the frozen bound", async (t) => {
+  const value = await fixture(t);
+  const events = [];
+  const deps = dependencies(events, value);
+  const runRuntimeHost = deps.runRuntimeHost;
+  deps.runRuntimeHost = async (options) => {
+    const result = await runRuntimeHost(options);
+    result.execution.log = {
+      limitBytes: 8 * 1024 * 1024,
+      capturedBytes: 8 * 1024 * 1024,
+      discardedBytes: 2_048,
+      truncated: true,
+    };
+    result.log.bytes = result.execution.log.capturedBytes;
+    const body = structuredClone(result);
+    delete body.resultDigest;
+    result.resultDigest = digest(canonicalJson(body));
+    return result;
+  };
+
+  const result = await dispatch()({
+    command: "capture",
+    scenarioPath: value.scenarioPath,
+    artifactRoot: value.artifactRoot,
+    source: "pr_head",
+    runId: "run-001",
+    prNumber: 42,
+    prBaseSha: BASE_SHA,
+    repoRoot: value.repoRoot,
+    dependencies: deps,
+  });
+
+  assert.equal(result.contract, "kandev-highlight-runtime-command-v1");
+});
+
 test("trusted run validates delivery before build and orders host capture then render QA stage", async (t) => {
   const value = await fixture(t);
   const events = [];
@@ -330,8 +419,23 @@ test("trusted run validates delivery before build and orders host capture then r
     dependencies: deps,
   });
 
-  assert.deepEqual(events, ["source", "pr", "build", "host", "render", "qa", "stage"]);
-  assert.deepEqual(result.order, ["validate", "storyboard", "capture", "render", "qa", "stage"]);
+  assert.deepEqual(events, [
+    "source",
+    "pr",
+    "build",
+    "host",
+    "render",
+    "qa",
+    "stage",
+  ]);
+  assert.deepEqual(result.order, [
+    "validate",
+    "storyboard",
+    "capture",
+    "render",
+    "qa",
+    "stage",
+  ]);
   assert.deepEqual(result.phases.render, { phase: "render" });
   assert.deepEqual(result.phases.qa, { phase: "qa" });
   assert.deepEqual(result.phases.stage, { phase: "stage" });
@@ -388,7 +492,12 @@ test("trusted dry-run emits an exact runtime plan without writes, builds, spawns
       loadLandingAdapter: forbidden,
       buildRuntimeHostCommand: () => ({
         command: "/verified/node",
-        args: ["playwright", "test", "--config", "pipeline-playwright.config.ts"],
+        args: [
+          "playwright",
+          "test",
+          "--config",
+          "pipeline-playwright.config.ts",
+        ],
         cwd: path.join(value.repoRoot, "apps/web"),
       }),
     },
@@ -397,10 +506,114 @@ test("trusted dry-run emits an exact runtime plan without writes, builds, spawns
   assert.equal(plan.contract, "kandev-highlight-runtime-dry-run-v1");
   assert.equal(plan.zeroWrites, true);
   assert.equal(plan.runtime.runtimeId, "kandev-isolated-e2e");
-  assert.equal(plan.paths.build, path.join(value.artifactRoot, "runtime-builds", "run-001"));
-  assert.equal(plan.paths.hostBundle, path.join(value.artifactRoot, "runtime-host", "run-001"));
-  assert.deepEqual(plan.order, ["validate", "storyboard", "capture", "render", "qa", "stage"]);
+  assert.equal(
+    plan.paths.build,
+    path.join(value.artifactRoot, "runtime-builds", "run-001"),
+  );
+  assert.equal(
+    plan.paths.hostBundle,
+    path.join(value.artifactRoot, "runtime-host", "run-001"),
+  );
+  assert.deepEqual(plan.order, [
+    "validate",
+    "storyboard",
+    "capture",
+    "render",
+    "qa",
+    "stage",
+  ]);
   assert.deepEqual(await fs.readdir(value.root, { recursive: true }), before);
+});
+
+test("automatic PR metadata resolves the supported base branch name to an exact origin SHA", async (t) => {
+  const value = await fixture(t);
+  const events = [];
+  const commands = [];
+  const deps = dependencies(events, value);
+  delete deps.resolvePrMetadata;
+  deps.commandRunner = async (command, args, options) => {
+    commands.push({ command, args, cwd: options.cwd });
+    if (command === "gh") {
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify({
+          number: 42,
+          baseRefName: "main",
+          headRefOid: SOURCE_SHA,
+        }),
+        stderr: "",
+      };
+    }
+    assert.equal(command, "git");
+    return { exitCode: 0, stdout: `${BASE_SHA}\n`, stderr: "" };
+  };
+
+  await dispatch()({
+    command: "capture",
+    scenarioPath: value.scenarioPath,
+    artifactRoot: value.artifactRoot,
+    source: "pr_head",
+    runId: "run-001",
+    repoRoot: value.repoRoot,
+    dependencies: deps,
+  });
+
+  assert.deepEqual(commands, [
+    {
+      command: "gh",
+      args: ["pr", "view", "--json", "number,baseRefName,headRefOid"],
+      cwd: value.repoRoot,
+    },
+    {
+      command: "git",
+      args: ["rev-parse", "origin/main"],
+      cwd: value.repoRoot,
+    },
+  ]);
+});
+
+test("automatic PR metadata rejects unsafe base names and mismatched heads before git", async (t) => {
+  for (const { label, metadata, expected } of [
+    {
+      label: "unsafe base",
+      metadata: {
+        number: 42,
+        baseRefName: "main^{commit}",
+        headRefOid: SOURCE_SHA,
+      },
+      expected: /unsafe base branch/i,
+    },
+    {
+      label: "mismatched head",
+      metadata: { number: 42, baseRefName: "main", headRefOid: "9".repeat(40) },
+      expected: /does not match.*selected source/i,
+    },
+  ]) {
+    await t.test(label, async (subtest) => {
+      const value = await fixture(subtest);
+      const deps = dependencies([], value);
+      let gitCalls = 0;
+      delete deps.resolvePrMetadata;
+      deps.commandRunner = async (command) => {
+        if (command === "git") gitCalls += 1;
+        return { exitCode: 0, stdout: JSON.stringify(metadata), stderr: "" };
+      };
+
+      await assert.rejects(
+        dispatch()({
+          command: "capture",
+          scenarioPath: value.scenarioPath,
+          artifactRoot: value.artifactRoot,
+          source: "pr_head",
+          runId: "run-001",
+          repoRoot: value.repoRoot,
+          dependencies: deps,
+        }),
+        expected,
+      );
+      assert.equal(gitCalls, 0);
+    });
+  }
 });
 
 test("trusted dispatch rejects unknown runtime IDs before source, build, or host work", async (t) => {

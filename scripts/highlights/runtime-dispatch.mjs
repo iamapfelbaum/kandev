@@ -21,13 +21,17 @@ import {
   readScenario,
   requireDeliveryMetadata,
 } from "./scenario.mjs";
-import { assertExternalArtifactRoot, verifySourceGate } from "./source-gate.mjs";
+import {
+  assertExternalArtifactRoot,
+  verifySourceGate,
+} from "./source-gate.mjs";
 import { runDeclarativeHighlightCommand } from "./pipeline.mjs";
 
 const execFileAsync = promisify(execFile);
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SAFE_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+const MAX_RUNTIME_HOST_LOG_BYTES = 8 * 1024 * 1024;
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -101,7 +105,9 @@ function allocateRunId({ requested, scenarioDigest, now, nonce }) {
     throw new Error("runtime clock must return a valid Date");
   }
   if (!/^[a-z0-9]{8,20}$/.test(nonce ?? "")) {
-    throw new Error("runtime run ID uniqueness token must be 8-20 lowercase letters or digits");
+    throw new Error(
+      "runtime run ID uniqueness token must be 8-20 lowercase letters or digits",
+    );
   }
   const timestamp = now.toISOString().replace(/[-:.]/g, "");
   return requireSafeRunId(
@@ -113,7 +119,10 @@ async function rejectExistingSymlinks(target) {
   const absolute = path.resolve(target);
   const parsed = path.parse(absolute);
   let current = parsed.root;
-  for (const segment of absolute.slice(parsed.root.length).split(path.sep).filter(Boolean)) {
+  for (const segment of absolute
+    .slice(parsed.root.length)
+    .split(path.sep)
+    .filter(Boolean)) {
     current = path.join(current, segment);
     const stat = await fs.lstat(current).catch((error) => {
       if (error.code === "ENOENT") return null;
@@ -121,7 +130,9 @@ async function rejectExistingSymlinks(target) {
     });
     if (!stat) return;
     if (stat.isSymbolicLink()) {
-      throw new Error(`runtime artifact path cannot contain symlinks: ${current}`);
+      throw new Error(
+        `runtime artifact path cannot contain symlinks: ${current}`,
+      );
     }
   }
   const stat = await fs.lstat(absolute).catch((error) => {
@@ -143,22 +154,67 @@ function validateSourceProof(proof, { source, repoRoot }) {
     typeof proof.repoRoot !== "string" ||
     path.resolve(proof.repoRoot) !== repoRoot
   ) {
-    throw new Error("trusted runtime source gate must return an exact clean source proof");
+    throw new Error(
+      "trusted runtime source gate must return an exact clean source proof",
+    );
   }
   return proof;
 }
 
-async function resolvePrMetadata({ repoRoot, sourceSha, prNumber, prBaseSha, env, runner }) {
+function validateBaseRefName(value) {
+  const forbidden = /[\x00-\x20\x7f~^:?*[\]\\]/;
+  const segments = typeof value === "string" ? value.split("/") : [];
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 244 ||
+    value === "@" ||
+    value.startsWith("-") ||
+    value.startsWith("/") ||
+    value.endsWith("/") ||
+    value.endsWith(".") ||
+    value.includes("..") ||
+    value.includes("//") ||
+    value.includes("@{") ||
+    forbidden.test(value) ||
+    segments.some(
+      (segment) =>
+        !segment || segment.startsWith(".") || segment.endsWith(".lock"),
+    )
+  ) {
+    throw new Error(
+      "automatic PR metadata returned an unsafe base branch name",
+    );
+  }
+  return value;
+}
+
+async function resolvePrMetadata({
+  repoRoot,
+  sourceSha,
+  prNumber,
+  prBaseSha,
+  env,
+  runner,
+}) {
   const number = Number(prNumber ?? env.KANDEV_HIGHLIGHT_PR_NUMBER);
   const baseSha = prBaseSha ?? env.KANDEV_HIGHLIGHT_PR_BASE_SHA;
-  if (Number.isInteger(number) && number > 0 && SHA_PATTERN.test(baseSha ?? "")) {
+  if (
+    Number.isInteger(number) &&
+    number > 0 &&
+    SHA_PATTERN.test(baseSha ?? "")
+  ) {
     return { prNumber: number, prBaseSha: baseSha, prHeadSha: sourceSha };
   }
   let result;
   try {
-    result = await runner("gh", ["pr", "view", "--json", "number,baseRefOid,headRefOid"], {
-      cwd: repoRoot,
-    });
+    result = await runner(
+      "gh",
+      ["pr", "view", "--json", "number,baseRefName,headRefOid"],
+      {
+        cwd: repoRoot,
+      },
+    );
   } catch (error) {
     throw new Error(
       `pr_head runtime request needs --pr-number and --pr-base-sha; automatic 'gh pr view' lookup failed: ${error.message}`,
@@ -174,14 +230,31 @@ async function resolvePrMetadata({ repoRoot, sourceSha, prNumber, prBaseSha, env
   if (
     !Number.isInteger(parsed.number) ||
     parsed.number <= 0 ||
-    !SHA_PATTERN.test(parsed.baseRefOid ?? "") ||
     parsed.headRefOid !== sourceSha
   ) {
-    throw new Error("automatic PR metadata does not match the selected source SHA");
+    throw new Error(
+      "automatic PR metadata does not match the selected source SHA",
+    );
+  }
+  const baseRefName = validateBaseRefName(parsed.baseRefName);
+  let baseResult;
+  try {
+    baseResult = await runner("git", ["rev-parse", `origin/${baseRefName}`], {
+      cwd: repoRoot,
+    });
+  } catch (error) {
+    throw new Error(
+      `cannot resolve automatic PR base branch origin/${baseRefName}: ${error.message}`,
+      { cause: error },
+    );
+  }
+  const resolvedBaseSha = baseResult.stdout?.trim();
+  if (!SHA_PATTERN.test(resolvedBaseSha ?? "")) {
+    throw new Error("automatic PR base branch did not resolve to an exact SHA");
   }
   return {
     prNumber: parsed.number,
-    prBaseSha: parsed.baseRefOid,
+    prBaseSha: resolvedBaseSha,
     prHeadSha: parsed.headRefOid,
   };
 }
@@ -208,16 +281,61 @@ function validateBuild(build, sourceProof, expectedRoot) {
     !DIGEST_PATTERN.test(build.manifest?.manifestDigest ?? "") ||
     build.manifest?.source?.selectedSha !== sourceProof.selectedSha
   ) {
-    throw new Error("runtime build proof does not bind the selected source SHA");
+    throw new Error(
+      "runtime build proof does not bind the selected source SHA",
+    );
   }
-  const relative = path.relative(expectedRoot, path.resolve(build.manifestPath));
+  const relative = path.relative(
+    expectedRoot,
+    path.resolve(build.manifestPath),
+  );
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error("runtime build manifest must stay inside its reserved build root");
+    throw new Error(
+      "runtime build manifest must stay inside its reserved build root",
+    );
   }
   return build;
 }
 
-function validateHostResult(result, request, scenario, scenarioDigest, sourceProof) {
+function validateHostLogIdentity(identity, execution, expectedPath) {
+  requireExactKeys(
+    identity,
+    ["path", "bytes", "digest"],
+    "runtime host log identity",
+  );
+  const truthfulTruncation =
+    execution.truncated === execution.discardedBytes > 0 &&
+    (!execution.truncated || execution.capturedBytes === execution.limitBytes);
+  if (
+    identity.path !== expectedPath ||
+    !Number.isSafeInteger(identity.bytes) ||
+    identity.bytes < 0 ||
+    !DIGEST_PATTERN.test(identity.digest ?? "") ||
+    !Number.isSafeInteger(execution.limitBytes) ||
+    execution.limitBytes <= 0 ||
+    execution.limitBytes > MAX_RUNTIME_HOST_LOG_BYTES ||
+    !Number.isSafeInteger(execution.capturedBytes) ||
+    execution.capturedBytes < 0 ||
+    execution.capturedBytes > execution.limitBytes ||
+    execution.capturedBytes !== identity.bytes ||
+    !Number.isSafeInteger(execution.discardedBytes) ||
+    execution.discardedBytes < 0 ||
+    typeof execution.truncated !== "boolean" ||
+    !truthfulTruncation
+  ) {
+    throw new Error(
+      "runtime host log identity or bounded truncation counters are invalid",
+    );
+  }
+}
+
+function validateHostResult(
+  result,
+  request,
+  scenario,
+  scenarioDigest,
+  sourceProof,
+) {
   const keys = [
     "contract",
     "version",
@@ -241,15 +359,39 @@ function validateHostResult(result, request, scenario, scenarioDigest, sourcePro
   requireExactKeys(result, keys, "runtime host result");
   const body = structuredClone(result);
   delete body.resultDigest;
-  const hostRoot = path.join(request.artifactRoot, "runtime-host", request.runId);
-  const attemptRoot = path.join(request.artifactRoot, scenario.id, "runs", request.runId);
+  const hostRoot = path.join(
+    request.artifactRoot,
+    "runtime-host",
+    request.runId,
+  );
+  const attemptRoot = path.join(
+    request.artifactRoot,
+    scenario.id,
+    "runs",
+    request.runId,
+  );
   requireExactKeys(
     result.bundle,
-    ["path", "requestPath", "workerResultPath", "logPath", "failurePath", "resultPath"],
+    [
+      "path",
+      "requestPath",
+      "workerResultPath",
+      "logPath",
+      "failurePath",
+      "resultPath",
+    ],
     "runtime host bundle",
   );
-  requireExactKeys(result.scenario, ["id", "path", "bytes", "digest"], "runtime host scenario");
-  requireExactKeys(result.source, ["pre", "post", "unchanged"], "runtime host source");
+  requireExactKeys(
+    result.scenario,
+    ["id", "path", "bytes", "digest"],
+    "runtime host scenario",
+  );
+  requireExactKeys(
+    result.source,
+    ["pre", "post", "unchanged"],
+    "runtime host source",
+  );
   for (const [label, proof] of [
     ["pre", result.source.pre],
     ["post", result.source.post],
@@ -260,7 +402,11 @@ function validateHostResult(result, request, scenario, scenarioDigest, sourcePro
       `runtime host ${label} source`,
     );
   }
-  requireExactKeys(result.applicationRuntime, ["receiptPath", "digest"], "runtime receipt link");
+  requireExactKeys(
+    result.applicationRuntime,
+    ["receiptPath", "digest"],
+    "runtime receipt link",
+  );
   requireExactKeys(
     result.execution,
     ["exitCode", "signal", "timedOut", "deadlineMs", "processGroup", "log"],
@@ -327,6 +473,11 @@ function validateHostResult(result, request, scenario, scenarioDigest, sourcePro
     failurePath: path.join(hostRoot, "failure.json"),
     resultPath: path.join(hostRoot, "result.json"),
   };
+  validateHostLogIdentity(
+    result.log,
+    result.execution.log,
+    expectedBundle.logPath,
+  );
   if (
     result.contract !== "kandev-highlight-runtime-host-result-v1" ||
     result.version !== 1 ||
@@ -349,12 +500,15 @@ function validateHostResult(result, request, scenario, scenarioDigest, sourcePro
       path.join(attemptRoot, "evidence", "application-runtime.json") ||
     result.capture.attemptRoot !== attemptRoot ||
     result.capture.scenarioDigest !== scenarioDigest ||
-    result.capture.phaseManifestPath !== path.join(attemptRoot, "evidence", "capture.json") ||
+    result.capture.phaseManifestPath !==
+      path.join(attemptRoot, "evidence", "capture.json") ||
     result.capture.captureManifestPath !==
       path.join(attemptRoot, "capture", "evidence", "capture.json") ||
     result.capture.rawMasterPath !==
       path.join(attemptRoot, "capture", "raw", `${scenario.id}.source.mp4`) ||
-    Object.entries(result.teardown).some(([key, value]) => key !== "capture" && value !== true) ||
+    Object.entries(result.teardown).some(
+      ([key, value]) => key !== "capture" && value !== true,
+    ) ||
     !result.teardown.capture ||
     Object.values(result.teardown.capture).some((value) => value !== true) ||
     result.execution?.exitCode !== 0 ||
@@ -362,11 +516,11 @@ function validateHostResult(result, request, scenario, scenarioDigest, sourcePro
     result.execution?.timedOut !== false ||
     result.execution?.processGroup?.exited !== true ||
     result.execution?.processGroup?.gone !== true ||
-    result.execution?.log?.discardedBytes !== 0 ||
-    result.execution?.log?.truncated !== false ||
     result.failure !== null
   ) {
-    throw new Error("trusted runtime host did not return a complete successful capture receipt");
+    throw new Error(
+      "trusted runtime host did not return a complete successful capture receipt",
+    );
   }
   return result;
 }
@@ -382,7 +536,13 @@ function compactHostLink(result) {
 }
 
 function phaseReferences({ artifactRoot, scenarioId, runId, hostResult }) {
-  const evidenceRoot = path.join(artifactRoot, scenarioId, "runs", runId, "evidence");
+  const evidenceRoot = path.join(
+    artifactRoot,
+    scenarioId,
+    "runs",
+    runId,
+    "evidence",
+  );
   return {
     validate: {
       contract: "kandev-highlight-runtime-phase-reference-v1",
@@ -430,7 +590,8 @@ function dryRunPlan({
       mode: source,
       pullRequest:
         source === "pr_head"
-          ? Number.isInteger(Number(prNumber)) && SHA_PATTERN.test(prBaseSha ?? "")
+          ? Number.isInteger(Number(prNumber)) &&
+            SHA_PATTERN.test(prBaseSha ?? "")
             ? { number: Number(prNumber), baseSha: prBaseSha }
             : { status: "resolve-before-build", command: ["gh", "pr", "view"] }
           : null,
@@ -439,7 +600,11 @@ function dryRunPlan({
       adapter: "buildCaptureCheckout",
       artifactRoot: buildRoot,
       commands: [
-        { command: "make", args: ["-C", "apps/backend", "build"], cwd: repoRoot },
+        {
+          command: "make",
+          args: ["-C", "apps/backend", "build"],
+          cwd: repoRoot,
+        },
         {
           command: "pnpm",
           args: ["--filter", "@kandev/web", "build"],
@@ -461,7 +626,12 @@ function dryRunPlan({
       build: buildRoot,
       hostBundle: path.join(artifactRoot, "runtime-host", runId),
       attempt: path.join(artifactRoot, scenario.id, "runs", runId),
-      stagePattern: path.join(artifactRoot, scenario.id, "stages", "<sha256-manifest-digest>"),
+      stagePattern: path.join(
+        artifactRoot,
+        scenario.id,
+        "stages",
+        "<sha256-manifest-digest>",
+      ),
     },
   };
 }
@@ -513,8 +683,12 @@ export async function runTrustedHighlightCommand({
   if (timeline.scenarioDigest !== scenarioDigest) {
     throw new Error("runtime compiled timeline scenario digest mismatch");
   }
-  const runtimePreflight = deps.preflightRuntime({ runtimeId: runtime.id, scenario });
-  if (command === "run") deps.requireDeliveryMetadata(scenario, scenarioOptions);
+  const runtimePreflight = deps.preflightRuntime({
+    runtimeId: runtime.id,
+    scenario,
+  });
+  if (command === "run")
+    deps.requireDeliveryMetadata(scenario, scenarioOptions);
   const selectedRunId = allocateRunId({
     requested: runId,
     scenarioDigest,
@@ -611,16 +785,23 @@ export async function runTrustedHighlightCommand({
     const pipelineOptions = {
       scenarioPath: absoluteScenario,
       artifactRoot: externalRoot,
-      landingRoot: landingRoot ? path.resolve(absoluteRepository, landingRoot) : undefined,
+      landingRoot: landingRoot
+        ? path.resolve(absoluteRepository, landingRoot)
+        : undefined,
       runId: selectedRunId,
       allowedExtensionIds: runtime.primitiveIds,
       repoRoot: absoluteRepository,
       env,
     };
     for (const phase of ["render", "qa", "stage"]) {
-      const result = await deps.pipelineRunner({ ...pipelineOptions, command: phase });
+      const result = await deps.pipelineRunner({
+        ...pipelineOptions,
+        command: phase,
+      });
       if (result?.runId !== selectedRunId || !result.phases?.[phase]) {
-        throw new Error(`trusted runtime ${phase} did not return the selected run phase`);
+        throw new Error(
+          `trusted runtime ${phase} did not return the selected run phase`,
+        );
       }
       phases[phase] = result.phases[phase];
       order.push(phase);
