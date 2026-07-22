@@ -35,6 +35,7 @@ export { runInsideDockerBoundary } from "./pipeline-eval-docker-inner.mjs";
 
 const DEFAULT_SOURCE_ROOT = path.resolve(import.meta.dirname, "../../../..");
 const DEFAULT_LANDING_ROOT = path.resolve(DEFAULT_SOURCE_ROOT, "..", "landing");
+const DOCKER_CREATE_DEADLINE_MS = 120_000;
 
 function sameRepositoryProof(actual, expected, label) {
   const fields = [
@@ -131,7 +132,7 @@ async function createAndAuthorizeContainer(state) {
     command: state.plan.command,
     args: state.plan.args,
     phase: "docker-create",
-    deadlineMs: 30_000,
+    deadlineMs: DOCKER_CREATE_DEADLINE_MS,
   });
   state.containerId = created.stdout.trim();
   if (!CONTAINER_ID_PATTERN.test(state.containerId)) {

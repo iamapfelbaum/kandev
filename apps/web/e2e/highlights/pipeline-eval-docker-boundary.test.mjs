@@ -260,7 +260,6 @@ test("Docker inputs replace linked-worktree git pointers with sanitized self-con
   assert.equal(prepared.sourceRoot.startsWith(prepared.inputRoot), true);
   assert.equal(prepared.landingRoot.startsWith(prepared.inputRoot), true);
 });
-
 test("inner boundary validates host proof and mounted source before any eval command", async () => {
   const plan = buildDockerCreatePlan(fixtureInput());
   const authorization = boundaryAuthorization(plan);
@@ -371,6 +370,7 @@ test("host lifecycle records create, inspect, exit, removal, and unchanged sourc
   });
   const runningInspect = containerInspection(plan, { id: "6".repeat(64), pid: 111 });
   const phases = [];
+  let dockerCreateDeadline;
   const responses = {
     "docker-create": { stdout: `${"6".repeat(64)}\n`, stderr: "", exitCode: 0 },
     "docker-start": { stdout: `${"6".repeat(64)}\n`, stderr: "", exitCode: 0 },
@@ -395,8 +395,9 @@ test("host lifecycle records create, inspect, exit, removal, and unchanged sourc
     sourceBefore: plan.request.source,
     landingBefore: plan.request.landing,
     dependencies: {
-      runCommand: async ({ phase }) => {
+      runCommand: async ({ phase, deadlineMs }) => {
         phases.push(phase);
+        if (phase === "docker-create") dockerCreateDeadline = deadlineMs;
         return responses[phase];
       },
       captureRepositoryProof: async (rootPath) =>
@@ -421,6 +422,7 @@ test("host lifecycle records create, inspect, exit, removal, and unchanged sourc
     "docker-remove",
     "docker-removal-check",
   ]);
+  assert.equal(dockerCreateDeadline, 120_000);
   assert.equal(receipt.status, "passed");
   assert.equal(receipt.container.removed, true);
   assert.equal(receipt.source.unchanged, true);
