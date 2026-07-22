@@ -1,0 +1,60 @@
+{
+  "$schema": "https://kandev.com/schemas/highlight-scenario-v1.json",
+  "schemaVersion": 1,
+  "id": "quick-start",
+  "title": "Declarative Highlight quick start",
+  "description": "Open the task composer from a deterministic seeded board.",
+  "profile": {
+    "kind": "desktop",
+    "viewport": {
+      "width": 1920,
+      "height": 1200
+    },
+    "deviceScaleFactor": 2
+  },
+  "seed": {
+    "recipe": "kandev.highlight.quick-start",
+    "parameters": {}
+  },
+  "setup": {
+    "route": "workspace.board",
+    "primitives": []
+  },
+  "story": {
+    "recipe": "kandev.short-feature",
+    "openingSettleMs": 600,
+    "actions": [
+      {
+        "kind": "waitForVisible",
+        "target": {
+          "testId": "create-task-button"
+        },
+        "timeoutMs": 5000,
+        "label": "Board controls are ready"
+      },
+      {
+        "kind": "click",
+        "target": {
+          "testId": "create-task-button"
+        },
+        "cursorDurationMs": 420,
+        "settleMs": 200,
+        "label": "Open task composer"
+      },
+      {
+        "kind": "waitForVisible",
+        "target": {
+          "testId": "create-task-dialog"
+        },
+        "timeoutMs": 5000,
+        "label": "Task composer is open"
+      },
+      {
+        "kind": "pause",
+        "durationMs": 400,
+        "label": "Hold readable result"
+      }
+    ],
+    "endingSettleMs": 700
+  }
+}
