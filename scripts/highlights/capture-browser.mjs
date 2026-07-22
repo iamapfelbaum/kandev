@@ -49,7 +49,9 @@ export function overlayBootstrap() {
     };
   };
   globalThis.__kandevHighlightOverlay = applyOverlay;
-  globalThis.__kandevHighlightInputLedger ??= [];
+  // Main-world telemetry drives the overlay only. It is forgeable by the app
+  // and must never be treated as receipt authority.
+  globalThis.__kandevHighlightObservedInputLedger ??= [];
   if (!globalThis.__kandevHighlightInputListenersInstalled) {
     const record = ({
       eventType,
@@ -65,9 +67,11 @@ export function overlayBootstrap() {
         y,
         visible: true,
       });
-      const ledger = globalThis.__kandevHighlightInputLedger;
+      const ledger = globalThis.__kandevHighlightObservedInputLedger;
       const entry = {
         sequence: ledger.length + 1,
+        authority: "dom-observation",
+        observationalOnly: true,
         eventType,
         inputKind,
         x,
@@ -151,72 +155,40 @@ function mouseButtons(button) {
   return button === "right" ? 2 : button === "middle" ? 4 : 1;
 }
 
-function defaultTrustedEventBarrier(page) {
-  return {
-    async arm(expected) {
-      const afterSequence = await page.evaluate(
-        () => globalThis.__kandevHighlightInputLedger?.at(-1)?.sequence ?? 0,
-      );
-      return async () => {
-        const handle = await page.waitForFunction(
-          ({ after, eventTypes, inputKind, x, y }) => {
-            const ledger = globalThis.__kandevHighlightInputLedger ?? [];
-            return (
-              ledger.find(
-                (entry) =>
-                  entry.sequence > after &&
-                  eventTypes.includes(entry.eventType) &&
-                  entry.inputKind === inputKind &&
-                  Math.abs(entry.x - x) <= 0.75 &&
-                  Math.abs(entry.y - y) <= 0.75,
-              ) ?? false
-            );
-          },
-          { after: afterSequence, ...expected },
-          { timeout: 2_000 },
-        );
-        try {
-          return await handle.jsonValue();
-        } finally {
-          await handle.dispose();
-        }
-      };
-    },
-  };
-}
-
-function assertTrustedEventProof(proof, expected) {
-  if (
-    !proof ||
-    proof.isTrusted !== true ||
-    !expected.eventTypes.includes(proof.eventType) ||
-    proof.inputKind !== expected.inputKind ||
-    Math.abs(proof.x - expected.x) > 0.75 ||
-    Math.abs(proof.y - expected.y) > 0.75
-  ) {
-    throw new Error(
-      `trusted input event was not observed in overlay ledger for ${expected.eventTypes.join("/")} at ${expected.x},${expected.y}`,
-    );
-  }
-  return structuredClone(proof);
-}
-
-export function createTrustedInputAdapters({
-  page,
-  cdp,
-  inputKind,
-  trustedEventBarrier,
-} = {}) {
+export function createTrustedInputAdapters({ page, cdp, inputKind } = {}) {
   if (!page || !cdp)
     throw new Error("trusted input needs page and CDP session");
   if (!new Set(["desktop", "native-mobile"]).has(inputKind))
     throw new Error("inputKind must be desktop or native-mobile");
-  const barrier = trustedEventBarrier ?? defaultTrustedEventBarrier(page);
   const ledger = [];
-  const dispatch = async (method, params, expected) => {
-    const observe = await barrier.arm(expected);
+  let nextSequence = 0;
+  const dispatch = async (method, params, { operation, x, y }) => {
+    // Only a successful host-side CDP command can advance this ledger. No
+    // browser-main-world value participates in the authoritative proof.
     await cdp.send(method, params);
-    const proof = assertTrustedEventProof(await observe(), expected);
+    nextSequence += 1;
+    const coordinates = Object.freeze({ x, y });
+    const touchPoints = Object.freeze(
+      (params.touchPoints ?? []).map((point) => Object.freeze({ ...point })),
+    );
+    const proof = Object.freeze({
+      contract: "kandev-highlight-host-input-dispatch-v1",
+      sequence: nextSequence,
+      authority: "host-cdp",
+      dispatchSucceeded: true,
+      operation,
+      cdpMethod: method,
+      type: params.type,
+      inputKind,
+      coordinates,
+      key: params.key ?? null,
+      code: params.code ?? null,
+      text: params.text ?? null,
+      button: params.button ?? null,
+      buttons: params.buttons ?? null,
+      clickCount: params.clickCount ?? null,
+      touchPoints,
+    });
     ledger.push(proof);
     return proof;
   };
@@ -231,7 +203,7 @@ export function createTrustedInputAdapters({
           button: "none",
           buttons: 0,
         },
-        { eventTypes: ["pointermove"], inputKind, x, y },
+        { operation: "cursor-move", x, y },
       );
       return;
     }
@@ -250,14 +222,14 @@ export function createTrustedInputAdapters({
           type: "touchStart",
           touchPoints: [touchPoint(x, y)],
         },
-        { eventTypes: ["touchstart"], inputKind, x, y },
+        { operation: "activation-start", x, y },
       );
       if (typeof page.waitForTimeout === "function")
         await page.waitForTimeout(48);
       await dispatch(
         "Input.dispatchTouchEvent",
         { type: "touchEnd", touchPoints: [] },
-        { eventTypes: ["touchend"], inputKind, x, y },
+        { operation: "activation-end", x, y },
       );
       return;
     }
@@ -265,12 +237,12 @@ export function createTrustedInputAdapters({
     await dispatch(
       "Input.dispatchMouseEvent",
       { type: "mousePressed", x, y, button, buttons, clickCount },
-      { eventTypes: ["pointerdown"], inputKind, x, y },
+      { operation: "activation-start", x, y },
     );
     await dispatch(
       "Input.dispatchMouseEvent",
       { type: "mouseReleased", x, y, button, buttons: 0, clickCount },
-      { eventTypes: ["pointerup"], inputKind, x, y },
+      { operation: "activation-end", x, y },
     );
   };
   const trustedGesture = {
@@ -279,7 +251,7 @@ export function createTrustedInputAdapters({
         await dispatch(
           "Input.dispatchTouchEvent",
           { type: "touchStart", touchPoints: [touchPoint(x, y)] },
-          { eventTypes: ["touchstart"], inputKind, x, y },
+          { operation: "gesture-start", x, y },
         );
       } else {
         await dispatch(
@@ -292,7 +264,7 @@ export function createTrustedInputAdapters({
             buttons: 1,
             clickCount: 1,
           },
-          { eventTypes: ["pointerdown"], inputKind, x, y },
+          { operation: "gesture-start", x, y },
         );
       }
     },
@@ -301,13 +273,13 @@ export function createTrustedInputAdapters({
         await dispatch(
           "Input.dispatchTouchEvent",
           { type: "touchMove", touchPoints: [touchPoint(x, y)] },
-          { eventTypes: ["touchmove"], inputKind, x, y },
+          { operation: "gesture-move", x, y },
         );
       } else {
         await dispatch(
           "Input.dispatchMouseEvent",
           { type: "mouseMoved", x, y, button: "left", buttons: 1 },
-          { eventTypes: ["pointermove"], inputKind, x, y },
+          { operation: "gesture-move", x, y },
         );
       }
     },
@@ -316,7 +288,7 @@ export function createTrustedInputAdapters({
         await dispatch(
           "Input.dispatchTouchEvent",
           { type: "touchEnd", touchPoints: [] },
-          { eventTypes: ["touchend"], inputKind, x, y },
+          { operation: "gesture-end", x, y },
         );
       } else {
         await dispatch(
@@ -329,7 +301,7 @@ export function createTrustedInputAdapters({
             buttons: 0,
             clickCount: 1,
           },
-          { eventTypes: ["pointerup"], inputKind, x, y },
+          { operation: "gesture-end", x, y },
         );
       }
     },

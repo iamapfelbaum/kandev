@@ -442,13 +442,32 @@ test("configures exact desktop and native-mobile CDP metrics without crop", asyn
       sourceHeight: profile.sourceHeight,
       nativeMobile: expectedMobile,
     });
+    if (expectedMobile) {
+      assert.deepEqual(
+        {
+          cssSurface: [measured.cssWidth, measured.cssHeight],
+          dpr: measured.dpr,
+          captureSurface: [measured.sourceWidth, measured.sourceHeight],
+          mobile: calls[0][1].mobile,
+          touchEnabled: calls[1][1].enabled,
+          maxTouchPoints: calls[1][1].maxTouchPoints,
+        },
+        {
+          cssSurface: [430, 932],
+          dpr: 3,
+          captureSurface: [1_290, 2_796],
+          mobile: true,
+          touchEnabled: true,
+          maxTouchPoints: 1,
+        },
+      );
+    }
   }
 });
 
 test("native-mobile passive choreography is overlay-only and activation uses CDP touch", async () => {
   const calls = [];
   const overlay = [];
-  const order = [];
   const cdp = {
     async send(method, params) {
       calls.push([method, params]);
@@ -463,20 +482,6 @@ test("native-mobile passive choreography is overlay-only and activation uses CDP
     page,
     cdp,
     inputKind: "native-mobile",
-    trustedEventBarrier: {
-      async arm(expected) {
-        order.push(`arm:${expected.eventTypes.join("|")}`);
-        return async () => {
-          order.push("observed");
-          return {
-            sequence: order.length,
-            eventType: expected.eventTypes[0],
-            ...expected,
-            isTrusted: true,
-          };
-        };
-      },
-    },
   });
 
   await adapters.trustedCursor({
@@ -513,13 +518,38 @@ test("native-mobile passive choreography is overlay-only and activation uses CDP
     overlay.map((entry) => entry.kind),
     ["cursor"],
   );
-  assert.deepEqual(order, [
-    "arm:touchstart",
-    "observed",
-    "arm:touchend",
-    "observed",
-  ]);
-  assert.equal(adapters.ledger.length, 2);
+  assert.deepEqual(
+    adapters.ledger.map(
+      ({ sequence, authority, operation, type, coordinates, touchPoints }) => ({
+        sequence,
+        authority,
+        operation,
+        type,
+        coordinates,
+        touchPoints,
+      }),
+    ),
+    [
+      {
+        sequence: 1,
+        authority: "host-cdp",
+        operation: "activation-start",
+        type: "touchStart",
+        coordinates: { x: 120, y: 240 },
+        touchPoints: [
+          { x: 120, y: 240, radiusX: 8, radiusY: 8, force: 1, id: 1 },
+        ],
+      },
+      {
+        sequence: 2,
+        authority: "host-cdp",
+        operation: "activation-end",
+        type: "touchEnd",
+        coordinates: { x: 120, y: 240 },
+        touchPoints: [],
+      },
+    ],
+  );
 });
 
 test("native-mobile drag gesture emits trusted touch start, move, and end", async () => {
@@ -534,16 +564,6 @@ test("native-mobile drag gesture emits trusted touch start, move, and end", asyn
     page,
     cdp,
     inputKind: "native-mobile",
-    trustedEventBarrier: {
-      async arm(expected) {
-        return async () => ({
-          sequence: calls.length,
-          eventType: expected.eventTypes[0],
-          ...expected,
-          isTrusted: true,
-        });
-      },
-    },
   });
 
   await adapters.trustedGesture.start({ x: 10, y: 20 });
@@ -558,6 +578,34 @@ test("native-mobile drag gesture emits trusted touch start, move, and end", asyn
     { x: 30, y: 40, radiusX: 8, radiusY: 8, force: 1, id: 1 },
   ]);
   assert.deepEqual(calls[2][1].touchPoints, []);
+  assert.deepEqual(
+    adapters.ledger.map(({ sequence, operation, type, coordinates }) => ({
+      sequence,
+      operation,
+      type,
+      coordinates,
+    })),
+    [
+      {
+        sequence: 1,
+        operation: "gesture-start",
+        type: "touchStart",
+        coordinates: { x: 10, y: 20 },
+      },
+      {
+        sequence: 2,
+        operation: "gesture-move",
+        type: "touchMove",
+        coordinates: { x: 30, y: 40 },
+      },
+      {
+        sequence: 3,
+        operation: "gesture-end",
+        type: "touchEnd",
+        coordinates: { x: 30, y: 40 },
+      },
+    ],
+  );
 });
 
 test("desktop activation remains trusted CDP mouse input", async () => {
@@ -572,16 +620,6 @@ test("desktop activation remains trusted CDP mouse input", async () => {
     page,
     cdp,
     inputKind: "desktop",
-    trustedEventBarrier: {
-      async arm(expected) {
-        return async () => ({
-          sequence: calls.length,
-          eventType: expected.eventTypes[0],
-          ...expected,
-          isTrusted: true,
-        });
-      },
-    },
   });
 
   await adapters.trustedActivation({
@@ -615,10 +653,50 @@ test("desktop activation remains trusted CDP mouse input", async () => {
       },
     ],
   ]);
-  assert.equal(adapters.ledger.length, 2);
+  assert.deepEqual(
+    adapters.ledger.map(
+      ({
+        sequence,
+        authority,
+        operation,
+        type,
+        coordinates,
+        button,
+        clickCount,
+      }) => ({
+        sequence,
+        authority,
+        operation,
+        type,
+        coordinates,
+        button,
+        clickCount,
+      }),
+    ),
+    [
+      {
+        sequence: 1,
+        authority: "host-cdp",
+        operation: "activation-start",
+        type: "mousePressed",
+        coordinates: { x: 10, y: 20 },
+        button: "right",
+        clickCount: 2,
+      },
+      {
+        sequence: 2,
+        authority: "host-cdp",
+        operation: "activation-end",
+        type: "mouseReleased",
+        coordinates: { x: 10, y: 20 },
+        button: "right",
+        clickCount: 2,
+      },
+    ],
+  );
 });
 
-test("overlay applies trusted browser events atomically and records an exact ledger", async (t) => {
+test("overlay labels main-world browser-event records as observational only", async (t) => {
   const { overlayBootstrap } = await import("./capture-source.mjs");
   const listeners = new Map();
   const overlay = {
@@ -639,7 +717,7 @@ test("overlay applies trusted browser events atomically and records an exact led
     if (previousDocument === undefined) delete globalThis.document;
     else globalThis.document = previousDocument;
     delete globalThis.__kandevHighlightOverlay;
-    delete globalThis.__kandevHighlightInputLedger;
+    delete globalThis.__kandevHighlightObservedInputLedger;
     delete globalThis.__kandevHighlightInputListenersInstalled;
   });
 
@@ -668,9 +746,19 @@ test("overlay applies trusted browser events atomically and records an exact led
   });
 
   assert.deepEqual(
-    globalThis.__kandevHighlightInputLedger.map(
-      ({ sequence, eventType, x, y, inputKind }) => ({
+    globalThis.__kandevHighlightObservedInputLedger.map(
+      ({
         sequence,
+        authority,
+        observationalOnly,
+        eventType,
+        x,
+        y,
+        inputKind,
+      }) => ({
+        sequence,
+        authority,
+        observationalOnly,
         eventType,
         x,
         y,
@@ -680,6 +768,8 @@ test("overlay applies trusted browser events atomically and records an exact led
     [
       {
         sequence: 1,
+        authority: "dom-observation",
+        observationalOnly: true,
         eventType: "pointermove",
         x: 31,
         y: 47,
@@ -687,6 +777,8 @@ test("overlay applies trusted browser events atomically and records an exact led
       },
       {
         sequence: 2,
+        authority: "dom-observation",
+        observationalOnly: true,
         eventType: "touchstart",
         x: 80,
         y: 90,
