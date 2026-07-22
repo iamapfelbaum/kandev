@@ -1203,6 +1203,7 @@ async function collectRunEvidence({
 
 async function configuredToolchainEnvironment(inheritedEnv = process.env) {
   const environment = { ...inheritedEnv };
+  environment.KANDEV_HIGHLIGHT_CHROMIUM_SANDBOX = "auto";
   const result = await runBoundedSubprocess({
     command: "go",
     args: ["env", "GOCACHE", "GOMODCACHE", "GOPATH"],

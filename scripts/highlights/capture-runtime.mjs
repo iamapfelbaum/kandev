@@ -6,6 +6,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { resolveCaptureProfile } from "./camera-compiler.mjs";
+import {
+  defaultChromiumSandboxPolicy,
+  validateChromiumSandboxPolicy,
+} from "./chromium-sandbox-contract.mjs";
 
 const SAFE_ID = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 const SAFE_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
@@ -291,6 +295,7 @@ export function planCaptureRuntime({
   displayNumber,
   cdpPort,
   browserExecutable,
+  chromiumSandbox = defaultChromiumSandboxPolicy(),
   xvfbExecutable = "Xvfb",
 } = {}) {
   if (typeof scenarioId !== "string" || !SAFE_ID.test(scenarioId)) {
@@ -316,6 +321,7 @@ export function planCaptureRuntime({
       "browserExecutable must be an absolute Playwright Chromium path",
     );
   }
+  const sandboxPolicy = validateChromiumSandboxPolicy(chromiumSandbox);
   const captureProfile = normalizeProfile(profile);
   const resolvedRoot = path.resolve(artifactRoot);
   const resolvedRepositories = repositoryRoots.map((entry) =>
@@ -360,6 +366,7 @@ export function planCaptureRuntime({
       mobile: captureProfile.nativeMobile,
       touch: captureProfile.nativeMobile,
     },
+    chromiumSandbox: sandboxPolicy,
     xvfb: {
       name: "xvfb",
       command: xvfbExecutable,
@@ -395,6 +402,7 @@ export function planCaptureRuntime({
         "--kiosk",
         "--window-position=0,0",
         `--window-size=${captureProfile.sourceWidth},${captureProfile.sourceHeight}`,
+        ...(sandboxPolicy.mode === "disabled" ? ["--no-sandbox"] : []),
         "about:blank",
       ],
       env: { DISPLAY: display },

@@ -10,6 +10,7 @@ import {
 import { preflightHighlightRuntime } from "./runtime-catalog.mjs";
 import { computeScenarioDigest, readScenario } from "./scenario.mjs";
 import { isDisplayAvailable } from "./capture-runtime.mjs";
+import { resolveChromiumSandboxPolicy } from "./chromium-sandbox.mjs";
 import { verifySourceGate } from "./source-gate.mjs";
 import {
   canonicalJson,
@@ -179,6 +180,7 @@ function dependenciesWithDefaults(dependencies) {
     verifySourceGate,
     verifyBuildProvenance: verifyCaptureBuildProvenance,
     preflightCaptureIntegration,
+    resolveChromiumSandboxPolicy,
     selectIntegrationPortOffset,
     processRunner: runOwnedRuntimeProcess,
     waitForPortRelease: waitForIntegrationPortRelease,
@@ -194,6 +196,7 @@ function buildWorkerRequest({
   sourceProof,
   build,
   tools,
+  chromiumSandbox,
   port,
   bundleRoot,
 }) {
@@ -212,6 +215,7 @@ function buildWorkerRequest({
     sourceProof,
     build,
     tools,
+    chromiumSandbox,
     ports: { offset: port.offset, backend: port.backendPort },
   });
 }
@@ -258,6 +262,10 @@ export async function runHighlightRuntimeHost({
       webRoot: path.join(request.repositoryRoot, "apps", "web"),
     }),
   );
+  const chromiumSandbox = await deps.resolveChromiumSandboxPolicy({
+    inheritedEnv,
+    chromiumExecutable: tools.chromium,
+  });
   const port = await deps.selectIntegrationPortOffset();
   if (
     !Number.isInteger(port?.offset) ||
@@ -293,6 +301,7 @@ export async function runHighlightRuntimeHost({
       sourceProof: sourceProofBefore,
       build,
       tools,
+      chromiumSandbox,
       port,
       bundleRoot: paths.bundleRoot,
     });

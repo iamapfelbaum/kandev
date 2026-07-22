@@ -410,6 +410,7 @@ export async function verifyRuntimeCaptureTeardown(
       "display",
       "displayNumber",
       "cdpPort",
+      "chromiumSandbox",
       "artifactRoot",
       "profileDir",
       "lockPath",
@@ -423,6 +424,8 @@ export async function verifyRuntimeCaptureTeardown(
     !Number.isInteger(runtime.allocation.cdpPort) ||
     runtime.allocation.cdpPort < 1_024 ||
     runtime.allocation.cdpPort > 65_535 ||
+    canonicalJson(runtime.allocation.chromiumSandbox) !==
+      canonicalJson(workerRequest.chromiumSandbox) ||
     runtime.allocation.artifactRoot !== expected.captureRoot ||
     runtime.allocation.profileDir !== expected.captureProfileDir ||
     runtime.allocation.lockPath !== expected.captureLockPath

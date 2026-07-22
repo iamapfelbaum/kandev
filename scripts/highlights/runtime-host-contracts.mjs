@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 
+import { validateChromiumSandboxPolicy } from "./chromium-sandbox-contract.mjs";
 import { resolveHighlightRuntime } from "./runtime-catalog.mjs";
 import { assertExternalArtifactRoot } from "./source-gate.mjs";
 
@@ -39,6 +40,7 @@ const WORKER_REQUEST_KEYS = Object.freeze([
   "sourceProof",
   "build",
   "tools",
+  "chromiumSandbox",
   "ports",
 ]);
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -376,6 +378,7 @@ export function validateRuntimeWorkerRequest(value) {
       "runtime worker tools",
     ),
   );
+  const chromiumSandbox = validateChromiumSandboxPolicy(value.chromiumSandbox);
   requireExactKeys(value.ports, ["offset", "backend"], "runtime worker ports");
   if (
     !Number.isInteger(value.ports.offset) ||
@@ -402,6 +405,7 @@ export function validateRuntimeWorkerRequest(value) {
     sourceProof: structuredClone(sourceProof),
     build: structuredClone(value.build),
     tools,
+    chromiumSandbox,
     ports: structuredClone(value.ports),
   };
 }

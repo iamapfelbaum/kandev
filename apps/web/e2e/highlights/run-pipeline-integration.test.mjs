@@ -642,3 +642,12 @@ test("snapshot and dry-run repository proofs reject any clone or source mutation
     /promotion dry-run.*changed/i,
   );
 });
+
+test("fresh-agent eval selects only the closed host Chromium sandbox policy", async () => {
+  const source = await fs.readFile(path.join(HERE, "run-pipeline-integration.mjs"), "utf8");
+  assert.match(source, /environment\.KANDEV_HIGHLIGHT_CHROMIUM_SANDBOX\s*=\s*"auto"/);
+  assert.doesNotMatch(
+    source,
+    /CHROMIUM_(?:ARGS|FLAGS)|BROWSER_(?:ARGS|FLAGS)|--disable-web-security/,
+  );
+});

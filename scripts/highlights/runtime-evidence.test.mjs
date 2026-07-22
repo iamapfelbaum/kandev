@@ -273,6 +273,10 @@ async function evidenceFixture(
       mockAgent: "/verified/mock-agent",
       webBuild: "/verified/index.html",
     },
+    chromiumSandbox: {
+      mode: "native",
+      proof: { status: "available", reason: "test native sandbox" },
+    },
     ports: { offset: 7, backend: 18_087 },
   };
   await writeJson(requestPath, workerRequest);

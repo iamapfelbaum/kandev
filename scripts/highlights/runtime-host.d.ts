@@ -72,7 +72,16 @@ export interface HighlightRuntimeWorkerRequest {
   sourceProof: HighlightRuntimeSourceProof;
   build: HighlightRuntimeBuildIdentity;
   tools: HighlightRuntimeToolPaths;
+  chromiumSandbox: HighlightChromiumSandboxPolicy;
   ports: { offset: number; backend: number };
+}
+
+export interface HighlightChromiumSandboxPolicy {
+  mode: "native" | "disabled";
+  proof: {
+    status: "available" | "unavailable" | "unknown";
+    reason: string;
+  };
 }
 
 export interface HighlightApplicationRuntimeProof {

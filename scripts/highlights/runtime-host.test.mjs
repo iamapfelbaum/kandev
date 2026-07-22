@@ -276,6 +276,7 @@ async function writeSuccessfulWorkerResult({
         display: ":240.0",
         displayNumber: 240,
         cdpPort: 50_001,
+        chromiumSandbox: workerRequest.chromiumSandbox,
         artifactRoot: path.join(captureRoot, "capture"),
         profileDir: path.join(
           captureRoot,
@@ -407,6 +408,10 @@ function dependencies(buildManifestPath, overrides = {}) {
           webBuild: "/verified/build/web-dist/index.html",
         };
       },
+      resolveChromiumSandboxPolicy: async () => ({
+        mode: "native",
+        proof: { status: "available", reason: "test native sandbox" },
+      }),
       selectIntegrationPortOffset: async () => {
         events.push("port");
         return { offset: 7, backendPort: 18_087 };
@@ -528,6 +533,10 @@ test("generated worker request has an exact non-extensible contract", async (t) 
       mockAgent: "/verified/mock-agent",
       webBuild: "/verified/dist/index.html",
     },
+    chromiumSandbox: {
+      mode: "disabled",
+      proof: { status: "unavailable", reason: "AppArmor restriction" },
+    },
     ports: { offset: 7, backend: 18_087 },
   };
   assert.deepEqual(validateRuntimeWorkerRequest(workerRequest), workerRequest);
@@ -546,6 +555,17 @@ test("generated worker request has an exact non-extensible contract", async (t) 
         tools: { ...workerRequest.tools, chromium: "../evil" },
       }),
     /absolute chromium path/i,
+  );
+  assert.throws(
+    () =>
+      validateRuntimeWorkerRequest({
+        ...workerRequest,
+        chromiumSandbox: {
+          mode: "--no-sandbox --disable-web-security",
+          proof: { status: "unavailable", reason: "untrusted" },
+        },
+      }),
+    /chromiumSandbox mode must be native or disabled/,
   );
 });
 
@@ -571,13 +591,23 @@ test("runtime host command has one fixed Playwright config and no request-derive
 
 test("closed host preflights then writes an immutable digest-linked post-teardown bundle", async (t) => {
   const value = await fixture(t);
-  const deps = dependencies(value.buildManifestPath);
+  let sandboxInput;
+  const deps = dependencies(value.buildManifestPath, {
+    resolveChromiumSandboxPolicy: async (input) => {
+      sandboxInput = input;
+      return {
+        mode: "disabled",
+        proof: { status: "unavailable", reason: "AppArmor restriction" },
+      };
+    },
+  });
   const result = await runHighlightRuntimeHost({
     request: value.request,
     inheritedEnv: {
       PATH: "/usr/bin",
       GH_TOKEN: "must-not-leak",
       OPENAI_API_KEY: "must-not-leak",
+      KANDEV_HIGHLIGHT_CHROMIUM_SANDBOX: "disabled",
     },
     dependencies: deps.value,
   });
@@ -610,6 +640,18 @@ test("closed host preflights then writes an immutable digest-linked post-teardow
   assert.equal(result.teardown.fixtureTempRootRemoved, true);
   assert.equal(result.execution.exitCode, 0);
   assert.equal(result.execution.signal, null);
+  assert.equal(
+    sandboxInput.inheritedEnv.KANDEV_HIGHLIGHT_CHROMIUM_SANDBOX,
+    "disabled",
+  );
+  assert.match(sandboxInput.chromiumExecutable, /chrome$/);
+  const workerRequest = JSON.parse(
+    await fs.readFile(result.bundle.requestPath, "utf8"),
+  );
+  assert.deepEqual(workerRequest.chromiumSandbox, {
+    mode: "disabled",
+    proof: { status: "unavailable", reason: "AppArmor restriction" },
+  });
   assert.deepEqual(Object.keys(result.bundle).sort(), [
     "failurePath",
     "logPath",
@@ -867,6 +909,41 @@ test("runtime host rejects capture receipts that only assert teardown", async (t
   );
 });
 
+test("runtime host rejects Chromium sandbox provenance that differs from its worker policy", async (t) => {
+  const value = await fixture(t);
+  const deps = dependencies(value.buildManifestPath, {
+    processRunner: ({ env, logPath }) =>
+      writeSuccessfulWorkerResult({
+        env,
+        logPath,
+        receiptTransform: (receipt) => ({
+          ...receipt,
+          runtime: {
+            ...receipt.runtime,
+            allocation: {
+              ...receipt.runtime.allocation,
+              chromiumSandbox: {
+                ...receipt.runtime.allocation.chromiumSandbox,
+                proof: {
+                  ...receipt.runtime.allocation.chromiumSandbox.proof,
+                  reason: "tampered provenance",
+                },
+              },
+            },
+          },
+        }),
+      }),
+  });
+
+  await assert.rejects(
+    runHighlightRuntimeHost({
+      request: value.request,
+      dependencies: deps.value,
+    }),
+    /worker-result-invalid|sandbox|capture runtime allocation/i,
+  );
+});
+
 test("runtime host observes capture CDP and X display release independently", async (t) => {
   const value = await fixture(t);
   const checkedPorts = [];
@@ -974,6 +1051,7 @@ test("fixed Playwright worker reuses backendFixture with product-like isolated s
   assert.match(specSource, /command:\s*"capture"/);
   assert.match(specSource, /createHighlightRegistries/);
   assert.match(specSource, /validateRuntimeWorkerRequest/);
+  assert.match(specSource, /chromiumSandbox:\s*request\.chromiumSandbox/);
   assert.match(configSource, /testMatch:\s*"pipeline-capture\.spec\.ts"/);
   assert.match(configSource, /workers:\s*1/);
   assert.doesNotMatch(configSource, /testMatch:\s*"capture\.spec\.ts"/);
@@ -1003,6 +1081,7 @@ test("runtime host declarations expose versioned closed requests and digest-only
   );
   assert.match(declarations, /kandev-highlight-runtime-host-request-v1/);
   assert.match(declarations, /kandev-highlight-runtime-worker-request-v1/);
+  assert.match(declarations, /chromiumSandbox: HighlightChromiumSandboxPolicy/);
   assert.match(declarations, /kandev-highlight-runtime-host-result-v1/);
   assert.match(
     declarations,

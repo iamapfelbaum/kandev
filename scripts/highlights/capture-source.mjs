@@ -7,6 +7,10 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { resolveCaptureProfile } from "./camera-compiler.mjs";
+import {
+  defaultChromiumSandboxPolicy,
+  validateChromiumSandboxPolicy,
+} from "./chromium-sandbox-contract.mjs";
 import { createCursorController } from "./cursor.mjs";
 import {
   bindCaptureNavigation,
@@ -926,6 +930,7 @@ function runtimeEvidence(plan, teardown) {
       display: plan.display,
       displayNumber: plan.displayNumber,
       cdpPort: plan.cdpPort,
+      chromiumSandbox: structuredClone(plan.chromiumSandbox),
       artifactRoot: plan.artifactRoot,
       profileDir: plan.profileDir,
       lockPath: plan.lockPath,
@@ -1494,6 +1499,7 @@ export async function captureScenario({
   displayNumber,
   cdpPort,
   browserExecutable,
+  chromiumSandbox = defaultChromiumSandboxPolicy(),
   ffmpegExecutable = "ffmpeg",
   xvfbExecutable = "Xvfb",
   seedRegistry = {},
@@ -1549,6 +1555,7 @@ export async function captureScenario({
     );
   }
   const profile = resolveCaptureProfile(scenario.profile);
+  const sandboxPolicy = validateChromiumSandboxPolicy(chromiumSandbox);
   const deps = { ...DEFAULT_DEPENDENCIES, ...dependencies };
   const coordinates =
     displayNumber && cdpPort
@@ -1576,6 +1583,7 @@ export async function captureScenario({
     runId,
     ...coordinates,
     browserExecutable: tools.chromium.executable,
+    chromiumSandbox: sandboxPolicy,
     xvfbExecutable: tools.xvfb.executable,
   });
   let phase = "runtime";

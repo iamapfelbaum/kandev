@@ -1264,6 +1264,11 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     repositoryRoot: path.join(root, "repo"),
     onVerify: (...args) => buildVerifications.push(args),
   });
+  const chromiumSandbox = {
+    mode: "disabled",
+    proof: { status: "unavailable", reason: "AppArmor restriction" },
+  };
+  let plannedRuntimeOptions;
   let currentUrl = "about:blank";
   const page = new EventEmitter();
   const context = new EventEmitter();
@@ -1315,6 +1320,7 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     runId: "r01",
     displayNumber: 261,
     cdpPort: 49_261,
+    chromiumSandbox,
     navigateRoute: async (route) => {
       events.push(`route:${route}`);
       currentUrl = "http://127.0.0.1:18080/board";
@@ -1328,7 +1334,10 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
         encoder: { name: "libx264", source: "portable-fallback" },
         attempts: [{ encoder: "libx264", ready: true, elapsedMs: 81 }],
       }),
-      planCaptureRuntime: () => plan,
+      planCaptureRuntime: (options) => {
+        plannedRuntimeOptions = options;
+        return { ...plan, chromiumSandbox: options.chromiumSandbox };
+      },
       startCaptureRuntime: async () => {
         await Promise.all([
           fs.mkdir(path.dirname(paths.rawMasterPath), { recursive: true }),
@@ -1473,6 +1482,11 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
   assert.equal(result.receipt.buildVerification.stable, true);
   assert.equal(result.receipt.runtime.teardown.processesGone, true);
   assert.equal(result.receipt.runtime.teardown.coordinatesReleased, true);
+  assert.deepEqual(plannedRuntimeOptions.chromiumSandbox, chromiumSandbox);
+  assert.deepEqual(
+    result.receipt.runtime.allocation.chromiumSandbox,
+    chromiumSandbox,
+  );
   assert.deepEqual(result.receipt.runtime.teardown.recorder, {
     exitCode: 0,
     signal: null,

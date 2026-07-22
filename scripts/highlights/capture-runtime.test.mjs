@@ -99,6 +99,60 @@ test("plans an external collision-free desktop runtime at native source dimensio
   assert.equal(plan.chromium.env.DISPLAY, ":261.0");
 });
 
+test("keeps native Chromium sandboxing by default and only disables it through the closed policy", async (t) => {
+  const paths = await fixture();
+  t.after(() => fs.rm(paths.root, { recursive: true, force: true }));
+
+  const nativePlan = planCaptureRuntime(runtimeOptions(paths));
+  assert.deepEqual(nativePlan.chromiumSandbox, {
+    mode: "native",
+    proof: {
+      status: "unknown",
+      reason: "native Chromium sandbox is required by default",
+    },
+  });
+  assert.ok(!nativePlan.chromium.args.includes("--no-sandbox"));
+
+  const disabledPlan = planCaptureRuntime(
+    runtimeOptions(paths, {
+      chromiumSandbox: {
+        mode: "disabled",
+        proof: { status: "unavailable", reason: "AppArmor restriction" },
+      },
+    }),
+  );
+  assert.deepEqual(disabledPlan.chromiumSandbox, {
+    mode: "disabled",
+    proof: { status: "unavailable", reason: "AppArmor restriction" },
+  });
+  assert.ok(disabledPlan.chromium.args.includes("--no-sandbox"));
+
+  assert.throws(
+    () =>
+      planCaptureRuntime(
+        runtimeOptions(paths, {
+          chromiumSandbox: {
+            mode: "arbitrary-args",
+            proof: { status: "unavailable", reason: "untrusted" },
+          },
+        }),
+      ),
+    /chromiumSandbox mode must be native or disabled/,
+  );
+  assert.throws(
+    () =>
+      planCaptureRuntime(
+        runtimeOptions(paths, {
+          chromiumSandbox: {
+            mode: "disabled",
+            proof: { status: "available", reason: "native works" },
+          },
+        }),
+      ),
+    /disabled.*proof.*unavailable/i,
+  );
+});
+
 test("plans native-mobile as a portrait source with mobile metrics and touch", async (t) => {
   const paths = await fixture();
   t.after(() => fs.rm(paths.root, { recursive: true, force: true }));
