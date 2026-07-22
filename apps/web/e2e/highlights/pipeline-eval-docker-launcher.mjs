@@ -4,12 +4,12 @@ import path from "node:path";
 
 import {
   CONTAINER_ID_PATTERN,
-  INNER_REQUEST_PATH,
   PLAYWRIGHT_IMAGE_REFERENCE,
   buildDockerCreatePlan,
   canonicalJson,
   captureDockerRepositoryProof,
   capturePathIdentity,
+  digestBytes,
   digestValue,
   readJson,
   validateDockerBoundaryAuthorization,
@@ -17,6 +17,7 @@ import {
   validateDockerDaemonSecurity,
   validateDockerImageInspection,
   writeJsonExclusive,
+  writeTextExclusive,
 } from "./pipeline-eval-docker-boundary.mjs";
 import { prepareDockerInputRepositories } from "./pipeline-eval-docker-input.mjs";
 import { discoverDockerToolchain } from "./pipeline-eval-docker-toolchain.mjs";
@@ -29,25 +30,10 @@ import {
 
 export { prepareDockerInputRepositories } from "./pipeline-eval-docker-input.mjs";
 export { discoverDockerToolchain } from "./pipeline-eval-docker-toolchain.mjs";
+export { runInsideDockerBoundary } from "./pipeline-eval-docker-inner.mjs";
 
 const DEFAULT_SOURCE_ROOT = path.resolve(import.meta.dirname, "../../../..");
 const DEFAULT_LANDING_ROOT = path.resolve(DEFAULT_SOURCE_ROOT, "..", "landing");
-
-function mountInfoMode(mountInfo, target) {
-  const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`(?:^|\\n)[^\\n]*\\s${escaped}\\s+([^\\s]+)`).exec(mountInfo);
-  return match?.[1]?.split(",") ?? [];
-}
-
-function assertInsideMounts(request, mountInfo) {
-  for (const value of request.mounts) {
-    const options = mountInfoMode(mountInfo, value.target);
-    const expected = value.readOnly ? "ro" : "rw";
-    if (!options.includes(expected)) {
-      throw new Error(`Docker boundary ${value.target} must be mounted ${expected}`);
-    }
-  }
-}
 
 function sameRepositoryProof(actual, expected, label) {
   const fields = [
@@ -62,98 +48,6 @@ function sameRepositoryProof(actual, expected, label) {
     }
   }
   return true;
-}
-
-function insideEnvironment(inherited = process.env) {
-  const allowed = [
-    "PATH",
-    "LANG",
-    "LC_ALL",
-    "TZ",
-    "HOME",
-    "TMPDIR",
-    "XDG_CACHE_HOME",
-    "COREPACK_HOME",
-    "COREPACK_ENABLE_NETWORK",
-    "npm_config_store_dir",
-    "GOROOT",
-    "GOPATH",
-    "GOMODCACHE",
-    "GOCACHE",
-    "GOTOOLCHAIN",
-    "CC",
-    "LD_LIBRARY_PATH",
-    "LIBRARY_PATH",
-    "C_INCLUDE_PATH",
-    "GCC_EXEC_PREFIX",
-    "PLAYWRIGHT_BROWSERS_PATH",
-  ];
-  const environment = {};
-  for (const key of allowed) {
-    if (typeof inherited[key] === "string" && inherited[key] !== "") {
-      environment[key] = inherited[key];
-    }
-  }
-  environment.KANDEV_HIGHLIGHT_CHROMIUM_SANDBOX = "disabled";
-  environment.KANDEV_HIGHLIGHT_DOCKER_BOUNDARY_AUTHORIZATION =
-    "/kandev-boundary/authorization.json";
-  return environment;
-}
-
-export async function runInsideDockerBoundary({ requestPath, dependencies = {} } = {}) {
-  if (requestPath !== INNER_REQUEST_PATH) {
-    throw new Error(`inside Docker boundary request must be ${INNER_REQUEST_PATH}`);
-  }
-  const deps = {
-    readJson: dependencies.readJson ?? readJson,
-    readFile: dependencies.readFile ?? fs.readFile,
-    captureRepositoryProof: dependencies.captureRepositoryProof ?? captureDockerRepositoryProof,
-    capturePathIdentity: dependencies.capturePathIdentity ?? capturePathIdentity,
-    writeJson: dependencies.writeJson ?? writeJsonExclusive,
-    runEvaluation: dependencies.runEvaluation,
-  };
-  const request = await deps.readJson(requestPath);
-  const authorizationPath = "/kandev-boundary/authorization.json";
-  const authorization = validateDockerBoundaryAuthorization(
-    await deps.readJson(authorizationPath),
-    request,
-  );
-  const mountInfo = await deps.readFile("/proc/self/mountinfo", "utf8");
-  assertInsideMounts(request, mountInfo);
-  for (const value of request.mounts) {
-    const currentIdentity = await deps.capturePathIdentity(value.target);
-    if (canonicalJson(currentIdentity) !== canonicalJson(value.identity)) {
-      throw new Error(`Docker boundary mount identity changed before evaluation: ${value.target}`);
-    }
-  }
-  const [source, landing] = await Promise.all([
-    deps.captureRepositoryProof(request.inner.sourceRoot, { includeOrigin: true }),
-    deps.captureRepositoryProof(request.inner.landingRoot),
-  ]);
-  sameRepositoryProof(source, request.source, "source");
-  sameRepositoryProof(landing, request.landing, "landing");
-  const runEvaluation =
-    deps.runEvaluation ??
-    (await import("./pipeline-eval-orchestrator.mjs")).runFreshAgentPipelineEvaluation;
-  const result = await runEvaluation({
-    sourceRoot: request.inner.sourceRoot,
-    landingRoot: request.inner.landingRoot,
-    evalParent: request.inner.evalParent,
-    captureDeadlineMs: request.inner.captureDeadlineMs,
-    inheritedEnv: insideEnvironment(),
-    securityEnvironment: insideEnvironment(),
-    prNumber: request.inner.prNumber,
-    securityBoundary: authorization,
-  });
-  const record = {
-    contract: "kandev-highlight-docker-boundary-inner-result-v1",
-    status: "passed",
-    requestDigest: request.requestDigest,
-    containerId: authorization.containerId,
-    result,
-  };
-  await deps.writeJson("/kandev/eval/boundary-result.json", record);
-  return result;
 }
 
 function parseJsonArray(result, label) {
@@ -209,6 +103,7 @@ function createExecutionState(input, deps) {
     failure: null,
     removed: false,
     logs: { stdout: "", stderr: "" },
+    logEvidence: null,
     sourceAfter: null,
     landingAfter: null,
     sourceUnchanged: true,
@@ -386,10 +281,7 @@ function boundaryReceipt(state) {
       : null,
     authorization: state.authorization,
     exit: state.exit,
-    logs: {
-      stdoutDigest: digestValue(state.logs.stdout ?? ""),
-      stderrDigest: digestValue(state.logs.stderr ?? ""),
-    },
+    logs: state.logEvidence,
     innerResultDigest: state.inner ? digestValue(state.inner) : null,
     error: state.failure?.message ?? null,
   };
@@ -407,6 +299,32 @@ function resolveExecutionDependencies(overrides = {}) {
     capturePathIdentity: overrides.capturePathIdentity ?? capturePathIdentity,
     readJson: overrides.readJson ?? readJson,
     writeJson: overrides.writeJson ?? writeJsonExclusive,
+    writeText: overrides.writeText ?? writeTextExclusive,
+  };
+}
+
+async function persistContainerLogs(state) {
+  const stdout = state.logs.stdout ?? "";
+  const stderr = state.logs.stderr ?? "";
+  const stdoutPath = path.join(state.evalRoot, "outer-container.stdout.log");
+  const stderrPath = path.join(state.evalRoot, "outer-container.stderr.log");
+  await Promise.all([
+    state.deps.writeText(stdoutPath, stdout),
+    state.deps.writeText(stderrPath, stderr),
+  ]);
+  state.logEvidence = {
+    stdout: {
+      path: stdoutPath,
+      bytes: Buffer.byteLength(stdout),
+      sha256: digestBytes(stdout),
+      truncated: state.logs.stdoutTruncated === true,
+    },
+    stderr: {
+      path: stderrPath,
+      bytes: Buffer.byteLength(stderr),
+      sha256: digestBytes(stderr),
+      truncated: state.logs.stderrTruncated === true,
+    },
   };
 }
 
@@ -435,6 +353,11 @@ export async function executeDockerBoundaryPlan(input = {}) {
       canonicalJson(state.upstreamSourceAfter) === canonicalJson(state.upstreamSourceBefore);
     state.upstreamLandingUnchanged =
       canonicalJson(state.upstreamLandingAfter) === canonicalJson(state.upstreamLandingBefore);
+    retainFailure(state, error);
+  }
+  try {
+    await persistContainerLogs(state);
+  } catch (error) {
     retainFailure(state, error);
   }
   const receipt = boundaryReceipt(state);

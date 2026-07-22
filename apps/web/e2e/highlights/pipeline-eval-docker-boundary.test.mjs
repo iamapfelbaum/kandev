@@ -338,6 +338,14 @@ test("host lifecycle records create, inspect, exit, removal, and unchanged sourc
   assert.equal(receipt.landing.unchanged, true);
   assert.equal(receipt.network.mode, "none");
   assert.equal(receipt.exit.code, 0);
+  assert.equal(
+    await fs.readFile(path.join(evalRoot, "outer-container.stdout.log"), "utf8"),
+    "inside passed\n",
+  );
+  assert.equal(await fs.readFile(path.join(evalRoot, "outer-container.stderr.log"), "utf8"), "");
+  assert.equal(receipt.logs.stdout.bytes, 14);
+  assert.match(receipt.logs.stdout.sha256, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(receipt.logs.stderr.bytes, 0);
 });
 
 test("Docker create plan isolates one nonroot worker and exposes only declared mounts", () => {
@@ -379,6 +387,11 @@ test("Docker create plan isolates one nonroot worker and exposes only declared m
   assert.equal(plan.request.network.mode, "none");
   assert.equal(plan.request.inner.argv[0], "/usr/bin/node");
   assert.equal(plan.request.inner.argv.at(-2), "--inside-docker-boundary");
+  assert.match(
+    plan.request.bootstrap.argv.at(-1),
+    /\/usr\/bin\/node \/kandev\/toolchain\/pnpm\/bin\/pnpm\.cjs/,
+  );
+  assert.doesNotMatch(plan.request.bootstrap.argv.at(-1), /corepack pnpm/);
   assert.throws(
     () =>
       buildDockerCreatePlan({

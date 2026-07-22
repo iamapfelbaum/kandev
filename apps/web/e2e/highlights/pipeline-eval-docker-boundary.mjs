@@ -20,7 +20,7 @@ const EXPECTED_TMPFS = Object.freeze({
 export const INNER_REQUEST_PATH = "/kandev-boundary/request.json";
 const INNER_ENTRYPOINT = "/kandev/source/apps/web/e2e/highlights/run-pipeline-integration.mjs";
 const BOOTSTRAP_SCRIPT =
-  "mkdir -p /kandev/eval/bin /kandev/eval/home /kandev/eval/cache /kandev/eval/go-cache /kandev/eval/go; printf '#!/bin/sh\\nexec corepack pnpm \"$@\"\\n' > /kandev/eval/bin/pnpm; chmod 700 /kandev/eval/bin/pnpm; while [ ! -s /kandev-boundary/authorization.json ]; do sleep 0.05; done; exec /usr/bin/node /kandev/source/apps/web/e2e/highlights/run-pipeline-integration.mjs --inside-docker-boundary /kandev-boundary/request.json";
+  "mkdir -p /kandev/eval/bin /kandev/eval/home /kandev/eval/cache /kandev/eval/go-cache /kandev/eval/go; printf '#!/bin/sh\\nexec /usr/bin/node /kandev/toolchain/pnpm/bin/pnpm.cjs \"$@\"\\n' > /kandev/eval/bin/pnpm; chmod 700 /kandev/eval/bin/pnpm; while [ ! -s /kandev-boundary/authorization.json ]; do sleep 0.05; done; exec /usr/bin/node /kandev/source/apps/web/e2e/highlights/run-pipeline-integration.mjs --inside-docker-boundary /kandev-boundary/request.json";
 
 export const PLAYWRIGHT_IMAGE_REFERENCE = `mcr.microsoft.com/playwright:v1.61.1-noble@${IMAGE_DIGEST}`;
 
@@ -39,12 +39,15 @@ export function digestValue(value) {
   return `sha256:${createHash("sha256").update(canonicalJson(value)).digest("hex")}`;
 }
 
+export function digestBytes(value) {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
 export async function readJson(filePath) {
   return JSON.parse(await fs.readFile(filePath, "utf8"));
 }
 
-export async function writeJsonExclusive(filePath, value) {
-  const bytes = `${JSON.stringify(value, null, 2)}\n`;
+async function publishExclusive(filePath, bytes) {
   const temporaryPath = path.join(
     path.dirname(filePath),
     `.${path.basename(filePath)}.${randomUUID()}.tmp`,
@@ -61,6 +64,14 @@ export async function writeJsonExclusive(filePath, value) {
     await handle?.close().catch(() => {});
     await fs.rm(temporaryPath, { force: true }).catch(() => {});
   }
+}
+
+export async function writeTextExclusive(filePath, value) {
+  await publishExclusive(filePath, value);
+}
+
+export async function writeJsonExclusive(filePath, value) {
+  await publishExclusive(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 export async function capturePathIdentity(filePath) {
@@ -174,7 +185,7 @@ function dockerEnvironment(overrides = {}) {
     HOME: "/kandev/eval/home",
     TMPDIR: "/tmp",
     XDG_CACHE_HOME: "/kandev/eval/cache",
-    COREPACK_HOME: "/kandev/toolchain/corepack",
+    COREPACK_HOME: "/kandev/toolchain/corepack-disabled",
     COREPACK_ENABLE_NETWORK: "0",
     npm_config_store_dir: "/kandev/toolchain/pnpm-store/v3",
     GOROOT: "/kandev/toolchain/go",

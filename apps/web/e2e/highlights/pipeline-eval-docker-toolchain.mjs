@@ -6,6 +6,7 @@ import { capturePathIdentity } from "./pipeline-eval-docker-boundary.mjs";
 import { runBoundedSubprocess } from "./pipeline-eval-shared.mjs";
 
 const CONTAINER_GO_ROOT = "/kandev/toolchain/go";
+const PNPM_VERSION_PATTERN = /^pnpm@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/;
 
 async function existingCanonicalPath(filePath, label) {
   const resolved = path.resolve(filePath);
@@ -41,6 +42,11 @@ export async function discoverDockerToolchain({
   runCommand = runBoundedSubprocess,
 } = {}) {
   const appsRoot = path.join(sourceRoot, "apps");
+  const packageJson = JSON.parse(await fs.readFile(path.join(appsRoot, "package.json"), "utf8"));
+  const pnpmVersion = PNPM_VERSION_PATTERN.exec(packageJson.packageManager ?? "")?.[1];
+  if (!pnpmVersion) {
+    throw new Error("Docker toolchain requires an exact checked-in pnpm packageManager version");
+  }
   const goValues = (
     await commandOutput(runCommand, {
       command: "go",
@@ -69,6 +75,7 @@ export async function discoverDockerToolchain({
   });
   const corepackHome =
     inheritedEnv.COREPACK_HOME ?? path.join(os.homedir(), ".cache", "node", "corepack");
+  const pnpmRoot = path.join(corepackHome, "v1", "pnpm", pnpmVersion);
   const executableSources = {
     make: "/usr/bin/make",
     gcc: "/usr/bin/gcc",
@@ -80,7 +87,7 @@ export async function discoverDockerToolchain({
     "pkg-config": "/usr/bin/pkg-config",
   };
   const mounts = await Promise.all([
-    toolMount(corepackHome, "/kandev/toolchain/corepack"),
+    toolMount(pnpmRoot, "/kandev/toolchain/pnpm"),
     toolMount(pnpmStore, "/kandev/toolchain/pnpm-store/v3"),
     toolMount(goRoot, CONTAINER_GO_ROOT),
     toolMount(goModCache, "/kandev/toolchain/go-mod"),
