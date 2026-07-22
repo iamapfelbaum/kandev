@@ -139,6 +139,9 @@ export const SCENARIO_SCHEMA_ID: string;
 export const MAX_STORY_DURATION_MS: number;
 export type ScenarioTemplateId = "quick-start";
 export const SCENARIO_TEMPLATE_IDS: readonly ScenarioTemplateId[];
+export type ScenarioScaffoldOptions =
+  | { destination: string; templateId: ScenarioTemplateId; id?: never; title?: never; profileKind?: never; dryRun?: boolean }
+  | { destination: string; templateId?: never; id: string; title?: string; profileKind?: "desktop" | "native-mobile"; dryRun?: boolean };
 export function validateScenario(scenario: unknown, options?: ScenarioOptions): ScenarioValidationResult;
 export function assertValidScenario(scenario: unknown, options?: ScenarioOptions): HighlightScenarioV1;
 export function readScenario(filePath: string, options?: ScenarioOptions): Promise<HighlightScenarioV1>;
@@ -149,4 +152,4 @@ export function requireDeliveryMetadata(scenario: HighlightScenarioV1, options?:
 export function compileTimeline(scenario: HighlightScenarioV1, options?: ScenarioOptions): object;
 export function renderStoryboard(timeline: object, options?: { format?: "json" | "markdown" }): string;
 export function createScenarioScaffold(options: { id: string; title?: string; profileKind?: "desktop" | "native-mobile" }): HighlightScenarioV1;
-export function writeScenarioScaffold(options: { destination: string; id?: string; title?: string; profileKind?: "desktop" | "native-mobile"; templateId?: ScenarioTemplateId; dryRun?: boolean }): Promise<{ destination: string; dryRun: boolean; scenario: HighlightScenarioV1; contents: string }>;
+export function writeScenarioScaffold(options: ScenarioScaffoldOptions): Promise<{ destination: string; dryRun: boolean; scenario: HighlightScenarioV1; contents: string }>;

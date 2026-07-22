@@ -313,19 +313,19 @@ export async function readScenarioTemplate(templateId) {
 
 async function createScenarioTemplateScaffold({ templateId, id, title, profileKind }) {
   const template = await readScenarioTemplate(templateId);
-  if (profileKind !== undefined && profileKind !== template.profile.kind) {
+  const overrideFlags = [
+    ["--id", id],
+    ["--title", title],
+    ["--profile", profileKind],
+  ]
+    .filter(([, value]) => value !== undefined)
+    .map(([flag]) => flag);
+  if (overrideFlags.length > 0) {
     throw new Error(
-      `scenario template '${templateId}' supports desktop only; native-mobile needs its own checked-in template`,
+      `scenario template '${templateId}' is a canonical ${template.profile.kind} executable example and does not accept ${overrideFlags.join(", ")}; use a separate scaffold so pinned delivery metadata cannot become stale`,
     );
   }
-  const scenario = structuredClone(template);
-  if (id !== undefined) scenario.id = id;
-  if (title !== undefined) {
-    scenario.title = title;
-  } else if (id !== undefined && id !== template.id) {
-    scenario.title = titleFromId(id);
-  }
-  return assertValidScenario(scenario);
+  return assertValidScenario(structuredClone(template));
 }
 
 export async function writeScenarioScaffold({

@@ -106,6 +106,13 @@ test("checked-in JSON Schema, declarations, and example describe schema v1", asy
   assert.deepEqual(validateScenario(example), { ok: true, errors: [] });
 });
 
+test("scaffold declarations make canonical template overrides unrepresentable", async () => {
+  const declarations = await fs.readFile(new URL("./scenario.d.ts", import.meta.url), "utf8");
+  assert.match(declarations, /export type ScenarioScaffoldOptions/);
+  assert.match(declarations, /templateId: ScenarioTemplateId; id\?: never; title\?: never; profileKind\?: never;/);
+  assert.match(declarations, /writeScenarioScaffold\(options: ScenarioScaffoldOptions\)/);
+});
+
 test("delivery metadata is optional for capture but required promotion errors at its JSON pointer", async () => {
   const { compileTimeline, requireDeliveryMetadata, validateScenario } = await import(scenarioModule);
   const scenario = validScenario();
@@ -567,28 +574,26 @@ test("quick-start template is checked in, promotion-ready, and digest-stable", a
 });
 
 test("quick-start template scaffolds a runnable scenario without edits", async () => {
-  const { readScenario, writeScenarioScaffold } = await import(scenarioModule);
+  const { computeScenarioDigest, readScenario, readScenarioTemplate, writeScenarioScaffold } = await import(scenarioModule);
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "highlight-template-"));
   tempDirs.push(dir);
   const destination = path.join(dir, "fresh-agent.scenario.json");
+  const canonical = await readScenarioTemplate("quick-start");
 
   const preview = await writeScenarioScaffold({
     destination,
     templateId: "quick-start",
-    id: "fresh-agent",
-    title: "Fresh agent quick start",
     dryRun: true,
   });
-  assert.equal(preview.scenario.id, "fresh-agent");
-  assert.equal(preview.scenario.title, "Fresh agent quick start");
+  assert.equal(preview.scenario.id, "quick-start");
+  assert.equal(preview.scenario.title, "Quick start");
   assert.equal(preview.scenario.delivery.revision, "r1");
+  assert.equal(computeScenarioDigest(preview.scenario), computeScenarioDigest(canonical));
   await assert.rejects(fs.access(destination), /ENOENT/);
 
   await writeScenarioScaffold({
     destination,
     templateId: "quick-start",
-    id: "fresh-agent",
-    title: "Fresh agent quick start",
   });
   assert.equal((await readScenario(destination)).seed.recipe, "kandev.highlight.quick-start");
   await assert.rejects(
@@ -596,6 +601,25 @@ test("quick-start template scaffolds a runnable scenario without edits", async (
     /overwrite|exists/i,
   );
 });
+
+for (const { flag, override } of [
+  { flag: "--id", override: { id: "quick-start" } },
+  { flag: "--title", override: { title: "Quick start" } },
+  { flag: "--profile", override: { profileKind: "desktop" } },
+]) {
+  test(`quick-start template rejects ${flag} override even when value is canonical`, async () => {
+    const { writeScenarioScaffold } = await import(scenarioModule);
+    await assert.rejects(
+      writeScenarioScaffold({
+        destination: path.resolve(`/tmp/quick-start-${flag.slice(2)}.json`),
+        templateId: "quick-start",
+        ...override,
+        dryRun: true,
+      }),
+      new RegExp(`quick-start.*canonical.*does not accept ${flag}`, "i"),
+    );
+  });
+}
 
 test("template selection is closed and rejects unsupported native-mobile output", async () => {
   const { readScenarioTemplate, writeScenarioScaffold } = await import(scenarioModule);
