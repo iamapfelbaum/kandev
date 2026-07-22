@@ -44,8 +44,67 @@ type BrowserContextLike = {
   ) => Promise<unknown>;
 };
 
+type ConsoleMessageLike = {
+  type: () => string;
+  text: () => string;
+};
+
+type EvidencePageLike = {
+  on: (event: "console", listener: (message: ConsoleMessageLike) => void) => void;
+  off: (event: "console", listener: (message: ConsoleMessageLike) => void) => void;
+  evaluate: <Result>(fn: () => Result) => Promise<Result>;
+};
+
+const CAPTURE_CONTENT_BOUNDS = {
+  maxVisibleDomTextRecords: 512,
+  maxVisibleDomTextBytes: 65_536,
+  maxBrowserConsoleRecords: 128,
+  maxBrowserConsoleTextBytes: 2_048,
+} as const;
+
 function digest(value: unknown): string {
   return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function truncateUtf8(value: string, maximumBytes: number): { text: string; truncated: boolean } {
+  let text = "";
+  let bytes = 0;
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character);
+    if (bytes + characterBytes > maximumBytes) return { text, truncated: true };
+    text += character;
+    bytes += characterBytes;
+  }
+  return { text, truncated: false };
+}
+
+function boundVisibleText(values: string[]) {
+  const records: string[] = [];
+  let bytes = 0;
+  let truncated = values.length > CAPTURE_CONTENT_BOUNDS.maxVisibleDomTextRecords;
+  for (const value of values.slice(0, CAPTURE_CONTENT_BOUNDS.maxVisibleDomTextRecords)) {
+    const remaining = CAPTURE_CONTENT_BOUNDS.maxVisibleDomTextBytes - bytes;
+    const bounded = truncateUtf8(value, Math.max(0, remaining));
+    if (bounded.text) records.push(bounded.text);
+    bytes += Buffer.byteLength(bounded.text);
+    if (bounded.truncated) {
+      truncated = true;
+      break;
+    }
+  }
+  return { records, truncated };
 }
 
 function assertApi(apiClient: ApiClientLike): asserts apiClient is Required<ApiClientLike> {
@@ -162,6 +221,23 @@ export function createHighlightRegistries({
   seedData: SeedData;
   backend: Backend;
 }) {
+  const browserConsole: Array<{ type: string; text: string; digest: string }> = [];
+  let browserConsoleTruncated = false;
+  let attachedPage: EvidencePageLike | null = null;
+  const consoleListener = (message: ConsoleMessageLike) => {
+    if (browserConsole.length >= CAPTURE_CONTENT_BOUNDS.maxBrowserConsoleRecords) {
+      browserConsoleTruncated = true;
+      return;
+    }
+    const type = message.type();
+    const bounded = truncateUtf8(message.text(), CAPTURE_CONTENT_BOUNDS.maxBrowserConsoleTextBytes);
+    browserConsoleTruncated ||= bounded.truncated;
+    const record = { type, text: bounded.text };
+    browserConsole.push({
+      ...record,
+      digest: `sha256:${createHash("sha256").update(canonicalJson(record)).digest("hex")}`,
+    });
+  };
   return {
     seedRegistry: {
       "kandev.highlight.quick-start": async (_input: { parameters?: unknown }) =>
@@ -173,8 +249,40 @@ export function createHighlightRegistries({
       await page.goto(`${backend.frontendUrl}/`, { waitUntil: "domcontentloaded" });
       await page.getByTestId("kanban-board").waitFor({ state: "visible", timeout: 15_000 });
     },
-    async preparePage({ context }: { context: BrowserContextLike }) {
+    async preparePage({ context, page }: { context: BrowserContextLike; page?: EvidencePageLike }) {
       await context.addInitScript(captureBootScript, { backendPort: String(backend.port) });
+      if (page) {
+        if (attachedPage) attachedPage.off("console", consoleListener);
+        attachedPage = page;
+        attachedPage.on("console", consoleListener);
+      }
+    },
+    async collectCaptureEvidence({ page }: { page: EvidencePageLike }) {
+      const visible = await page.evaluate(() =>
+        (document.body?.innerText ?? "")
+          .split(/\n+/)
+          .map((line) => line.trim())
+          .filter(Boolean),
+      );
+      if (!Array.isArray(visible) || visible.some((value) => typeof value !== "string")) {
+        throw new Error("visible DOM text collector returned invalid records");
+      }
+      const boundedVisible = boundVisibleText(visible);
+      if (attachedPage) {
+        attachedPage.off("console", consoleListener);
+        attachedPage = null;
+      }
+      return {
+        contract: "kandev-highlight-capture-content-v1" as const,
+        version: 1 as const,
+        bounds: { ...CAPTURE_CONTENT_BOUNDS },
+        visibleDomText: boundedVisible.records,
+        browserConsole: structuredClone(browserConsole),
+        truncated: {
+          visibleDomText: boundedVisible.truncated,
+          browserConsole: browserConsoleTruncated,
+        },
+      };
     },
   };
 }

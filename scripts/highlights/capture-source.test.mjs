@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -37,6 +38,21 @@ const MOBILE_SCENARIO_PROFILE = Object.freeze({
   deviceScaleFactor: 3,
 });
 
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function digestValue(value) {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
 function buildProvenance(source) {
   return {
     contract: "kandev-highlight-build-provenance-v1",
@@ -49,6 +65,49 @@ function buildProvenance(source) {
         digest: `sha256:${"0".repeat(64)}`,
         bytes: 103,
         fileCount: 4,
+      },
+    },
+  };
+}
+
+function applicationRuntimeProof({
+  port = 18_080,
+  tempRoot = "/tmp/kandev-highlight-app-runtime",
+  sourceSha = "1".repeat(40),
+} = {}) {
+  return {
+    contract: "kandev-highlight-application-runtime-pre-teardown-v1",
+    version: 1,
+    runtimeId: "kandev-isolated-e2e",
+    origin: `http://127.0.0.1:${port}`,
+    ports: { backend: port, frontend: port },
+    isolation: {
+      fixtureTempRoot: tempRoot,
+      homeRoot: path.join(tempRoot, ".kandev"),
+      databasePath: path.join(tempRoot, "kandev.db"),
+      worktreeRoot: path.join(tempRoot, "worktrees"),
+      repositoryCloneRoot: path.join(tempRoot, "repos"),
+    },
+    providerRouting: {
+      profile: "e2e",
+      mockAgent: true,
+      mockProviders: true,
+      liveCredentialsPresent: false,
+      environmentSanitized: true,
+    },
+    source: {
+      contract: "kandev-highlight-source-v1",
+      mode: "pr_head",
+      selectedSha: sourceSha,
+    },
+    build: {
+      contract: "kandev-highlight-build-provenance-v1",
+      manifestDigest: `sha256:${"d".repeat(64)}`,
+      sourceSha,
+      outputs: {
+        backend: `sha256:${"e".repeat(64)}`,
+        mockAgent: `sha256:${"f".repeat(64)}`,
+        webDist: `sha256:${"0".repeat(64)}`,
       },
     },
   };
@@ -948,6 +1007,10 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     status: "",
   };
   const buildProof = buildProvenance(sourceProof);
+  const appRuntime = applicationRuntimeProof({
+    tempRoot: path.join(root, "fixture-temp"),
+    sourceSha: sourceProof.selectedSha,
+  });
   let currentUrl = "about:blank";
   const page = {
     url: () => currentUrl,
@@ -962,6 +1025,31 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     timeline,
     source: sourceProof,
     buildProvenance: buildProof,
+    applicationRuntime: appRuntime,
+    collectCaptureEvidence: async () => {
+      events.push("capture:evidence");
+      return {
+        contract: "kandev-highlight-capture-content-v1",
+        version: 1,
+        bounds: {
+          maxVisibleDomTextRecords: 512,
+          maxVisibleDomTextBytes: 65_536,
+          maxBrowserConsoleRecords: 128,
+          maxBrowserConsoleTextBytes: 2_048,
+        },
+        visibleDomText: ["Quick start", "Review API"],
+        browserConsole: [
+          {
+            type: "info",
+            text: "board ready",
+            digest: digestValue(
+              canonicalJson({ type: "info", text: "board ready" }),
+            ),
+          },
+        ],
+        truncated: { visibleDomText: false, browserConsole: false },
+      };
+    },
     sourceDigest: `sha256:${"a".repeat(64)}`,
     frontendUrl: "http://127.0.0.1:18080",
     artifactRoot,
@@ -1055,6 +1143,7 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     "recorder:start:libx264",
     "scenario:execute",
     "recorder:stop",
+    "capture:evidence",
     "browser:close",
     "runtime:stop",
   ]);
@@ -1093,6 +1182,31 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     processGone: true,
   });
   assert.deepEqual(result.receipt.seed, seedProof);
+  assert.deepEqual(result.receipt.applicationRuntime, appRuntime);
+  assert.equal(
+    result.receipt.captureEvidence.path,
+    path.join(paths.evidenceDir, "capture-content.json"),
+  );
+  assert.match(result.receipt.captureEvidence.digest, /^sha256:[a-f0-9]{64}$/);
+  assert.deepEqual(result.receipt.captureEvidence.visibleDomText, {
+    records: 2,
+    bytes: Buffer.byteLength("Quick startReview API"),
+    digest: result.receipt.captureEvidence.visibleDomText.digest,
+    truncated: false,
+  });
+  assert.equal(result.receipt.captureEvidence.browserConsole.records, 1);
+  assert.doesNotMatch(
+    JSON.stringify(result.receipt.captureEvidence),
+    /Quick start|Review API|board ready/,
+  );
+  const rawCaptureEvidence = JSON.parse(
+    await fs.readFile(result.receipt.captureEvidence.path, "utf8"),
+  );
+  assert.deepEqual(rawCaptureEvidence.visibleDomText, [
+    "Quick start",
+    "Review API",
+  ]);
+  assert.equal(rawCaptureEvidence.browserConsole[0].text, "board ready");
   assert.deepEqual(
     JSON.parse(await fs.readFile(result.captureManifestPath, "utf8")),
     result.receipt,
@@ -1342,5 +1456,21 @@ test("captureScenario rejects non-exact digests and missing allowlisted navigati
         sourceDigest: `sha256:${"c".repeat(64)}`,
       }),
     /needs exact build provenance/i,
+  );
+  await assert.rejects(
+    () =>
+      captureScenario({
+        ...common,
+        navigateRoute: async () => {},
+        sourceDigest: `sha256:${"c".repeat(64)}`,
+        applicationRuntime: {
+          ...applicationRuntimeProof(),
+          providerRouting: {
+            ...applicationRuntimeProof().providerRouting,
+            liveCredentialsPresent: true,
+          },
+        },
+      }),
+    /applicationRuntime.*live credentials|provider routing/i,
   );
 });

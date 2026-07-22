@@ -37,6 +37,43 @@ const REPOSITORY_ROOT = path.resolve(MODULE_DIR, "../..");
 const WEB_ROOT = path.join(REPOSITORY_ROOT, "apps", "web");
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SOURCE_SHA_PATTERN = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
+const CAPTURE_CONTENT_BOUNDS = Object.freeze({
+  maxVisibleDomTextRecords: 512,
+  maxVisibleDomTextBytes: 65_536,
+  maxBrowserConsoleRecords: 128,
+  maxBrowserConsoleTextBytes: 2_048,
+});
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function digestValue(value) {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+function isRecord(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function requireExactKeys(value, keys, label) {
+  if (!isRecord(value)) throw new Error(`${label} must be an object`);
+  for (const key of keys) {
+    if (!Object.hasOwn(value, key))
+      throw new Error(`${label} ${key} is required`);
+  }
+  for (const key of Object.keys(value)) {
+    if (!keys.includes(key)) throw new Error(`${label} ${key} is not allowed`);
+  }
+  return value;
+}
 
 export function playwrightChromiumFromModule(playwrightModule) {
   const chromium =
@@ -695,6 +732,8 @@ export async function collectCaptureReceipt({
   trustedInputLedger = [],
   frameAlignment,
   build,
+  applicationRuntime,
+  captureEvidence,
 } = {}) {
   const stat = await fs.stat(rawMasterPath);
   const storyStartOffsetMs = storyEpochMs - captureEpochMs;
@@ -739,6 +778,10 @@ export async function collectCaptureReceipt({
     execution: execution ? structuredClone(execution) : null,
     trustedInputLedger: structuredClone(trustedInputLedger),
     runtime: runtime ? structuredClone(runtime) : null,
+    applicationRuntime: applicationRuntime
+      ? structuredClone(applicationRuntime)
+      : null,
+    captureEvidence: captureEvidence ? structuredClone(captureEvidence) : null,
   };
 }
 
@@ -855,6 +898,274 @@ function compactBuildProvenance(proof, sourceProof) {
   };
 }
 
+function pathWithin(root, candidate) {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return (
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) &&
+      relative !== ".." &&
+      !path.isAbsolute(relative))
+  );
+}
+
+function validateApplicationRuntime(
+  proof,
+  { sourceProof, buildProof, frontendUrl },
+) {
+  if (proof === undefined) return null;
+  requireExactKeys(
+    proof,
+    [
+      "contract",
+      "version",
+      "runtimeId",
+      "origin",
+      "ports",
+      "isolation",
+      "providerRouting",
+      "source",
+      "build",
+    ],
+    "applicationRuntime",
+  );
+  if (
+    proof.contract !== "kandev-highlight-application-runtime-pre-teardown-v1" ||
+    proof.version !== 1 ||
+    proof.runtimeId !== "kandev-isolated-e2e"
+  ) {
+    throw new Error(
+      "applicationRuntime contract, version, or runtimeId is invalid",
+    );
+  }
+  let configuredOrigin;
+  let proofOrigin;
+  try {
+    configuredOrigin = new URL(frontendUrl).origin;
+    proofOrigin = new URL(proof.origin).origin;
+  } catch {
+    throw new Error("applicationRuntime origin must be an absolute HTTP URL");
+  }
+  if (proofOrigin !== proof.origin || proofOrigin !== configuredOrigin) {
+    throw new Error(
+      "applicationRuntime origin must match the configured frontend origin",
+    );
+  }
+  requireExactKeys(
+    proof.ports,
+    ["backend", "frontend"],
+    "applicationRuntime ports",
+  );
+  const originPort = Number(new URL(proof.origin).port || 80);
+  if (
+    !Number.isInteger(proof.ports.backend) ||
+    proof.ports.backend < 1_024 ||
+    proof.ports.backend > 65_535 ||
+    proof.ports.frontend !== proof.ports.backend ||
+    originPort !== proof.ports.backend
+  ) {
+    throw new Error("applicationRuntime ports must match the frontend origin");
+  }
+  requireExactKeys(
+    proof.isolation,
+    [
+      "fixtureTempRoot",
+      "homeRoot",
+      "databasePath",
+      "worktreeRoot",
+      "repositoryCloneRoot",
+    ],
+    "applicationRuntime isolation",
+  );
+  const tempRoot = proof.isolation.fixtureTempRoot;
+  if (typeof tempRoot !== "string" || !path.isAbsolute(tempRoot)) {
+    throw new Error("applicationRuntime fixtureTempRoot must be absolute");
+  }
+  for (const key of [
+    "homeRoot",
+    "databasePath",
+    "worktreeRoot",
+    "repositoryCloneRoot",
+  ]) {
+    const value = proof.isolation[key];
+    if (
+      typeof value !== "string" ||
+      !path.isAbsolute(value) ||
+      !pathWithin(tempRoot, value) ||
+      path.resolve(value) === path.resolve(tempRoot)
+    ) {
+      throw new Error(
+        `applicationRuntime isolation ${key} must be inside fixtureTempRoot`,
+      );
+    }
+  }
+  requireExactKeys(
+    proof.providerRouting,
+    [
+      "profile",
+      "mockAgent",
+      "mockProviders",
+      "liveCredentialsPresent",
+      "environmentSanitized",
+    ],
+    "applicationRuntime provider routing",
+  );
+  if (
+    proof.providerRouting.profile !== "e2e" ||
+    proof.providerRouting.mockAgent !== true ||
+    proof.providerRouting.mockProviders !== true ||
+    proof.providerRouting.liveCredentialsPresent !== false ||
+    proof.providerRouting.environmentSanitized !== true
+  ) {
+    throw new Error(
+      "applicationRuntime provider routing must prove mocks with no live credentials",
+    );
+  }
+  requireExactKeys(
+    proof.source,
+    ["contract", "mode", "selectedSha"],
+    "applicationRuntime source",
+  );
+  if (
+    proof.source.contract !== sourceProof.contract ||
+    proof.source.mode !== sourceProof.source ||
+    proof.source.selectedSha !== sourceProof.selectedSha
+  ) {
+    throw new Error("applicationRuntime source identity mismatch");
+  }
+  requireExactKeys(
+    proof.build,
+    ["contract", "manifestDigest", "sourceSha", "outputs"],
+    "applicationRuntime build",
+  );
+  requireExactKeys(
+    proof.build.outputs,
+    ["backend", "mockAgent", "webDist"],
+    "applicationRuntime build outputs",
+  );
+  if (
+    proof.build.contract !== buildProof.contract ||
+    proof.build.manifestDigest !== buildProof.manifestDigest ||
+    proof.build.sourceSha !== sourceProof.selectedSha ||
+    Object.entries(proof.build.outputs).some(
+      ([key, digest]) => digest !== buildProof.outputs[key]?.digest,
+    )
+  ) {
+    throw new Error("applicationRuntime build identity mismatch");
+  }
+  return structuredClone(proof);
+}
+
+function validateCaptureContent(evidence) {
+  requireExactKeys(
+    evidence,
+    [
+      "contract",
+      "version",
+      "bounds",
+      "visibleDomText",
+      "browserConsole",
+      "truncated",
+    ],
+    "capture content evidence",
+  );
+  if (
+    evidence.contract !== "kandev-highlight-capture-content-v1" ||
+    evidence.version !== 1
+  ) {
+    throw new Error("capture content evidence contract must be version 1");
+  }
+  requireExactKeys(
+    evidence.bounds,
+    Object.keys(CAPTURE_CONTENT_BOUNDS),
+    "capture content evidence bounds",
+  );
+  for (const [key, value] of Object.entries(CAPTURE_CONTENT_BOUNDS)) {
+    if (evidence.bounds[key] !== value) {
+      throw new Error(`capture content evidence ${key} must equal ${value}`);
+    }
+  }
+  requireExactKeys(
+    evidence.truncated,
+    ["visibleDomText", "browserConsole"],
+    "capture content evidence truncated",
+  );
+  if (
+    typeof evidence.truncated.visibleDomText !== "boolean" ||
+    typeof evidence.truncated.browserConsole !== "boolean"
+  ) {
+    throw new Error("capture content evidence truncated flags must be boolean");
+  }
+  if (
+    !Array.isArray(evidence.visibleDomText) ||
+    evidence.visibleDomText.length >
+      CAPTURE_CONTENT_BOUNDS.maxVisibleDomTextRecords ||
+    evidence.visibleDomText.some((text) => typeof text !== "string")
+  ) {
+    throw new Error("capture content visibleDomText exceeds its record bound");
+  }
+  const visibleBytes = evidence.visibleDomText.reduce(
+    (total, text) => total + Buffer.byteLength(text),
+    0,
+  );
+  if (visibleBytes > CAPTURE_CONTENT_BOUNDS.maxVisibleDomTextBytes) {
+    throw new Error("capture content visibleDomText exceeds its byte bound");
+  }
+  if (
+    !Array.isArray(evidence.browserConsole) ||
+    evidence.browserConsole.length >
+      CAPTURE_CONTENT_BOUNDS.maxBrowserConsoleRecords
+  ) {
+    throw new Error("capture content browserConsole exceeds its record bound");
+  }
+  let consoleBytes = 0;
+  for (const [index, record] of evidence.browserConsole.entries()) {
+    requireExactKeys(
+      record,
+      ["type", "text", "digest"],
+      `capture content browserConsole ${index}`,
+    );
+    if (
+      typeof record.type !== "string" ||
+      !/^[a-z][a-zA-Z-]{0,31}$/.test(record.type) ||
+      typeof record.text !== "string" ||
+      Buffer.byteLength(record.text) >
+        CAPTURE_CONTENT_BOUNDS.maxBrowserConsoleTextBytes ||
+      record.digest !==
+        digestValue(canonicalJson({ type: record.type, text: record.text }))
+    ) {
+      throw new Error(`capture content browserConsole ${index} is invalid`);
+    }
+    consoleBytes += Buffer.byteLength(record.text);
+  }
+  return { evidence: structuredClone(evidence), visibleBytes, consoleBytes };
+}
+
+async function persistCaptureContent(plan, rawEvidence) {
+  const validated = validateCaptureContent(rawEvidence);
+  const destination = path.join(plan.evidenceDir, "capture-content.json");
+  await writeCaptureEvidence(destination, validated.evidence);
+  const identity = await fs.stat(destination);
+  return {
+    contract: "kandev-highlight-capture-evidence-v1",
+    version: 1,
+    path: destination,
+    bytes: identity.size,
+    digest: await hashFile(destination),
+    visibleDomText: {
+      records: validated.evidence.visibleDomText.length,
+      bytes: validated.visibleBytes,
+      digest: digestValue(canonicalJson(validated.evidence.visibleDomText)),
+      truncated: validated.evidence.truncated.visibleDomText,
+    },
+    browserConsole: {
+      records: validated.evidence.browserConsole.length,
+      bytes: validated.consoleBytes,
+      digest: digestValue(canonicalJson(validated.evidence.browserConsole)),
+      truncated: validated.evidence.truncated.browserConsole,
+    },
+  };
+}
+
 function evidenceSeedRegistry(seedRegistry, recipe, onProof) {
   const seed =
     Object.hasOwn(seedRegistry, recipe) &&
@@ -930,6 +1241,8 @@ export async function captureScenario({
   source,
   sourceDigest,
   buildProvenance,
+  applicationRuntime,
+  collectCaptureEvidence,
   frontendUrl,
   artifactRoot,
   repositoryRoots = [REPOSITORY_ROOT],
@@ -959,6 +1272,18 @@ export async function captureScenario({
   const buildProof = compactBuildProvenance(buildProvenance, sourceProof);
   if (!/^https?:\/\//.test(frontendUrl ?? ""))
     throw new Error("captureScenario needs frontendUrl");
+  const applicationRuntimeProof = validateApplicationRuntime(
+    applicationRuntime,
+    { sourceProof, buildProof, frontendUrl },
+  );
+  if (
+    collectCaptureEvidence !== undefined &&
+    typeof collectCaptureEvidence !== "function"
+  ) {
+    throw new Error(
+      "captureScenario collectCaptureEvidence must be a function",
+    );
+  }
   if (scenario.setup?.route && typeof navigateRoute !== "function") {
     throw new Error(
       "captureScenario requires an allowlisted navigateRoute adapter for scenario.setup.route",
@@ -1012,6 +1337,7 @@ export async function captureScenario({
   let captureEpochMs;
   let seedProof;
   let navigationEvidence;
+  let captureEvidence;
   try {
     liveRuntime = await deps.startCaptureRuntime(plan);
     phase = "browser";
@@ -1087,6 +1413,19 @@ export async function captureScenario({
     phase = "recorder-teardown";
     recorderEvidence = await recorder.stop();
     recorder = null;
+    if (typeof collectCaptureEvidence === "function") {
+      phase = "capture-evidence";
+      captureEvidence = await persistCaptureContent(
+        plan,
+        await collectCaptureEvidence({
+          page,
+          context,
+          profile,
+          plan,
+          execution,
+        }),
+      );
+    }
     const progress = parseCaptureProgress(
       await fs.readFile(command.progressPath, "utf8"),
     );
@@ -1137,6 +1476,8 @@ export async function captureScenario({
       trustedInputLedger: adapters.ledger,
       frameAlignment,
       build: buildProof,
+      applicationRuntime: applicationRuntimeProof,
+      captureEvidence,
     });
     const captureManifestPath = path.join(plan.evidenceDir, "capture.json");
     await writeCaptureEvidence(captureManifestPath, receipt);

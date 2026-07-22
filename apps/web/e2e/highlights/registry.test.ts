@@ -178,3 +178,65 @@ test("page preparation installs deterministic Kandev boot state before navigatio
   assert.match(String(scripts[0].fn), /__KANDEV_API_PORT/);
   assert.match(String(scripts[0].fn), /NotificationStub/);
 });
+
+test("trusted adapter captures bounded visible text and console records at the final frame", async () => {
+  let consoleListener: ((message: { type(): string; text(): string }) => void) | undefined;
+  const page = {
+    on(event: string, listener: typeof consoleListener) {
+      if (event === "console") consoleListener = listener;
+    },
+    off(event: string, listener: typeof consoleListener) {
+      if (event === "console" && listener === consoleListener) consoleListener = undefined;
+    },
+    async evaluate() {
+      return ["Quick start", ...Array.from({ length: 700 }, (_, index) => `Task ${index}`)];
+    },
+  };
+  const context = {
+    async addInitScript() {},
+  };
+  const registries = createHighlightRegistries({
+    apiClient: {},
+    seedData: { workspaceId: "workspace-1", workflowId: "workflow-1", startStepId: "step-start" },
+    backend: { frontendUrl: "http://127.0.0.1:18080", port: 18080 },
+  });
+
+  await registries.preparePage({ context, page });
+  for (let index = 0; index < 140; index += 1) {
+    consoleListener?.({
+      type: () => "info",
+      text: () => `${index}:${"x".repeat(3_000)}`,
+    });
+  }
+  const evidence = await registries.collectCaptureEvidence({ page });
+
+  assert.equal(evidence.contract, "kandev-highlight-capture-content-v1");
+  assert.deepEqual(evidence.bounds, {
+    maxVisibleDomTextRecords: 512,
+    maxVisibleDomTextBytes: 65_536,
+    maxBrowserConsoleRecords: 128,
+    maxBrowserConsoleTextBytes: 2_048,
+  });
+  assert.equal(evidence.visibleDomText.length, 512);
+  assert.ok(
+    evidence.visibleDomText.reduce((bytes, value) => bytes + Buffer.byteLength(value), 0) <=
+      evidence.bounds.maxVisibleDomTextBytes,
+  );
+  assert.equal(evidence.browserConsole.length, 128);
+  assert.ok(
+    evidence.browserConsole.every(
+      (record) =>
+        Buffer.byteLength(record.text) <= evidence.bounds.maxBrowserConsoleTextBytes &&
+        /^sha256:[a-f0-9]{64}$/.test(record.digest),
+    ),
+  );
+  assert.deepEqual(evidence.truncated, {
+    visibleDomText: true,
+    browserConsole: true,
+  });
+  assert.equal(
+    consoleListener,
+    undefined,
+    "collector detaches console listener at record boundary",
+  );
+});

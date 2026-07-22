@@ -105,7 +105,7 @@ export async function selectIntegrationPortOffset({
   throw new Error("no isolated E2E backend port is available in 18080-18109");
 }
 
-async function waitForPortRelease(port, timeoutMs = 10_000) {
+export async function waitForIntegrationPortRelease(port, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await tcpPortAvailable(port)) return true;
@@ -398,7 +398,7 @@ export async function runCaptureIntegration() {
   } catch (error) {
     executionError = error;
   }
-  const portReleased = await waitForPortRelease(port.backendPort);
+  const portReleased = await waitForIntegrationPortRelease(port.backendPort);
   const appReceipt = {
     contract: "kandev-highlight-integration-runtime-v1",
     buildManifestDigest: build.manifest.manifestDigest,
