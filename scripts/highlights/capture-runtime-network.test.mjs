@@ -224,6 +224,7 @@ test(
       headless: true,
       args: ["--no-sandbox"],
     });
+    t.after(() => controlBrowser.close().catch(() => {}));
     const controlPage = await controlBrowser.newPage();
     await controlPage.goto(allowedOrigin);
     const controlProbe = await gatherIce(controlPage, udpAddress.port);
