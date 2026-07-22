@@ -45,7 +45,8 @@ const WEB_ROOT = path.join(REPOSITORY_ROOT, "apps", "web");
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SOURCE_SHA_PATTERN = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 const TRUSTED_CAPTURE_BUILD_VERIFIERS = new WeakMap();
-const CAPTURE_INPUT_QUEUE_FRAMES = 16;
+const CAPTURE_INPUT_QUEUE_FRAMES = 32;
+const CAPTURE_X264_THREADS = 3;
 const ENCODER_PROBE_DURATION_MS = 3_000;
 const ENCODER_PROBE_STARTUP_ALLOWANCE_MS = 750;
 const CAPTURE_CONTENT_BOUNDS = Object.freeze({
@@ -125,7 +126,7 @@ function encoderContract(encoder) {
         "-preset",
         "ultrafast",
         "-threads",
-        "2",
+        String(CAPTURE_X264_THREADS),
         "-qp",
         "0",
         "-profile:v",
@@ -211,7 +212,7 @@ export function buildEncoderProbePlan({
       "-f",
       "lavfi",
       "-i",
-      `testsrc2=size=${profile.sourceWidth}x${profile.sourceHeight}:rate=${profile.fps}`,
+      `testsrc2=size=${profile.sourceWidth}x${profile.sourceHeight}:rate=${profile.fps},format=bgr0`,
       "-frames:v",
       String(frameCount),
       "-an",

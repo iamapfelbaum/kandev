@@ -190,7 +190,7 @@ test("builds silent no-overwrite 25fps native X11 capture commands", () => {
     assert.notEqual(inputQueueIndex, -1, "X11 capture needs a bounded input queue");
     assert.deepEqual(plan.args.slice(inputQueueIndex, inputQueueIndex + 3), [
       "-thread_queue_size",
-      "16",
+      "32",
       "-i",
     ]);
     assert.match(joined, /-i :261\.0\+0,0/);
@@ -199,7 +199,7 @@ test("builds silent no-overwrite 25fps native X11 capture commands", () => {
     assert.match(joined, /-qp 0/);
     assert.match(joined, /-profile:v high444/);
     assert.match(joined, /-pix_fmt yuv444p/);
-    assert.match(joined, /-threads 2/);
+    assert.match(joined, /-threads 3/);
     assert.match(
       joined,
       /-progress \/external\/highlight-run\/logs\/ffmpeg\.progress/,
@@ -270,11 +270,11 @@ test("encoder readiness plan amortizes cold startup while proving sustained full
   });
   const joined = plan.args.join(" ");
 
-  assert.match(joined, /testsrc2=.*3840x2400.*25/);
+  assert.match(joined, /testsrc2=.*3840x2400.*25.*format=bgr0/);
   assert.doesNotMatch(joined, /color=c=black/);
   assert.match(joined, /-frames:v 75/);
   assert.match(joined, /-qp 0/);
-  assert.match(joined, /-threads 2/);
+  assert.match(joined, /-threads 3/);
   assert.equal(plan.sourceDurationMs, 3_000);
   assert.equal(plan.startupAllowanceMs, 750);
   assert.equal(plan.maximumElapsedMs, 3_750);
