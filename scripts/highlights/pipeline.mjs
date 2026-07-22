@@ -594,11 +594,20 @@ async function readCameraEvidence(paths, context) {
 }
 
 function compactBuildProof(build) {
+  const outputs = {};
+  for (const key of ["backend", "mockAgent", "webDist"]) {
+    const output = build?.outputs?.[key];
+    outputs[key] = {
+      digest: output?.digest,
+      bytes: output?.bytes,
+      ...(key === "webDist" ? { fileCount: output?.fileCount } : {}),
+    };
+  }
   return {
     contract: build?.contract,
     manifestDigest: build?.manifestDigest,
     sourceSha: build?.source?.selectedSha,
-    outputs: build?.outputs,
+    outputs,
   };
 }
 

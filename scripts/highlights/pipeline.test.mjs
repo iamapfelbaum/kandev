@@ -64,9 +64,39 @@ function buildProof() {
     manifestDigest: `sha256:${"e".repeat(64)}`,
     source: sourceGateProof(),
     outputs: {
-      backend: { digest: `sha256:${"1".repeat(64)}`, bytes: 100 },
-      mockAgent: { digest: `sha256:${"2".repeat(64)}`, bytes: 101 },
-      webDist: { digest: `sha256:${"3".repeat(64)}`, bytes: 102, fileCount: 3 },
+      backend: {
+        path: "/external/build/backend",
+        digest: `sha256:${"1".repeat(64)}`,
+        bytes: 100,
+      },
+      mockAgent: {
+        path: "/external/build/mock-agent",
+        digest: `sha256:${"2".repeat(64)}`,
+        bytes: 101,
+      },
+      webDist: {
+        path: "/external/build/web-dist",
+        digest: `sha256:${"3".repeat(64)}`,
+        bytes: 102,
+        fileCount: 3,
+        files: [
+          {
+            path: "index.html",
+            digest: `sha256:${"4".repeat(64)}`,
+            bytes: 34,
+          },
+          {
+            path: "assets/app.js",
+            digest: `sha256:${"5".repeat(64)}`,
+            bytes: 35,
+          },
+          {
+            path: "assets/app.css",
+            digest: `sha256:${"6".repeat(64)}`,
+            bytes: 33,
+          },
+        ],
+      },
     },
   };
 }
@@ -315,7 +345,21 @@ function baseDependencies(
             contract: buildProvenance.contract,
             manifestDigest: buildProvenance.manifestDigest,
             sourceSha: buildProvenance.source.selectedSha,
-            outputs: buildProvenance.outputs,
+            outputs: {
+              backend: {
+                digest: buildProvenance.outputs.backend.digest,
+                bytes: buildProvenance.outputs.backend.bytes,
+              },
+              mockAgent: {
+                digest: buildProvenance.outputs.mockAgent.digest,
+                bytes: buildProvenance.outputs.mockAgent.bytes,
+              },
+              webDist: {
+                digest: buildProvenance.outputs.webDist.digest,
+                bytes: buildProvenance.outputs.webDist.bytes,
+                fileCount: buildProvenance.outputs.webDist.fileCount,
+              },
+            },
           },
           storyStartOffsetMs: 100,
           storyDurationMs: 2000,
