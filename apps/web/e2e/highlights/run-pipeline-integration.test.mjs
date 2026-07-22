@@ -45,6 +45,10 @@ async function initRepository(root) {
   await fs.writeFile(path.join(root, "README.md"), "committed\n");
   await exec("git", ["add", "README.md"], { cwd: root });
   await exec("git", ["commit", "-m", "fixture"], { cwd: root });
+  await exec("git", ["checkout", "-b", "feature/eval"], { cwd: root });
+  await fs.writeFile(path.join(root, "FEATURE.md"), "feature head\n");
+  await exec("git", ["add", "FEATURE.md"], { cwd: root });
+  await exec("git", ["commit", "-m", "feature fixture"], { cwd: root });
   return (await exec("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
 }
 

@@ -382,6 +382,9 @@ export async function snapshotCommittedRepository({ sourceRoot, cloneRoot, origi
   await git(null, ["clone", "--bare", "--no-hardlinks", "--local", source, origin], {
     phase: "git-clone-origin",
   });
+  await git(null, ["--git-dir", origin, "update-ref", "refs/heads/main", sourceState.head], {
+    phase: "git-initialize-origin-main",
+  });
   await git(null, ["clone", "--no-hardlinks", "--no-checkout", "--local", origin, snapshot], {
     phase: "git-clone-snapshot",
   });
