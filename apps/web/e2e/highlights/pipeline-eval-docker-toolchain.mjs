@@ -5,6 +5,8 @@ import path from "node:path";
 import { capturePathIdentity } from "./pipeline-eval-docker-boundary.mjs";
 import { runBoundedSubprocess } from "./pipeline-eval-shared.mjs";
 
+const CONTAINER_GO_ROOT = "/kandev/toolchain/go";
+
 async function existingCanonicalPath(filePath, label) {
   const resolved = path.resolve(filePath);
   const canonical = await fs.realpath(resolved).catch((error) => {
@@ -43,6 +45,8 @@ export async function discoverDockerToolchain({
     await commandOutput(runCommand, {
       command: "go",
       args: ["env", "GOROOT", "GOMODCACHE"],
+      cwd: path.join(sourceRoot, "apps", "backend"),
+      env: { ...inheritedEnv, GOTOOLCHAIN: "auto" },
       phase: "docker-toolchain-go",
       deadlineMs: 30_000,
     })
@@ -52,7 +56,9 @@ export async function discoverDockerToolchain({
   }
   const [goRoot, goModCache] = goValues;
   const goSource = await fs.realpath(path.join(goRoot, "src"));
-  const goShare = path.dirname(goSource);
+  if (path.dirname(goSource) !== goRoot) {
+    throw new Error("Docker toolchain Go root must be self-contained");
+  }
   const pnpmStore = await commandOutput(runCommand, {
     command: "corepack",
     args: ["pnpm", "store", "path"],
@@ -76,8 +82,7 @@ export async function discoverDockerToolchain({
   const mounts = await Promise.all([
     toolMount(corepackHome, "/kandev/toolchain/corepack"),
     toolMount(pnpmStore, "/kandev/toolchain/pnpm-store/v3"),
-    toolMount(goRoot, goRoot),
-    toolMount(goShare, goShare),
+    toolMount(goRoot, CONTAINER_GO_ROOT),
     toolMount(goModCache, "/kandev/toolchain/go-mod"),
     toolMount("/usr/lib/gcc", "/usr/lib/gcc"),
     toolMount("/usr/libexec/gcc", "/usr/libexec/gcc"),
@@ -93,7 +98,7 @@ export async function discoverDockerToolchain({
   return {
     mounts,
     environment: {
-      GOROOT: goRoot,
+      GOROOT: CONTAINER_GO_ROOT,
       npm_config_store_dir: "/kandev/toolchain/pnpm-store/v3",
     },
   };

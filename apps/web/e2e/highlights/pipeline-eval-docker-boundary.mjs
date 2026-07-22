@@ -170,14 +170,14 @@ function imageDigestFromRepoDigests(repoDigests) {
 
 function dockerEnvironment(overrides = {}) {
   const defaults = {
-    PATH: "/kandev/eval/bin:/kandev/toolchain/bin:/usr/lib/go-1.22/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    PATH: "/kandev/eval/bin:/kandev/toolchain/bin:/kandev/toolchain/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     HOME: "/kandev/eval/home",
     TMPDIR: "/tmp",
     XDG_CACHE_HOME: "/kandev/eval/cache",
     COREPACK_HOME: "/kandev/toolchain/corepack",
     COREPACK_ENABLE_NETWORK: "0",
     npm_config_store_dir: "/kandev/toolchain/pnpm-store/v3",
-    GOROOT: "/usr/lib/go-1.22",
+    GOROOT: "/kandev/toolchain/go",
     GOPATH: "/kandev/eval/go",
     GOMODCACHE: "/kandev/toolchain/go-mod",
     GOCACHE: "/kandev/eval/go-cache",
