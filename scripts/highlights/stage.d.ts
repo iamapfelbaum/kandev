@@ -56,6 +56,32 @@ export interface HighlightStageManifestV1 {
   };
 }
 
+export interface HighlightReviewManifestV1 {
+  contract: "kandev-highlight-review-stage-v1";
+  schemaVersion: 1;
+  stageDigest: string;
+  revision: string;
+  highlight: HighlightStageManifestV1["highlight"] & { mobileRequired?: boolean };
+  scenario: { path: string; digest: string };
+  capture: { path: string; digest: string };
+  qa: {
+    status: "technical_pass";
+    passed: true;
+    reportPath: string;
+    reportDigest: string;
+    completedAt: string;
+  };
+  provenance: HighlightStageManifestV1["provenance"];
+  profile: "desktop" | "native-mobile";
+  promotable: false;
+  readyForReview: true;
+  reason: "explicit-acceptance-required" | "desktop-stage-required";
+  assets: {
+    desktop?: { webm: StageMediaRecord; mp4: StageMediaRecord; poster: StageMediaRecord };
+    mobile?: { webm: StageMediaRecord; mp4: StageMediaRecord; poster: StageMediaRecord };
+  };
+}
+
 export interface ReadStageOptions extends ScenarioOptions { repoRoot?: string }
 export interface PromoteStageOptions extends ReadStageOptions {
   manifestPath: string;
@@ -63,9 +89,18 @@ export interface PromoteStageOptions extends ReadStageOptions {
   probe?: (filePath: string) => Promise<object>;
   now?: Date | string;
 }
+export interface PromoteReviewedOptions extends ReadStageOptions {
+  desktopManifestPath: string;
+  mobileManifestPath?: string;
+  acceptedBy: string;
+  highlightsDir?: string;
+  probe?: (filePath: string) => Promise<object>;
+  dryRun?: boolean;
+  now?: Date | string;
+}
 
 export const STAGE_MANIFEST_VERSION: 1;
-export function computeStageManifestDigest(manifest: Omit<HighlightStageManifestV1, "stageDigest"> | HighlightStageManifestV1): string;
+export function computeStageManifestDigest(manifest: Omit<HighlightStageManifestV1, "stageDigest"> | HighlightStageManifestV1 | Omit<HighlightReviewManifestV1, "stageDigest"> | HighlightReviewManifestV1): string;
 export function readStageManifest(manifestPath: string, options?: ReadStageOptions): Promise<{
   manifest: HighlightStageManifestV1;
   stageDir: string;
@@ -80,4 +115,26 @@ export function promoteStagedHighlight(options: PromoteStageOptions): Promise<{
   destination: string;
   stageDigest: string;
   validation: object;
+}>;
+export function readReviewManifest(manifestPath: string, options?: ReadStageOptions): Promise<{
+  manifest: HighlightReviewManifestV1;
+  stageDir: string;
+  scenario: HighlightScenarioV1;
+  scenarioPath: string;
+  capturePath: string;
+  reportPath: string;
+  assets: object;
+  form: "desktop" | "mobile";
+  mobileRequired: boolean;
+}>;
+export function promoteReviewedHighlight(options: PromoteReviewedOptions): Promise<{
+  dryRun?: boolean;
+  descriptor?: object;
+  destination: string;
+  stageDigest?: string;
+  validation?: object;
+  highlightId?: string;
+  revision?: string;
+  reviewDigests?: string[];
+  acceptance?: { status: "accepted"; acceptedBy: string; acceptedAt: string };
 }>;

@@ -37,7 +37,8 @@ camera JSON, encoder wrapper, or promotion copy command.
    ```
 
    `run` validates, storyboards, captures, renders, runs automatic QA, then
-   writes a content-addressed stage under its manifest digest. Capture/render/QA
+   writes a content-addressed technical review bundle with `review.json` under
+   its manifest digest. Capture/render/QA
    prerequisites are real gates; missing Chrome, Xvfb, FFmpeg, landing adapter,
    or isolated runtime must fail with an actionable message.
 
@@ -45,12 +46,20 @@ camera JSON, encoder wrapper, or promotion copy command.
    Promotion stays separate. After explicit acceptance:
 
    ```bash
-   node scripts/highlights.mjs promote /external/highlights/my-highlight/<stage-digest>/stage.json --dry-run
-   node scripts/highlights.mjs promote /external/highlights/my-highlight/<stage-digest>/stage.json
+   node scripts/highlights.mjs promote /external/highlights/my-highlight/my-highlight/stages/<review-digest>/review.json --accept-reviewed-by reviewer-42 --dry-run
+   node scripts/highlights.mjs promote /external/highlights/my-highlight/my-highlight/stages/<review-digest>/review.json --accept-reviewed-by reviewer-42
    ```
 
-   Promotion requires accepted QA, creates one immutable revision, and refuses
-   overwrite or revision collision.
+   `technical_pass` is never approval and cannot promote alone. The stable
+   reviewer ID is recorded in descriptor and compact provenance. Promotion
+   creates one immutable revision and refuses overwrite or revision collision.
+
+   For a real native-mobile delivery, set `delivery.mobileRequired: true` in
+   both desktop and native-mobile scenarios, capture them independently, then
+   promote the desktop review with `--mobile-review <native-review.json>`. The
+   pair must have the same semantic delivery, source, seed, tool, and landing
+   identities. Promotion retains `scenario.json` and `scenario.mobile.json`;
+   it never relabels a desktop capture as mobile.
 
 ## Individual Phases
 
@@ -81,10 +90,11 @@ a clean checkout proven equal to freshly fetched `origin/main`.
   XPath, coordinates, regex names, or arbitrary code.
 - Default without camera directives is centered 1x identity: no zoom. Camera
   intent uses only `cameraFocus`, `cameraZoom`, `cameraHold`, and `cameraReturn`.
-- Desktop and native mobile are separate product routes and captures. Never
-  make mobile by cropping desktop.
-- External stage keeps raw masters and QA outside repo. Only accepted delivery
-  media, `scenario.json`, and compact `provenance.json` enter Git.
+- Desktop and native mobile are separate product routes and captures. Declare
+  pairing with `delivery.mobileRequired`; never make mobile by cropping desktop.
+- External review stage keeps raw masters and QA outside repo. Only explicitly
+  accepted delivery media, `scenario.json`, optional `scenario.mobile.json`,
+  and compact `provenance.json` enter Git.
 - Source, scenario, seed, capture, report, stage, and delivery hashes must agree.
   Fail rather than repair provenance by hand.
 

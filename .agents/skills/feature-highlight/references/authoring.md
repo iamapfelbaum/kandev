@@ -49,6 +49,29 @@ Keep story under 15 seconds. Opening and ending settles are each at least 400ms.
 Generated storyboard carries canonical scenario digest and includes setup before
 recording, every action duration, cursor control, camera control, and final hold.
 
+Promotion scenarios also declare `delivery`. Set `mobileRequired: false` for a
+desktop-only revision. Set it to `true` on both independently authored desktop
+and native-mobile scenarios when the revision promises native mobile media:
+
+```json
+{
+  "delivery": {
+    "revision": "r1",
+    "releaseVersion": "1.2.3",
+    "summary": "One deterministic product story.",
+    "caption": "Complete the workflow and hold the result.",
+    "featureFlags": ["features.highlights"],
+    "docs": { "page": "guide.md", "section": "My highlight" },
+    "mobileDeclaration": "Feature has a native mobile surface.",
+    "mobileRequired": true
+  }
+}
+```
+
+Omission remains backward-compatible: desktop defaults false and native-mobile
+defaults true. A native-mobile scenario cannot declare false. Pairing never
+changes either profile or substitutes cropped desktop media.
+
 ## Stable Semantic Targets
 
 Every visible target is exactly one of:
@@ -116,7 +139,9 @@ click, hover, type focus, or drag cannot teleport directly to its target.
 
 Never create mobile by cropping desktop. Give mobile its own scenario when
 native navigation, sheet, touch, or selector intent differs. Shared seed recipe
-and copy are fine; actions must describe native surface.
+and copy are fine; actions must describe native surface. Paired scenarios keep
+the same id/title, delivery metadata, seed identity, source revision, and landing
+adapter contract; promotion preserves both scenario digests.
 
 Native mobile has no hover and cannot request middle/right click. Activation is
 trusted touch tap; drag uses trusted touch movement. Reject unsupported pointer

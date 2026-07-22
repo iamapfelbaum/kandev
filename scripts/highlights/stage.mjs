@@ -10,6 +10,7 @@ import {
 import {
   computeScenarioDigest,
   readScenario,
+  requireDeliveryMetadata,
 } from "./scenario.mjs";
 
 export const STAGE_MANIFEST_VERSION = 1;
@@ -19,6 +20,7 @@ const ADAPTER_SHA_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const ASSET_KEYS = ["webm", "mp4", "poster"];
 const ASSET_EXTENSIONS = { webm: ".webm", mp4: ".mp4", poster: ".webp" };
 const ASSET_NAMES = { webm: "webm", mp4: "mp4", poster: "webp" };
+const REVIEWER_ID_PATTERN = /^[a-z0-9](?:[a-z0-9._@-]{0,126}[a-z0-9])?$/;
 
 export function computeStageManifestDigest(manifest) {
   if (!isObject(manifest)) throw new Error("stage manifest must be an object");
@@ -97,6 +99,142 @@ export async function readStageManifest(manifestPath, {
   return { manifest, stageDir, scenario, scenarioPath, capturePath, reportPath, assets };
 }
 
+export async function readReviewManifest(manifestPath, {
+  repoRoot = process.cwd(),
+  allowedExtensionIds = [],
+} = {}) {
+  const absoluteManifest = path.resolve(manifestPath);
+  const stageDir = path.dirname(absoluteManifest);
+  const stageRealDir = await assertExternalStage(stageDir, repoRoot);
+  const manifestRealPath = await resolveStageRegularFile(
+    stageDir,
+    stageRealDir,
+    path.basename(absoluteManifest),
+    "review manifest",
+  );
+  let manifest;
+  try {
+    manifest = JSON.parse(await fs.readFile(manifestRealPath, "utf8"));
+  } catch (error) {
+    throw new Error(`cannot read review manifest ${absoluteManifest}: ${error.message}`);
+  }
+  validateReviewManifestShape(manifest);
+  const computedStageDigest = computeStageManifestDigest(manifest);
+  if (manifest.stageDigest !== computedStageDigest) {
+    throw new Error("review manifest digest does not match manifest content");
+  }
+  if (path.basename(stageRealDir) !== manifest.stageDigest.slice("sha256:".length)) {
+    throw new Error("review directory must be named by its stage digest");
+  }
+
+  const scenarioPath = await resolveStageRegularFile(stageDir, stageRealDir, manifest.scenario.path, "scenario");
+  const scenario = await readScenario(scenarioPath, { allowedExtensionIds });
+  if (computeScenarioDigest(scenario, { allowedExtensionIds }) !== manifest.scenario.digest) {
+    throw new Error("scenario source digest does not match reviewed scenario");
+  }
+  const delivery = requireDeliveryMetadata(scenario, { allowedExtensionIds });
+  assertReviewIdentity(manifest, scenario, delivery);
+  if (scenario.seed.recipe !== manifest.provenance.seedId) {
+    throw new Error("review provenance seed identity does not match declarative scenario seed");
+  }
+
+  const capturePath = await resolveStageRegularFile(stageDir, stageRealDir, manifest.capture.path, "capture");
+  if (`sha256:${await hashFile(capturePath)}` !== manifest.capture.digest) {
+    throw new Error("capture digest does not match reviewed raw master");
+  }
+  const reportPath = await resolveStageRegularFile(stageDir, stageRealDir, manifest.qa.reportPath, "QA report");
+  const reportBytes = await fs.readFile(reportPath);
+  if (`sha256:${createHash("sha256").update(reportBytes).digest("hex")}` !== manifest.qa.reportDigest) {
+    throw new Error("QA report digest does not match reviewed report");
+  }
+  let qaReport;
+  try {
+    qaReport = JSON.parse(reportBytes);
+  } catch (error) {
+    throw new Error(`review QA report is invalid JSON: ${error.message}`);
+  }
+  if (!isObject(qaReport) || qaReport.status !== "technical_pass" || qaReport.passed !== true) {
+    throw new Error("review QA report must record technical_pass with passed=true");
+  }
+
+  const form = manifest.profile === "desktop" ? "desktop" : "mobile";
+  const assets = { [form]: {} };
+  const seenPaths = new Set();
+  for (const kind of ASSET_KEYS) {
+    const record = manifest.assets[form][kind];
+    const filePath = await resolveStageRegularFile(stageDir, stageRealDir, record.path, `${form} ${kind}`);
+    if (seenPaths.has(filePath)) throw new Error(`review asset path is reused: ${record.path}`);
+    seenPaths.add(filePath);
+    const stat = await fs.lstat(filePath);
+    if (stat.size !== record.bytes || await hashFile(filePath) !== record.sha256) {
+      throw new Error(`${form} ${kind} hash/bytes do not match review manifest`);
+    }
+    assets[form][kind] = { record, filePath };
+  }
+  return {
+    manifest,
+    stageDir,
+    scenario,
+    scenarioPath,
+    capturePath,
+    reportPath,
+    assets,
+    form,
+    mobileRequired: delivery.highlight.mobileRequired,
+  };
+}
+
+export async function promoteReviewedHighlight({
+  desktopManifestPath,
+  mobileManifestPath,
+  acceptedBy,
+  repoRoot = process.cwd(),
+  highlightsDir = path.join(repoRoot, "docs/public/media/highlights"),
+  allowedExtensionIds = [],
+  dryRun = false,
+  probe,
+  now = new Date(),
+} = {}) {
+  if (typeof acceptedBy !== "string" || !REVIEWER_ID_PATTERN.test(acceptedBy)) {
+    throw new Error("review promotion requires acceptedBy as a stable reviewer id (--accept-reviewed-by)");
+  }
+  const acceptanceTime = new Date(now);
+  if (!Number.isFinite(acceptanceTime.getTime())) {
+    throw new Error("acceptance timestamp must be a valid date");
+  }
+  if (!desktopManifestPath) throw new Error("desktop review manifest path is required");
+  const desktop = await readReviewManifest(desktopManifestPath, { repoRoot, allowedExtensionIds });
+  if (desktop.form !== "desktop") throw new Error("desktop review manifest must use the desktop profile");
+  const mobile = mobileManifestPath
+    ? await readReviewManifest(mobileManifestPath, { repoRoot, allowedExtensionIds })
+    : null;
+  if (mobile && mobile.form !== "mobile") throw new Error("mobile review manifest must use the native-mobile profile");
+  if (desktop.mobileRequired && !mobile) {
+    throw new Error("desktop scenario declares mobileRequired; a native-mobile review is required");
+  }
+  if (!desktop.mobileRequired && mobile) {
+    throw new Error("desktop scenario does not declare mobileRequired; refusing an unexpected mobile review");
+  }
+  if (mobile) assertReviewPair(desktop, mobile);
+  const acceptance = {
+    status: "accepted",
+    acceptedBy,
+    acceptedAt: acceptanceTime.toISOString(),
+  };
+  if (dryRun) {
+    return {
+      dryRun: true,
+      highlightId: desktop.manifest.highlight.id,
+      revision: desktop.manifest.revision,
+      reviewDigests: [desktop.manifest.stageDigest, ...(mobile ? [mobile.manifest.stageDigest] : [])],
+      acceptance,
+      destination: path.join(highlightsDir, desktop.manifest.highlight.id),
+    };
+  }
+  const staged = buildAcceptedReviewStage({ desktop, mobile, acceptance });
+  return promoteWithLock({ staged, repoRoot, highlightsDir, allowedExtensionIds, probe, now });
+}
+
 export async function promoteStagedHighlight({
   manifestPath,
   repoRoot = process.cwd(),
@@ -107,6 +245,10 @@ export async function promoteStagedHighlight({
 } = {}) {
   if (!manifestPath) throw new Error("stage manifest path is required");
   const staged = await readStageManifest(manifestPath, { repoRoot, allowedExtensionIds });
+  return promoteWithLock({ staged, repoRoot, highlightsDir, allowedExtensionIds, probe, now });
+}
+
+async function promoteWithLock({ staged, repoRoot, highlightsDir, allowedExtensionIds, probe, now }) {
   const { manifest } = staged;
   await fs.mkdir(highlightsDir, { recursive: true });
   const lockPath = path.join(highlightsDir, `.promote-${manifest.highlight.id}.lock`);
@@ -120,6 +262,110 @@ export async function promoteStagedHighlight({
     return await promoteVerifiedStage({ staged, repoRoot, highlightsDir, allowedExtensionIds, probe, now });
   } finally {
     await fs.rmdir(lockPath).catch(() => {});
+  }
+}
+
+function buildAcceptedReviewStage({ desktop, mobile, acceptance }) {
+  const forms = {
+    desktop: reviewFormRecord(desktop),
+    ...(mobile ? { mobile: reviewFormRecord(mobile) } : {}),
+  };
+  const source = {
+    contract: "kandev-highlight-accepted-review-v1",
+    schemaVersion: STAGE_MANIFEST_VERSION,
+    revision: desktop.manifest.revision,
+    highlight: structuredClone(desktop.manifest.highlight),
+    scenario: structuredClone(desktop.manifest.scenario),
+    capture: structuredClone(desktop.manifest.capture),
+    qa: {
+      status: "accepted",
+      reportPath: desktop.manifest.qa.reportPath,
+      reportDigest: desktop.manifest.qa.reportDigest,
+      acceptedAt: acceptance.acceptedAt,
+    },
+    provenance: structuredClone(desktop.manifest.provenance),
+    assets: {
+      desktop: structuredClone(desktop.manifest.assets.desktop),
+      ...(mobile ? { mobile: structuredClone(mobile.manifest.assets.mobile) } : {}),
+    },
+    forms,
+    acceptance: {
+      ...acceptance,
+      desktopReviewDigest: desktop.manifest.stageDigest,
+      ...(mobile ? { mobileReviewDigest: mobile.manifest.stageDigest } : {}),
+    },
+  };
+  const manifest = { ...source, stageDigest: computeStageManifestDigest(source) };
+  return {
+    manifest,
+    scenario: desktop.scenario,
+    scenarioPath: desktop.scenarioPath,
+    ...(mobile ? {
+      mobileScenario: mobile.scenario,
+      mobileScenarioPath: mobile.scenarioPath,
+    } : {}),
+    capturePath: desktop.capturePath,
+    reportPath: desktop.reportPath,
+    assets: {
+      desktop: desktop.assets.desktop,
+      ...(mobile ? { mobile: mobile.assets.mobile } : {}),
+    },
+  };
+}
+
+function reviewFormRecord(reviewed) {
+  return {
+    reviewDigest: reviewed.manifest.stageDigest,
+    scenarioDigest: reviewed.manifest.scenario.digest,
+    captureDigest: reviewed.manifest.capture.digest,
+    qa: {
+      status: reviewed.manifest.qa.status,
+      reportDigest: reviewed.manifest.qa.reportDigest,
+      completedAt: reviewed.manifest.qa.completedAt,
+    },
+    provenance: structuredClone(reviewed.manifest.provenance),
+  };
+}
+
+function assertReviewPair(desktop, mobile) {
+  if (desktop.manifest.revision !== mobile.manifest.revision) {
+    throw new Error("paired mobile review revision does not match desktop review");
+  }
+  const desktopHighlight = {
+    ...desktop.manifest.highlight,
+    mobileRequired: desktop.mobileRequired,
+  };
+  const mobileHighlight = {
+    ...mobile.manifest.highlight,
+    mobileRequired: mobile.mobileRequired,
+  };
+  if (canonicalJson(desktopHighlight) !== canonicalJson(mobileHighlight)) {
+    throw new Error("paired mobile review Highlight metadata does not match desktop review");
+  }
+  for (const field of ["id", "title"]) {
+    if (desktop.scenario[field] !== mobile.scenario[field]) {
+      throw new Error(`paired mobile review scenario ${field} does not match desktop review`);
+    }
+  }
+  if (canonicalJson(desktop.scenario.seed) !== canonicalJson(mobile.scenario.seed)) {
+    throw new Error("paired mobile review scenario seed does not match desktop review");
+  }
+  const provenanceFields = [
+    "captureMode",
+    "sourceSha",
+    "seedId",
+    "seedDigest",
+    "toolVersion",
+    "landingAdapter",
+    "prNumber",
+    "prBaseSha",
+    "prHeadSha",
+    "sourceRef",
+  ];
+  for (const field of provenanceFields) {
+    if (canonicalJson(desktop.manifest.provenance[field]) !== canonicalJson(mobile.manifest.provenance[field])) {
+      throw new Error(`paired mobile review provenance ${field} does not match desktop review`);
+    }
   }
 }
 
@@ -155,6 +401,10 @@ async function promoteVerifiedStage({ staged, repoRoot, highlightsDir, allowedEx
       : null;
     const scenarioRecord = await copyTrackedFile(staged.scenarioPath, path.join(revisionDir, "scenario.json"), `revisions/${manifest.revision}/scenario.json`);
     scenarioRecord.digest = manifest.scenario.digest;
+    const mobileScenarioRecord = staged.mobileScenarioPath
+      ? await copyTrackedFile(staged.mobileScenarioPath, path.join(revisionDir, "scenario.mobile.json"), `revisions/${manifest.revision}/scenario.mobile.json`)
+      : null;
+    if (mobileScenarioRecord) mobileScenarioRecord.digest = manifest.forms.mobile.scenarioDigest;
 
     const compact = buildCompactProvenance(manifest);
     const provenanceBytes = Buffer.from(`${JSON.stringify(compact, null, 2)}\n`);
@@ -169,6 +419,7 @@ async function promoteVerifiedStage({ staged, repoRoot, highlightsDir, allowedEx
       ...Object.values(desktop),
       ...Object.values(mobileAssets ?? {}),
       scenarioRecord,
+      ...(mobileScenarioRecord ? [mobileScenarioRecord] : []),
       provenanceRecord,
     ].map(({ path: filePath, bytes, sha256 }) => ({ path: filePath, bytes, sha256 }));
     revisionHistory.push({ revision: manifest.revision, files: activeFiles });
@@ -179,6 +430,7 @@ async function promoteVerifiedStage({ staged, repoRoot, highlightsDir, allowedEx
       desktop,
       mobileAssets,
       scenarioRecord,
+      mobileScenarioRecord,
       provenanceRecord,
       revisionHistory,
       now,
@@ -244,6 +496,119 @@ function validateManifestShape(manifest) {
     if (!manifest.assets[form]) continue;
     assertObjectKeys(manifest.assets[form], ASSET_KEYS, `${form} assets`);
     for (const kind of ASSET_KEYS) validateAssetRecord(manifest.assets[form][kind], form, kind);
+  }
+}
+
+function validateReviewManifestShape(manifest) {
+  assertObjectKeys(manifest, [
+    "contract",
+    "schemaVersion",
+    "stageDigest",
+    "revision",
+    "highlight",
+    "scenario",
+    "capture",
+    "qa",
+    "provenance",
+    "profile",
+    "promotable",
+    "readyForReview",
+    "reason",
+    "assets",
+  ], "review manifest");
+  if (manifest.contract !== "kandev-highlight-review-stage-v1") {
+    throw new Error("review manifest contract must be kandev-highlight-review-stage-v1");
+  }
+  if (manifest.schemaVersion !== STAGE_MANIFEST_VERSION) {
+    throw new Error(`review manifest schemaVersion must be ${STAGE_MANIFEST_VERSION}`);
+  }
+  if (!DIGEST_PATTERN.test(manifest.stageDigest)) throw new Error("review stageDigest must be SHA-256");
+  if (typeof manifest.revision !== "string" || !/^[a-z0-9][a-z0-9._-]*$/.test(manifest.revision)) {
+    throw new Error("review revision is invalid");
+  }
+  validateReviewHighlightMetadata(manifest.highlight);
+  assertObjectKeys(manifest.scenario, ["path", "digest"], "review scenario");
+  assertSafeRelative(manifest.scenario.path, "review scenario path");
+  if (!DIGEST_PATTERN.test(manifest.scenario.digest)) throw new Error("review scenario digest must be SHA-256");
+  assertObjectKeys(manifest.capture, ["path", "digest"], "review capture");
+  assertSafeRelative(manifest.capture.path, "review capture path");
+  if (!DIGEST_PATTERN.test(manifest.capture.digest)) throw new Error("review capture digest must be SHA-256");
+  assertObjectKeys(manifest.qa, ["status", "passed", "reportPath", "reportDigest", "completedAt"], "review QA");
+  assertSafeRelative(manifest.qa.reportPath, "review QA report path");
+  if (manifest.qa.status !== "technical_pass" || manifest.qa.passed !== true) {
+    throw new Error("review manifest requires technical_pass QA with passed=true");
+  }
+  if (!DIGEST_PATTERN.test(manifest.qa.reportDigest) || !validDate(manifest.qa.completedAt)) {
+    throw new Error("review QA requires report digest and completedAt");
+  }
+  validateProvenance(manifest.provenance);
+  if (!["desktop", "native-mobile"].includes(manifest.profile)) {
+    throw new Error("review profile must be desktop or native-mobile");
+  }
+  if (manifest.promotable !== false || manifest.readyForReview !== true) {
+    throw new Error("technical review must be non-promotable and ready for explicit review");
+  }
+  const expectedReason = manifest.profile === "desktop"
+    ? "explicit-acceptance-required"
+    : "desktop-stage-required";
+  if (manifest.reason !== expectedReason) throw new Error(`review reason must be ${expectedReason}`);
+  const form = manifest.profile === "desktop" ? "desktop" : "mobile";
+  assertObjectKeys(manifest.assets, [form], "review assets");
+  assertObjectKeys(manifest.assets[form], ASSET_KEYS, `${form} review assets`);
+  for (const kind of ASSET_KEYS) validateAssetRecord(manifest.assets[form][kind], form, kind);
+}
+
+function validateReviewHighlightMetadata(highlight) {
+  assertObjectKeys(highlight, [
+    "id",
+    "title",
+    "summary",
+    "caption",
+    "releaseVersion",
+    "featureFlags",
+    "docs",
+    "mobileDeclaration",
+    "mobileRequired",
+  ], "review highlight", { optional: true });
+  for (const field of ["id", "title", "summary", "caption", "releaseVersion", "featureFlags", "docs", "mobileDeclaration"]) {
+    if (!Object.hasOwn(highlight, field)) throw new Error(`review highlight is missing ${field}`);
+  }
+  validateHighlightMetadata({
+    id: highlight.id,
+    title: highlight.title,
+    summary: highlight.summary,
+    caption: highlight.caption,
+    releaseVersion: highlight.releaseVersion,
+    featureFlags: highlight.featureFlags,
+    docs: highlight.docs,
+    mobileDeclaration: highlight.mobileDeclaration,
+  });
+  if (highlight.mobileRequired !== undefined && typeof highlight.mobileRequired !== "boolean") {
+    throw new Error("review highlight mobileRequired must be a boolean");
+  }
+}
+
+function assertReviewIdentity(manifest, scenario, delivery) {
+  const expectedProfile = scenario.profile.kind;
+  if (manifest.profile !== expectedProfile) {
+    throw new Error("review profile does not match declarative scenario profile");
+  }
+  if (manifest.revision !== delivery.revision) {
+    throw new Error("review revision does not match declarative delivery revision");
+  }
+  const expected = delivery.highlight;
+  for (const field of ["id", "title", "summary", "caption", "releaseVersion", "mobileDeclaration", "mobileRequired"]) {
+    const actual = field === "mobileRequired"
+      ? manifest.highlight[field] ?? manifest.profile === "native-mobile"
+      : manifest.highlight[field];
+    if (canonicalJson(actual) !== canonicalJson(expected[field])) {
+      throw new Error(`review Highlight ${field} does not match declarative scenario delivery`);
+    }
+  }
+  for (const field of ["featureFlags", "docs"]) {
+    if (canonicalJson(manifest.highlight[field]) !== canonicalJson(expected[field])) {
+      throw new Error(`review Highlight ${field} does not match declarative scenario delivery`);
+    }
   }
 }
 
@@ -334,10 +699,12 @@ function buildCompactProvenance(manifest) {
       report_digest: manifest.qa.reportDigest,
       accepted_at: manifest.qa.acceptedAt,
     },
+    ...(manifest.forms ? { forms: compactReviewForms(manifest.forms) } : {}),
+    ...(manifest.acceptance ? { acceptance: compactAcceptance(manifest.acceptance) } : {}),
   };
 }
 
-function buildDescriptor({ manifest, existingDescriptor, desktop, mobileAssets, scenarioRecord, provenanceRecord, revisionHistory, now }) {
+function buildDescriptor({ manifest, existingDescriptor, desktop, mobileAssets, scenarioRecord, mobileScenarioRecord, provenanceRecord, revisionHistory, now }) {
   const provenance = {
     capture_mode: manifest.provenance.captureMode,
     source_sha: manifest.provenance.sourceSha,
@@ -352,6 +719,8 @@ function buildDescriptor({ manifest, existingDescriptor, desktop, mobileAssets, 
     scenario_digest: manifest.scenario.digest,
     capture_digest: manifest.capture.digest,
     stage_digest: manifest.stageDigest,
+    ...(manifest.forms ? { forms: compactReviewForms(manifest.forms) } : {}),
+    ...(manifest.acceptance ? { acceptance: compactAcceptance(manifest.acceptance) } : {}),
     ...(manifest.provenance.captureMode === "pr_head" ? {
       pr_number: manifest.provenance.prNumber,
       pr_base_sha: manifest.provenance.prBaseSha,
@@ -380,10 +749,55 @@ function buildDescriptor({ manifest, existingDescriptor, desktop, mobileAssets, 
     desktop,
     ...(mobileAssets ? { mobile_assets: mobileAssets } : {}),
     scenario: scenarioRecord,
+    ...(mobileScenarioRecord ? { mobile_scenario: mobileScenarioRecord } : {}),
     provenance_record: provenanceRecord,
     revision_history: revisionHistory,
     ...(existingDescriptor?.published_at ? { published_at: existingDescriptor.published_at } : {}),
   };
+}
+
+function compactAcceptance(acceptance) {
+  return {
+    status: acceptance.status,
+    accepted_by: acceptance.acceptedBy,
+    accepted_at: acceptance.acceptedAt,
+    desktop_review_digest: acceptance.desktopReviewDigest,
+    ...(acceptance.mobileReviewDigest ? { mobile_review_digest: acceptance.mobileReviewDigest } : {}),
+  };
+}
+
+function compactCaptureProvenance(provenance) {
+  return {
+    capture_mode: provenance.captureMode,
+    source_sha: provenance.sourceSha,
+    captured_at: provenance.capturedAt,
+    seed_id: provenance.seedId,
+    seed_digest: provenance.seedDigest,
+    tool_version: provenance.toolVersion,
+    landing_adapter: {
+      source_sha: provenance.landingAdapter.sourceSha,
+      contract_version: provenance.landingAdapter.contractVersion,
+    },
+    ...(provenance.captureMode === "pr_head" ? {
+      pr_number: provenance.prNumber,
+      pr_base_sha: provenance.prBaseSha,
+      pr_head_sha: provenance.prHeadSha,
+    } : { source_ref: provenance.sourceRef }),
+  };
+}
+
+function compactReviewForms(forms) {
+  return Object.fromEntries(Object.entries(forms).map(([form, record]) => [form, {
+    review_digest: record.reviewDigest,
+    scenario_digest: record.scenarioDigest,
+    capture_digest: record.captureDigest,
+    qa: {
+      status: record.qa.status,
+      report_digest: record.qa.reportDigest,
+      completed_at: record.qa.completedAt,
+    },
+    provenance: compactCaptureProvenance(record.provenance),
+  }]));
 }
 
 function deriveLegacyRevisionHistory(descriptor) {
@@ -391,6 +805,7 @@ function deriveLegacyRevisionHistory(descriptor) {
     ...Object.values(descriptor.desktop ?? descriptor.desktop_assets ?? {}),
     ...Object.values(descriptor.mobile_assets ?? {}),
     descriptor.scenario,
+    descriptor.mobile_scenario,
     descriptor.provenance_record,
   ].filter(Boolean).map(({ path: filePath, bytes, sha256 }) => ({ path: filePath, bytes, sha256 }));
   return files.length > 0 ? [{ revision: descriptor.active_revision, files }] : [];

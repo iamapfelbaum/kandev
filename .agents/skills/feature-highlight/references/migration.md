@@ -13,7 +13,7 @@ camera config, deliveries, QA, and accepted revision.
 | Per-pilot camera implementation | shared landing `scripts/product-loop-highlight.mjs` adapter |
 | Separate encoder scripts and FFmpeg flags | shared landing adapter render contract |
 | Manual keyframes and contact sheets | automatic QA keyframes, contact sheets, and configured browser playback |
-| Manual asset promotion/copy | content-addressed `stage.json` then collision-refusing `promote` |
+| Manual asset promotion/copy | content-addressed technical `review.json`, explicit `--accept-reviewed-by`, then collision-refusing `promote` |
 
 ## Reuse Or Recapture
 
@@ -28,6 +28,9 @@ native form factor, story action, selector target, cursor journey, or seed state
 changes; also recapture when raw provenance or required semantic metadata is
 missing. Never crop desktop raw into mobile or invent metadata after fact.
 
-Preserve old accepted revision. Promote migrated delivery as new immutable
-revision only after side-by-side review and accepted QA. Migration itself does
-not authorize activation, withdrawal, asset deletion, overwrite, or recapture.
+Preserve old accepted revision. Promote migrated delivery as a new immutable
+revision only after side-by-side review, technical QA, and explicit reviewer
+acceptance. `technical_pass` alone is never promotable. For native mobile, use a
+separate native scenario/review and `--mobile-review`; never relabel old desktop
+bytes. Migration itself does not authorize activation, withdrawal, asset
+deletion, overwrite, or recapture.

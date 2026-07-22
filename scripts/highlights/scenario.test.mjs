@@ -86,6 +86,10 @@ test("checked-in JSON Schema, declarations, and example describe schema v1", asy
   assert.match(declarations, /kind: "native-mobile"; viewport: \{ width: 430; height: 932 \}; deviceScaleFactor: 3/);
   assert.equal(schema.properties.delivery.$ref, "#/$defs/delivery");
   assert.equal(schema.$defs.delivery.additionalProperties, false);
+  assert.equal(
+    schema.allOf[0].then.properties.delivery.properties.mobileRequired.const,
+    true,
+  );
   assert.deepEqual(schema.$defs.delivery.required, [
     "revision",
     "releaseVersion",
@@ -136,9 +140,31 @@ test("delivery metadata maps canonical id and title into stage-manifest fields",
       featureFlags: ["features.highlights"],
       docs: { page: "guide/tasks.md", section: "Create a task" },
       mobileDeclaration: "Feature has a native mobile surface.",
+      mobileRequired: false,
     },
   });
   assert.deepEqual(compileTimeline(scenario).delivery, scenario.delivery);
+});
+
+test("delivery mobileRequired is typed, defaults by profile, and forbids a native false declaration", async () => {
+  const { requireDeliveryMetadata, validateScenario } = await import(scenarioModule);
+  const desktop = validScenario();
+  desktop.delivery = validDelivery();
+  assert.equal(requireDeliveryMetadata(desktop).highlight.mobileRequired, false);
+
+  const paired = structuredClone(desktop);
+  paired.delivery.mobileRequired = true;
+  assert.deepEqual(validateScenario(paired), { ok: true, errors: [] });
+  assert.equal(requireDeliveryMetadata(paired).highlight.mobileRequired, true);
+
+  const native = structuredClone(desktop);
+  native.profile = { kind: "native-mobile", viewport: { width: 430, height: 932 }, deviceScaleFactor: 3 };
+  native.camera.maxZoom = 1.18;
+  native.story.actions.find((action) => action.kind === "cameraZoom").zoom = 1.1;
+  assert.equal(requireDeliveryMetadata(native).highlight.mobileRequired, true);
+  native.delivery.mobileRequired = false;
+  assert(validateScenario(native).errors.some((error) =>
+    error.pointer === "/delivery/mobileRequired" && /native-mobile.*true|required/i.test(error.message)));
 });
 
 test("promotable scenarios keep canonical id and title stage-compatible", async () => {

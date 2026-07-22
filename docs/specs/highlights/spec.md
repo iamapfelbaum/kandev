@@ -46,11 +46,13 @@ on the same immutable media, provenance, release state, and review gate.
 - `scaffold`, scenario-aware `validate`, and `storyboard` run before expensive
   capture. Storyboards are deterministic Markdown or machine JSON and carry the
   canonical scenario digest.
-- Capture/QA output is staged outside Git under its manifest digest. Explicit
-  promotion requires accepted QA and exact scenario, raw-capture, report, and
-  delivery hashes; it refuses revision collisions and validates before swap.
-- Promoted revisions include only WebM/MP4/WebP, `scenario.json`, and compact
-  `provenance.json`. Raw masters and full QA artifacts remain outside Git.
+- Capture/QA output is staged outside Git under its technical `review.json`
+  digest. `technical_pass` is never approval. Promotion requires an explicit
+  stable reviewer ID plus exact scenario, raw-capture, report, and delivery
+  hashes; it refuses revision collisions and validates before swap.
+- Promoted revisions include only WebM/MP4/WebP, `scenario.json`, optional
+  `scenario.mobile.json`, and compact `provenance.json`. Raw masters and full QA
+  artifacts remain outside Git.
 
 See [authoring.md](authoring.md) for scenario, CLI, review, troubleshooting, and
 migration workflow. Agent instructions live in
@@ -132,7 +134,9 @@ directory that are not part of the descriptor, revision, or history contract.
 Declarative desktop capture uses CSS 1920x1200 at DPR2, a 3840x2400 25 FPS raw
 master, and 1920x1200 25 FPS delivery. Native mobile uses CSS 430x932 at DPR3
 with real mobile/touch context and native 1290x2796 25 FPS source/delivery.
-Mobile is never a crop of desktop. Camera caps are 1.5x desktop and 1.18x
+Mobile is never a crop of desktop. A desktop delivery sets
+`delivery.mobileRequired: true` only when an independently captured matching
+native-mobile scenario/review will be paired. Camera caps are 1.5x desktop and 1.18x
 native mobile; opening/ending settles, safe margin, glyph containment, velocity,
 acceleration, jerk, and zoom rate are validated.
 
@@ -141,13 +145,16 @@ acceleration, jerk, and zoom rate are validated.
 `run` executes validate, storyboard, capture, render, QA, then external stage in
 that order. Storyboard and `--dry-run` are cheap gates before recording. Raw
 masters, logs, keyframes, contact sheets, browser evidence, and full QA remain
-under a content-addressed artifact root outside repository. `stage.json` pins
-scenario, source, seed, capture, report, stage, and delivery hashes/bytes.
+under a content-addressed artifact root outside repository. `review.json` pins
+scenario, source, seed, capture, report, review, and delivery hashes/bytes while
+remaining non-promotable until explicit human acceptance.
 
-Promotion is a separate explicit operation. It requires accepted QA, rechecks
-all bytes and digests, refuses existing revision/destination collisions, copies
-to a temporary destination, validates catalog, and swaps only after success.
-Only accepted delivery media, scenario, and compact provenance enter Git.
+Promotion is a separate explicit operation. It requires `--accept-reviewed-by`,
+rechecks all bytes and digests, refuses existing revision/destination collisions,
+copies to a temporary destination, validates catalog, and swaps only after
+success. A required native-mobile form is passed with `--mobile-review`; pair
+identity is exact and profiles are never relabeled. Only explicitly accepted
+delivery media, scenarios, and compact provenance enter Git.
 
 ## Tooling
 
@@ -162,8 +169,9 @@ node scripts/highlights.mjs render ./my-highlight.scenario.json --artifact-root 
 node scripts/highlights.mjs qa ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --dry-run
 node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --source pr_head --dry-run
 node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --source pr_head
-node scripts/highlights.mjs promote /external/stages/<digest>/stage.json --dry-run
-node scripts/highlights.mjs promote /external/stages/<digest>/stage.json
+node scripts/highlights.mjs promote /external/stages/<digest>/review.json --accept-reviewed-by reviewer-42 --dry-run
+node scripts/highlights.mjs promote /external/stages/<digest>/review.json --accept-reviewed-by reviewer-42
+# Add `--mobile-review /external/mobile-stages/<digest>/review.json` when mobileRequired is true.
 node scripts/validate-highlights.mjs
 node scripts/highlight-source-digest.mjs docs/public/media/highlights/my-highlight
 node scripts/promote-highlight.mjs docs/public/media/highlights/my-highlight

@@ -2,7 +2,7 @@
 
 Each Highlight owns one directory: `<id>/highlight.json` plus immutable media
 under `<id>/revisions/<revision>/`. The descriptor is the source of truth for
-docs ownership, release state, feature flags, accepted QA, capture provenance,
+docs ownership, release state, feature flags, explicit review acceptance, capture provenance,
 mobile declaration, and SHA-256/byte records for every delivery.
 
 Run the contract locally from the Kandev repository:
@@ -23,8 +23,8 @@ node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /ex
 # Validate the checked-in delivery catalog and inspect lifecycle digests.
 node scripts/highlights.mjs validate
 node scripts/highlights.mjs digest docs/public/media/highlights/<id>
-node scripts/highlights.mjs promote /external/stages/<stage-digest>/stage.json --dry-run
-node scripts/highlights.mjs promote /external/stages/<stage-digest>/stage.json
+node scripts/highlights.mjs promote /external/stages/<review-digest>/review.json --accept-reviewed-by reviewer-42 --dry-run
+node scripts/highlights.mjs promote /external/stages/<review-digest>/review.json --accept-reviewed-by reviewer-42
 node scripts/activate-highlights-release.mjs 0.20.0
 ```
 
@@ -36,16 +36,24 @@ as a native surface, never a desktop crop. Camera starts at 1x and changes only
 through sequential focus, zoom, hold, and return actions.
 
 Capture, raw masters, QA reports, and contact sheets remain in an external
-content-addressed stage. Promotion verifies the stage, accepted QA, scenario,
-raw-capture digest, and delivery bytes before a copy-validate-swap transaction.
-Only WebM/MP4/WebP deliveries, `scenario.json`, and compact `provenance.json`
+content-addressed review stage. `technical_pass` in `review.json` is not human
+approval and never promotes alone. Promotion requires `--accept-reviewed-by`,
+then verifies the review, scenario, raw-capture digest, QA report, and delivery
+bytes before a copy-validate-swap transaction. Only WebM/MP4/WebP deliveries,
+`scenario.json`, optional `scenario.mobile.json`, and compact `provenance.json`
 enter an immutable revision. Existing revision names are never overwritten.
+
+For paired native-mobile media, set `delivery.mobileRequired: true` in both
+native scenarios and pass `--mobile-review <native-review.json>`. The pair must
+share semantic delivery/source/seed/tool/landing identity. Promotion preserves
+both per-form scenario/capture/QA/review provenance and never relabels desktop
+media as mobile.
 
 `run` order is fixed: validate, storyboard, capture, render, automatic QA, then
 content-addressed stage. Missing capture prerequisites fail; command does not
 silently substitute a crop, stale bundle, untrusted selector, or custom script.
-Review generated keyframes, contact sheet, full browser playback, and accepted QA
-report before separate promotion.
+Review generated keyframes, contact sheet, full browser playback, and technical
+QA report before supplying the stable reviewer acceptance ID.
 
 Use `pr_head` for feature work. Reserve `current_main` for deliberate backfill
 from a clean checkout proven equal to freshly fetched `origin/main`.

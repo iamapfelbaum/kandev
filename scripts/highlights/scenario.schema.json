@@ -29,6 +29,11 @@
       "then": {
         "properties": {
           "camera": { "properties": { "maxZoom": { "maximum": 1.18 } } },
+          "delivery": {
+            "properties": {
+              "mobileRequired": { "const": true }
+            }
+          },
           "story": {
             "properties": {
               "actions": {
@@ -132,7 +137,8 @@
             "section": { "type": "string", "minLength": 1, "maxLength": 160, "pattern": "\\S" }
           }
         },
-        "mobileDeclaration": { "type": "string", "minLength": 1, "maxLength": 500, "pattern": "\\S" }
+        "mobileDeclaration": { "type": "string", "minLength": 1, "maxLength": 500, "pattern": "\\S" },
+        "mobileRequired": { "type": "boolean" }
       }
     },
     "profile": {

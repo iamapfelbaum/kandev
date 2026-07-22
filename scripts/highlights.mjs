@@ -8,6 +8,7 @@ import {
   computeScenarioDigest,
   readScenario,
   renderStoryboard,
+  requireDeliveryMetadata,
   writeScenarioScaffold,
 } from "./highlights/scenario.mjs";
 
@@ -27,6 +28,7 @@ export const ALLOWED_HIGHLIGHT_LABELS = new Set([
 ]);
 const LANDING_ADAPTER_SHA_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const CONTRACT_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+const REVIEWER_ID_PATTERN = /^[a-z0-9](?:[a-z0-9._@-]{0,126}[a-z0-9])?$/;
 
 // Keep both legacy docs deliveries and current declarative production
 // deliveries valid. New staged production capture is pinned to 1920x1200.
@@ -516,19 +518,27 @@ function assertDescriptorShape(descriptor) {
   }
   if (typeof descriptor.active_revision !== "string" || !/^[a-z0-9][a-z0-9._-]*$/.test(descriptor.active_revision)) throw new Error(`${descriptor.id} has invalid active_revision`);
   if (!/^sha256:[a-f0-9]{64}$/.test(descriptor.source_digest)) throw new Error(`${descriptor.id} has invalid source_digest`);
+  const companionFields = [descriptor.scenario, descriptor.provenance_record, descriptor.revision_history];
+  if (companionFields.some(Boolean) && !companionFields.every(Boolean)) {
+    throw new Error(`${descriptor.id} durable scenario, provenance record, and revision_history must be declared together`);
+  }
+  if (descriptor.mobile_scenario && !companionFields.every(Boolean)) {
+    throw new Error(`${descriptor.id} mobile scenario requires the durable scenario, provenance record, and revision_history companion set`);
+  }
   assertProvenance(descriptor);
   if (descriptor.status === "withdrawn" && typeof descriptor.withdrawal_reason !== "string") {
     throw new Error(`${descriptor.id} withdrawn status requires withdrawal_reason`);
   }
   if (descriptor.mobile.available && !descriptor.mobile_assets) throw new Error(`${descriptor.id} mobile declaration requires mobile assets`);
   if (!descriptor.mobile.available && descriptor.mobile_assets) throw new Error(`${descriptor.id} declares mobile assets but mobile is unavailable`);
-  const companionFields = [descriptor.scenario, descriptor.provenance_record, descriptor.revision_history];
-  if (companionFields.some(Boolean) && !companionFields.every(Boolean)) {
-    throw new Error(`${descriptor.id} durable scenario, provenance record, and revision_history must be declared together`);
-  }
   if (descriptor.scenario) {
     assertCompanionRecord(descriptor.scenario, descriptor.active_revision, "scenario", "scenario.json");
     if (!isDigest(descriptor.scenario.digest)) throw new Error(`${descriptor.id} scenario requires canonical digest`);
+    if (descriptor.mobile_scenario) {
+      if (!descriptor.mobile.available) throw new Error(`${descriptor.id} mobile scenario requires mobile availability`);
+      assertCompanionRecord(descriptor.mobile_scenario, descriptor.active_revision, "mobile scenario", "scenario.mobile.json");
+      if (!isDigest(descriptor.mobile_scenario.digest)) throw new Error(`${descriptor.id} mobile scenario requires canonical digest`);
+    }
     assertCompanionRecord(descriptor.provenance_record, descriptor.active_revision, "provenance record", "provenance.json");
     if (!Array.isArray(descriptor.revision_history) || descriptor.revision_history.length === 0) throw new Error(`${descriptor.id} requires revision_history`);
   }
@@ -562,6 +572,70 @@ function assertProvenance(descriptor) {
     if (!landing || !LANDING_ADAPTER_SHA_PATTERN.test(landing.source_sha ?? "") || !CONTRACT_VERSION_PATTERN.test(landing.contract_version ?? "")) {
       throw new Error(`${descriptor.id} declarative provenance requires exact landing adapter SHA and contract version`);
     }
+  }
+  validateReviewProvenance(descriptor);
+}
+
+function validateReviewProvenance(descriptor) {
+  const provenance = descriptor.provenance;
+  if (!provenance.forms && !provenance.acceptance) return;
+  if (!provenance.forms || !provenance.acceptance) {
+    throw new Error(`${descriptor.id} review provenance requires forms and acceptance together`);
+  }
+  const expectedForms = descriptor.mobile_scenario ? ["desktop", "mobile"] : ["desktop"];
+  if (Object.keys(provenance.forms).sort().join(",") !== expectedForms.join(",")) {
+    throw new Error(`${descriptor.id} review provenance forms do not match promoted form factors`);
+  }
+  const acceptance = provenance.acceptance;
+  if (
+    acceptance.status !== "accepted" ||
+    !REVIEWER_ID_PATTERN.test(acceptance.accepted_by ?? "") ||
+    !Number.isFinite(Date.parse(acceptance.accepted_at))
+  ) {
+    throw new Error(`${descriptor.id} review provenance requires explicit stable acceptance`);
+  }
+  for (const form of expectedForms) {
+    const record = provenance.forms[form];
+    const scenarioDigest = form === "desktop" ? descriptor.scenario.digest : descriptor.mobile_scenario.digest;
+    const acceptanceDigest = acceptance[`${form}_review_digest`];
+    if (
+      !record ||
+      !isDigest(record.review_digest) ||
+      record.review_digest !== acceptanceDigest ||
+      record.scenario_digest !== scenarioDigest ||
+      !isDigest(record.capture_digest) ||
+      record.qa?.status !== "technical_pass" ||
+      !isDigest(record.qa?.report_digest) ||
+      !Number.isFinite(Date.parse(record.qa?.completed_at))
+    ) {
+      throw new Error(`${descriptor.id} ${form} review provenance requires exact review, scenario, capture, and QA digests`);
+    }
+    const formProvenance = record.provenance;
+    if (
+      formProvenance?.capture_mode !== provenance.capture_mode ||
+      formProvenance?.source_sha !== provenance.source_sha ||
+      formProvenance?.seed_id !== provenance.seed_id ||
+      formProvenance?.seed_digest !== provenance.seed_digest ||
+      formProvenance?.tool_version !== provenance.tool_version ||
+      formProvenance?.landing_adapter?.source_sha !== provenance.landing_adapter.source_sha ||
+      formProvenance?.landing_adapter?.contract_version !== provenance.landing_adapter.contract_version ||
+      !Number.isFinite(Date.parse(formProvenance?.captured_at))
+    ) {
+      throw new Error(`${descriptor.id} ${form} review provenance source, seed, tool, or landing identity does not match descriptor`);
+    }
+    if (provenance.capture_mode === "pr_head" && (
+      formProvenance.pr_number !== provenance.pr_number ||
+      formProvenance.pr_base_sha !== provenance.pr_base_sha ||
+      formProvenance.pr_head_sha !== provenance.pr_head_sha
+    )) {
+      throw new Error(`${descriptor.id} ${form} review provenance PR identity does not match descriptor`);
+    }
+    if (provenance.capture_mode === "current_main" && formProvenance.source_ref !== provenance.source_ref) {
+      throw new Error(`${descriptor.id} ${form} review provenance source ref does not match descriptor`);
+    }
+  }
+  if (provenance.forms.desktop.capture_digest !== provenance.capture_digest) {
+    throw new Error(`${descriptor.id} desktop review capture digest does not match descriptor`);
   }
 }
 
@@ -603,7 +677,7 @@ async function validateRevisionFiles({ highlightDir, descriptor, allowedExtensio
       assertFileRecord(record, `${descriptor.id} revision ${revision.revision}`);
       assertImmutableAssetPath(record.path, revision.revision, `${descriptor.id} revision file`);
       const basename = path.posix.basename(record.path);
-      if (!["desktop.webm", "desktop.mp4", "desktop.webp", "mobile.webm", "mobile.mp4", "mobile.webp", "scenario.json", "provenance.json"].includes(basename)) {
+      if (!["desktop.webm", "desktop.mp4", "desktop.webp", "mobile.webm", "mobile.mp4", "mobile.webp", "scenario.json", "scenario.mobile.json", "provenance.json"].includes(basename)) {
         throw new Error(`${descriptor.id} revision contains unsupported file ${record.path}`);
       }
       if (recordsByPath.has(record.path)) throw new Error(`${descriptor.id} revision_history contains duplicate path ${record.path}`);
@@ -622,6 +696,7 @@ async function validateRevisionFiles({ highlightDir, descriptor, allowedExtensio
     ...Object.values(descriptor.desktop ?? descriptor.desktop_assets),
     ...Object.values(descriptor.mobile_assets ?? {}),
     descriptor.scenario,
+    descriptor.mobile_scenario,
     descriptor.provenance_record,
   ].filter(Boolean);
   for (const record of activeRecords) {
@@ -635,6 +710,20 @@ async function validateRevisionFiles({ highlightDir, descriptor, allowedExtensio
   const scenario = await readScenario(scenarioPath, { allowedExtensionIds });
   const scenarioDigest = computeScenarioDigest(scenario, { allowedExtensionIds });
   if (scenarioDigest !== descriptor.scenario.digest) throw new Error(`${descriptor.id} durable scenario digest does not match scenario file`);
+  if (descriptor.mobile_scenario) {
+    const mobileScenarioPath = resolveInside(highlightDir, descriptor.mobile_scenario.path, `${descriptor.id} mobile scenario`);
+    const mobileScenario = await readScenario(mobileScenarioPath, { allowedExtensionIds });
+    const mobileScenarioDigest = computeScenarioDigest(mobileScenario, { allowedExtensionIds });
+    if (mobileScenarioDigest !== descriptor.mobile_scenario.digest) throw new Error(`${descriptor.id} durable mobile scenario digest does not match scenario file`);
+    if (scenario.profile.kind !== "desktop" || mobileScenario.profile.kind !== "native-mobile") {
+      throw new Error(`${descriptor.id} paired scenarios must preserve desktop and native-mobile profiles`);
+    }
+    const desktopDelivery = requireDeliveryMetadata(scenario, { allowedExtensionIds });
+    const mobileDelivery = requireDeliveryMetadata(mobileScenario, { allowedExtensionIds });
+    if (!desktopDelivery.highlight.mobileRequired || !mobileDelivery.highlight.mobileRequired) {
+      throw new Error(`${descriptor.id} paired scenarios must both declare mobileRequired`);
+    }
+  }
   const provenancePath = resolveInside(highlightDir, descriptor.provenance_record.path, `${descriptor.id} provenance record`);
   let compact;
   try {
@@ -647,6 +736,30 @@ async function validateRevisionFiles({ highlightDir, descriptor, allowedExtensio
   }
   if (compact.source_sha !== descriptor.provenance.source_sha || compact.qa?.status !== "accepted" || !isDigest(compact.qa?.report_digest)) {
     throw new Error(`${descriptor.id} compact provenance requires accepted QA and matching source SHA`);
+  }
+  if (descriptor.provenance.forms && (
+    canonicalJson(compact.forms) !== canonicalJson(descriptor.provenance.forms) ||
+    canonicalJson(compact.acceptance) !== canonicalJson(descriptor.provenance.acceptance)
+  )) {
+    throw new Error(`${descriptor.id} compact per-form review provenance must match descriptor`);
+  }
+  if (descriptor.mobile_scenario) {
+    if (
+      compact.forms?.desktop?.scenario_digest !== descriptor.scenario.digest ||
+      compact.forms?.mobile?.scenario_digest !== descriptor.mobile_scenario.digest ||
+      compact.forms?.desktop?.qa?.status !== "technical_pass" ||
+      compact.forms?.mobile?.qa?.status !== "technical_pass"
+    ) {
+      throw new Error(`${descriptor.id} compact provenance must preserve both technical review forms`);
+    }
+    if (
+      compact.acceptance?.status !== "accepted" ||
+      compact.acceptance?.accepted_by !== descriptor.provenance.acceptance?.accepted_by ||
+      compact.acceptance?.desktop_review_digest !== descriptor.provenance.acceptance?.desktop_review_digest ||
+      compact.acceptance?.mobile_review_digest !== descriptor.provenance.acceptance?.mobile_review_digest
+    ) {
+      throw new Error(`${descriptor.id} compact review acceptance must match descriptor provenance`);
+    }
   }
   const compactLanding = compact.landing_adapter;
   const descriptorLanding = descriptor.provenance.landing_adapter;
@@ -914,20 +1027,51 @@ export async function runHighlightsCli(argv = process.argv.slice(2), {
       log(await computeSourceDigest(target));
     }
   } else if (command === "promote") {
-    const parsed = parseCliArgs(args, new Set(["allow-extension", "dry-run"]));
-    if (parsed.positionals.length !== 1) throw new Error("usage: highlights.mjs promote <stage.json|legacy-highlight-directory> [--dry-run]");
+    const parsed = parseCliArgs(args, new Set(["accept-reviewed-by", "mobile-review", "allow-extension", "dry-run"]));
+    if (parsed.positionals.length !== 1) throw new Error("usage: highlights.mjs promote <desktop-review.json|accepted-stage.json|legacy-highlight-directory> [--accept-reviewed-by <stable-id>] [--mobile-review <path>] [--dry-run]");
     const target = path.resolve(repoRoot, parsed.positionals[0]);
     const stat = await fs.lstat(target);
     if (stat.isFile()) {
       const allowedExtensionIds = parsed.repeated["allow-extension"] ?? [];
-      const { promoteStagedHighlight, readStageManifest } = await import("./highlights/stage.mjs");
-      if (parsed.flags.has("dry-run")) {
-        const staged = await readStageManifest(target, { repoRoot, allowedExtensionIds });
-        log(`Dry run: stage ${staged.manifest.highlight.id}/${staged.manifest.revision} has accepted QA and verified digest ${staged.manifest.stageDigest}; repository unchanged.`);
+      const stage = await import("./highlights/stage.mjs");
+      let contract;
+      try {
+        contract = JSON.parse(await fs.readFile(target, "utf8")).contract;
+      } catch (error) {
+        throw new Error(`cannot inspect promotion manifest ${target}: ${error.message}`);
+      }
+      if (contract === "kandev-highlight-review-stage-v1") {
+        const result = await stage.promoteReviewedHighlight({
+          desktopManifestPath: target,
+          mobileManifestPath: parsed.values["mobile-review"]
+            ? path.resolve(repoRoot, parsed.values["mobile-review"])
+            : undefined,
+          acceptedBy: parsed.values["accept-reviewed-by"],
+          repoRoot,
+          highlightsDir,
+          allowedExtensionIds,
+          dryRun: parsed.flags.has("dry-run"),
+        });
+        if (result.dryRun) {
+          log(`Dry run: review ${result.highlightId}/${result.revision} accepted by ${result.acceptance.acceptedBy}; verified ${result.reviewDigests.join(", ")}; repository unchanged.`);
+        } else {
+          log(JSON.stringify(result, null, 2));
+        }
       } else {
-        log(JSON.stringify(await promoteStagedHighlight({ manifestPath: target, repoRoot, highlightsDir, allowedExtensionIds }), null, 2));
+        if (parsed.values["accept-reviewed-by"] || parsed.values["mobile-review"]) {
+          throw new Error("--accept-reviewed-by and --mobile-review apply only to technical review manifests");
+        }
+        if (parsed.flags.has("dry-run")) {
+          const staged = await stage.readStageManifest(target, { repoRoot, allowedExtensionIds });
+          log(`Dry run: stage ${staged.manifest.highlight.id}/${staged.manifest.revision} has accepted QA and verified digest ${staged.manifest.stageDigest}; repository unchanged.`);
+        } else {
+          log(JSON.stringify(await stage.promoteStagedHighlight({ manifestPath: target, repoRoot, highlightsDir, allowedExtensionIds }), null, 2));
+        }
       }
     } else {
+      if (parsed.values["accept-reviewed-by"] || parsed.values["mobile-review"]) {
+        throw new Error("--accept-reviewed-by and --mobile-review apply only to technical review manifests");
+      }
       if (parsed.flags.has("dry-run")) throw new Error("legacy directory promotion does not support --dry-run; use a content-addressed stage manifest");
       log(JSON.stringify(await promoteHighlight({ highlightDir: target }), null, 2));
     }

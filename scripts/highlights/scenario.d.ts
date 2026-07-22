@@ -86,6 +86,7 @@ export interface DeliveryMetadata {
   featureFlags: string[];
   docs: { page: string; section: string };
   mobileDeclaration: string;
+  mobileRequired?: boolean;
 }
 
 export interface RequiredDeliveryMetadata {
@@ -99,6 +100,7 @@ export interface RequiredDeliveryMetadata {
     featureFlags: string[];
     docs: { page: string; section: string };
     mobileDeclaration: string;
+    mobileRequired: boolean;
   };
 }
 

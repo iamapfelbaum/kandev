@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "Act as a fresh agent. Scaffold and render a deterministic eight-second desktop Highlight that creates one task. Show me the scenario shape, cheap storyboard review, dry-run, external stage review, and separate promotion command. I do not want custom capture, camera, or encoder scripts.",
-      "expected_output": "A schema-v1 scenario flow using stable semantic selectors, deterministic seed/setup, exact desktop profile, no zoom by default, storyboard before capture, one run command through accepted QA and content-addressed staging, then a separate collision-refusing promotion dry-run and promotion.",
+      "expected_output": "A schema-v1 scenario flow using stable semantic selectors, deterministic seed/setup, exact desktop profile, no zoom by default, storyboard before capture, one run command through technical QA into a content-addressed review bundle, then a separate explicit reviewer-acceptance promotion dry-run and collision-refusing promotion.",
       "files": [
         "scripts/highlights/examples/quick-start.scenario.json",
         "apps/web/e2e/highlights/quick-start.scenario.json"

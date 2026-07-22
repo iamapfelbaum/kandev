@@ -125,10 +125,20 @@ test("requires automatic media, motion, safety, and browser QA", () => {
 
 test("keeps promotion explicit, immutable, and collision refusing", () => {
   assert.match(bundle, /promotion[^\n]{0,120}separate/i);
-  assert.match(bundle, /accepted QA/i);
+  assert.match(bundle, /technical(?:ly)?[^\n]{0,40}(?:pass|QA)/i);
+  assert.match(bundle, /explicit[^\n]{0,80}(?:acceptance|reviewer)/i);
   assert.match(bundle, /immutable revision/i);
   assert.match(bundle, /(?:refuse|reject)[^\n]{0,100}(?:overwrite|collision)/i);
   assert.match(bundle, /promote[^\n]{0,100}--dry-run/i);
+});
+
+test("documents technical review acceptance and exact native-mobile pairing", () => {
+  assert.match(bundle, /review\.json/);
+  assert.match(bundle, /technical_pass[^\n]{0,100}(?:not|never)[^\n]{0,40}(?:approval|accepted|promot)/i);
+  assert.match(bundle, /--accept-reviewed-by/);
+  assert.match(bundle, /mobileRequired/);
+  assert.match(bundle, /--mobile-review/);
+  assert.match(bundle, /scenario\.mobile\.json/);
 });
 
 test("maps bespoke capture archaeology into shared scenario and landing contracts", () => {

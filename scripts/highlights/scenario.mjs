@@ -96,7 +96,7 @@ export function validateScenario(scenario, { allowedExtensionIds = [] } = {}) {
   validateStory(scenario.story, scenario.camera, scenario.profile, allowedExtensions, errors);
   if (scenario.camera !== undefined) validateCamera(scenario.camera, scenario.profile, errors);
   if (scenario.delivery !== undefined) {
-    validateDelivery(scenario.delivery, errors);
+    validateDelivery(scenario.delivery, scenario.profile, errors);
     validatePromotableIdentity(scenario, errors);
   }
 
@@ -158,6 +158,7 @@ export function requireDeliveryMetadata(scenario, options = {}) {
         section: delivery.docs.section,
       },
       mobileDeclaration: delivery.mobileDeclaration,
+      mobileRequired: delivery.mobileRequired ?? (scenario.profile.kind === "native-mobile"),
     },
   };
 }
@@ -486,9 +487,9 @@ function validateCamera(camera, profile, errors) {
   if (!EASINGS.has(camera.easing)) addError(errors, "/camera/easing", `must be one of ${[...EASINGS].join(", ")}`);
 }
 
-function validateDelivery(delivery, errors) {
+function validateDelivery(delivery, profile, errors) {
   if (!objectValue(delivery, "/delivery", errors)) return;
-  rejectUnknownKeys(delivery, ["revision", "releaseVersion", "summary", "caption", "featureFlags", "docs", "mobileDeclaration"], "/delivery", errors);
+  rejectUnknownKeys(delivery, ["revision", "releaseVersion", "summary", "caption", "featureFlags", "docs", "mobileDeclaration", "mobileRequired"], "/delivery", errors);
   if (typeof delivery.revision !== "string" || !REVISION_PATTERN.test(delivery.revision)) {
     addError(errors, "/delivery/revision", "must be a safe immutable revision segment of 1-64 lowercase characters");
   }
@@ -498,6 +499,12 @@ function validateDelivery(delivery, errors) {
   nonBlankStringValue(delivery.summary, "/delivery/summary", errors, { min: 1, max: 500 });
   nonBlankStringValue(delivery.caption, "/delivery/caption", errors, { min: 1, max: 500 });
   nonBlankStringValue(delivery.mobileDeclaration, "/delivery/mobileDeclaration", errors, { min: 1, max: 500 });
+  if (delivery.mobileRequired !== undefined && typeof delivery.mobileRequired !== "boolean") {
+    addError(errors, "/delivery/mobileRequired", "must be a boolean");
+  }
+  if (profile?.kind === "native-mobile" && delivery.mobileRequired === false) {
+    addError(errors, "/delivery/mobileRequired", "native-mobile delivery requires mobileRequired=true");
+  }
   validateFeatureFlags(delivery.featureFlags, errors);
   validateDeliveryDocs(delivery.docs, errors);
 }

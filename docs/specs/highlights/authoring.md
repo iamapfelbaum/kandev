@@ -30,6 +30,12 @@ Desktop is CSS 1920x1200 DPR2, source 3840x2400, delivery 1920x1200, 25 FPS.
 Native mobile is CSS 430x932 DPR3 and native 1290x2796 source/delivery, 25 FPS.
 Never crop desktop into mobile.
 
+Set `delivery.mobileRequired: false` for desktop-only delivery. Set it to `true`
+on both the desktop and separately authored native-mobile scenarios when native
+mobile is promised. Omission defaults false on desktop and true on native mobile;
+native mobile cannot explicitly declare false. Paired reviews must preserve the
+same semantic delivery, source, seed, tool, and landing identities.
+
 Native mobile rejects hover and middle/right click. Tap and drag use trusted
 touch input. Use `pr_head` for feature work; `current_main` is deliberate clean
 fetched-main backfill only.
@@ -45,13 +51,16 @@ camera-motion, settle, sensitive-data, keyframe/contact-sheet, browser playback,
 hash, and byte evidence. Then:
 
 ```bash
-node scripts/highlights.mjs promote /external/highlights/my-highlight/<stage-digest>/stage.json --dry-run
-node scripts/highlights.mjs promote /external/highlights/my-highlight/<stage-digest>/stage.json
+node scripts/highlights.mjs promote /external/highlights/my-highlight/<id>/stages/<review-digest>/review.json --accept-reviewed-by reviewer-42 --dry-run
+node scripts/highlights.mjs promote /external/highlights/my-highlight/<id>/stages/<review-digest>/review.json --accept-reviewed-by reviewer-42
 ```
 
-Promotion requires accepted QA and refuses overwrite/collision. Raw and full QA
-stay external; only immutable delivery media, `scenario.json`, and compact
-`provenance.json` enter revision.
+`technical_pass` is not approval and never promotes without the stable reviewer
+ID. When `mobileRequired` is true, add `--mobile-review <native-review.json>` to
+both commands. Promotion refuses a missing or mismatched pair and never relabels
+desktop media. Raw and full QA stay external; only immutable delivery media,
+`scenario.json`, optional `scenario.mobile.json`, and compact `provenance.json`
+enter revision.
 
 ## Failures
 

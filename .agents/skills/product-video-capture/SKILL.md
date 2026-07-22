@@ -16,12 +16,15 @@ capture, then use:
 
 ```bash
 node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --source pr_head
-node scripts/highlights.mjs promote /external/highlights/my-highlight/<stage-digest>/stage.json --dry-run
-node scripts/highlights.mjs promote /external/highlights/my-highlight/<stage-digest>/stage.json
+node scripts/highlights.mjs promote /external/highlights/my-highlight/<id>/stages/<review-digest>/review.json --accept-reviewed-by reviewer-42 --dry-run
+node scripts/highlights.mjs promote /external/highlights/my-highlight/<id>/stages/<review-digest>/review.json --accept-reviewed-by reviewer-42
 ```
 
-Raw and QA stay outside repositories in content-addressed staging. Promotion is
-separate and collision-refusing. Continue below for long-form, exploratory, or
+Raw and QA stay outside repositories in content-addressed staging. A
+`technical_pass` review is not promotable until the stable reviewer ID is
+supplied. Native-mobile pairing uses a separate native scenario/review and
+`--mobile-review`, never a desktop crop. Promotion is separate and
+collision-refusing. Continue below for long-form, exploratory, or
 unmodeled capture work that cannot fit the validated Highlight action DSL.
 
 ## Prerequisites And Repo Discovery

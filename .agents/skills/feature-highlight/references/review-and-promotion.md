@@ -19,18 +19,20 @@ raw, delivery, QA, repository media, or descriptor.
 ## Content-Addressed Stage
 
 Use a unique artifact root outside Kandev and landing repositories. Pipeline
-creates recoverable attempts there and gives accepted candidate a
-content-addressed stage directory keyed by manifest digest. External stage keeps
+creates recoverable attempts there and gives a technically passing candidate a
+content-addressed review directory keyed by manifest digest. External stage keeps
 raw masters and QA reports together; failed attempts remain diagnosable without
 dirtying Git.
 
 Expected evidence includes scenario and capture digests, semantic cursor ledger,
 camera plan/config, raw master, WebM/MP4/WebP delivery candidates, probes,
 keyframes, contact sheet, browser playback records, full QA report,
-commands, logs, hashes, and bytes. `stage.json` pins exact paths and digests.
+commands, logs, hashes, and bytes. `review.json` pins exact paths and digests,
+records `technical_pass`, and remains `promotable: false`.
 
-Promotion copies only WebM, MP4, WebP deliveries, `scenario.json`, and compact
-`provenance.json` into `docs/public/media/highlights/<id>/revisions/<revision>/`.
+Promotion copies only WebM, MP4, WebP deliveries, `scenario.json`, optional
+`scenario.mobile.json`, and compact `provenance.json` into
+`docs/public/media/highlights/<id>/revisions/<revision>/`.
 Raw masters, full QA, browser logs, and contact sheets stay external.
 
 ## Automatic QA Gate
@@ -50,27 +52,51 @@ Raw masters, full QA, browser logs, and contact sheets stay external.
 - exact scenario, seed, source, landing, capture, report, stage, and delivery
   provenance.
 
-Technical pass is necessary, not approval. Reviewer watches full loop and checks
+`technical_pass` is necessary, not approval, and never permits promotion alone.
+Reviewer watches full loop and checks
 opening context, action legibility, cursor continuity, calm ending, native mobile
-truthfulness, and absence of product/capture artifacts. Record acceptance in QA
-report; do not edit `stage.json` to manufacture it.
+truthfulness, and absence of product/capture artifacts. Supply a stable reviewer
+ID only after that review; do not edit `review.json` or its QA report to
+manufacture acceptance.
 
 ## Immutable Promotion
 
 Promotion is separate from capture and requires explicit acceptance:
 
 ```bash
-node scripts/highlights.mjs promote /external/highlights/my-highlight/<stage-digest>/stage.json --dry-run
-node scripts/highlights.mjs promote /external/highlights/my-highlight/<stage-digest>/stage.json
+node scripts/highlights.mjs promote /external/highlights/my-highlight/<id>/stages/<review-digest>/review.json --accept-reviewed-by reviewer-42 --dry-run
+node scripts/highlights.mjs promote /external/highlights/my-highlight/<id>/stages/<review-digest>/review.json --accept-reviewed-by reviewer-42
 ```
 
-`promote --dry-run` re-reads every digest, accepted QA, destination, descriptor,
-and revision collision while leaving repository unchanged. Real promotion uses
-copy-validate-swap. It creates immutable revision once, refuses overwrite or
-collision, validates catalog before swap, and leaves no partial destination on
-failure.
+The reviewer ID uses stable lowercase ID/email-safe characters, not a display
+name. `promote --dry-run` re-reads every source, capture, QA, and asset digest
+and validates acceptance and pairing without creating a destination or lock.
+Real promotion uses copy-validate-swap. It creates an immutable revision once,
+refuses overwrite or collision, validates catalog before swap, and leaves no
+partial destination on failure. Legacy already-accepted `stage.json` manifests
+remain readable, but new `run` output is always a non-promotable review bundle.
 
-Compact provenance records schema, source SHA/mode, scenario digest, capture
-digest, QA report digest/status, stage digest, seed digest, tool version, and
-timestamps. Descriptor asset records carry delivery hashes and bytes. Never
-change either by hand.
+## Native-Mobile Pairing
+
+Native mobile is a second native capture, never a desktop crop. Set
+`delivery.mobileRequired: true` in the desktop scenario and its native-mobile
+counterpart. Both scenarios use the same id, title, revision, delivery metadata,
+seed, source identity, tool version, and landing adapter contract; their
+profiles and native actions may differ. Capture each separately, then pass the
+mobile review explicitly:
+
+```bash
+node scripts/highlights.mjs promote /external/highlights/desktop/<id>/stages/<desktop-digest>/review.json --mobile-review /external/highlights/mobile/<id>/stages/<mobile-digest>/review.json --accept-reviewed-by reviewer-42 --dry-run
+node scripts/highlights.mjs promote /external/highlights/desktop/<id>/stages/<desktop-digest>/review.json --mobile-review /external/highlights/mobile/<id>/stages/<mobile-digest>/review.json --accept-reviewed-by reviewer-42
+```
+
+Promotion refuses a missing required mobile review, an unexpected mobile review,
+any semantic/source/seed/landing mismatch, and any form relabel. Compact
+provenance retains each form's scenario, capture, QA-report, source, seed, tool,
+landing, and review digests plus the explicit acceptance record.
+
+Compact provenance records schema, per-form source SHA/mode, scenario digest,
+capture digest, technical QA report digest/status, review digest, seed digest,
+tool/landing identity, and timestamps. Descriptor provenance mirrors these
+records and the accepted reviewer/time. Asset records carry exact delivery
+hashes and bytes. Never change any of them by hand.
