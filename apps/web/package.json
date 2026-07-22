@@ -22,6 +22,7 @@
     "e2e:headed": "playwright test --config e2e/playwright.config.ts --headed",
     "e2e:capture": "cross-env CAPTURE_PR_ASSETS=true playwright test --config e2e/playwright.config.ts && tsx e2e/scripts/convert-assets.ts",
     "e2e:highlight-capture": "node e2e/highlights/run-capture-integration.mjs",
+    "e2e:highlight-pipeline": "node e2e/highlights/run-pipeline-integration.mjs",
     "licenses:gen": "tsx scripts/generate-licenses.ts"
   },
   "dependencies": {
