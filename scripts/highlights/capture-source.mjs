@@ -46,6 +46,7 @@ const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SOURCE_SHA_PATTERN = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 const TRUSTED_CAPTURE_BUILD_VERIFIERS = new WeakMap();
 const CAPTURE_INPUT_QUEUE_FRAMES = 32;
+const CAPTURE_X264RGB_THREADS = 2;
 const CAPTURE_X264_THREADS = 3;
 const ENCODER_PROBE_DURATION_MS = 3_000;
 const ENCODER_PROBE_STARTUP_ALLOWANCE_MS = 750;
@@ -135,6 +136,29 @@ function encoderContract(encoder) {
         "yuv444p",
       ],
       master: { lossless: true, pixelFormat: "yuv444p", profile: "high444" },
+    };
+  }
+  if (encoder.name === "libx264rgb") {
+    return {
+      args: [
+        "-c:v",
+        "libx264rgb",
+        "-preset",
+        "ultrafast",
+        "-threads",
+        String(CAPTURE_X264RGB_THREADS),
+        "-qp",
+        "0",
+        "-profile:v",
+        "high444",
+        "-pix_fmt",
+        "bgr0",
+      ],
+      master: {
+        lossless: true,
+        pixelFormat: "gbrp",
+        profile: "High 4:4:4 Predictive",
+      },
     };
   }
   throw new Error(`unsupported capture encoder: ${encoder.name}`);
@@ -230,14 +254,28 @@ export function buildEncoderProbePlan({
   };
 }
 
-export function selectCaptureEncoder(encodersOutput) {
+function captureEncoderCandidates(encodersOutput) {
   if (typeof encodersOutput !== "string")
     throw new Error("ffmpeg encoder probe output is required");
+  const candidates = [];
   if (/\bh264_nvenc\b/.test(encodersOutput))
-    return { name: "h264_nvenc", source: "ffmpeg-encoder-probe" };
+    candidates.push({
+      name: "h264_nvenc",
+      source: "ffmpeg-encoder-probe",
+    });
+  if (/\blibx264rgb\b/.test(encodersOutput))
+    candidates.push({ name: "libx264rgb", source: "portable-fallback" });
   if (/\blibx264\b/.test(encodersOutput))
-    return { name: "libx264", source: "portable-fallback" };
-  throw new Error("Highlight capture requires h264_nvenc or portable libx264");
+    candidates.push({ name: "libx264", source: "portable-fallback" });
+  return candidates;
+}
+
+export function selectCaptureEncoder(encodersOutput) {
+  const [selected] = captureEncoderCandidates(encodersOutput);
+  if (selected) return selected;
+  throw new Error(
+    "Highlight capture requires h264_nvenc, portable libx264rgb, or portable libx264",
+  );
 }
 
 export async function chooseReadyCaptureEncoder({
@@ -247,15 +285,10 @@ export async function chooseReadyCaptureEncoder({
 } = {}) {
   if (typeof probeEncoder !== "function")
     throw new Error("probeEncoder must verify encoder capability");
-  const advertised = selectCaptureEncoder(encodersOutput);
-  const candidates =
-    advertised.name === "h264_nvenc"
-      ? [advertised, { name: "libx264", source: "portable-fallback" }]
-      : [advertised];
+  selectCaptureEncoder(encodersOutput);
+  const candidates = captureEncoderCandidates(encodersOutput);
   const attempts = [];
   for (const encoder of candidates) {
-    if (encoder.name === "libx264" && !/\blibx264\b/.test(encodersOutput))
-      continue;
     try {
       const proof = await probeEncoder(encoder, profile);
       attempts.push({ encoder: encoder.name, ready: true, ...proof });

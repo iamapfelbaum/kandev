@@ -166,7 +166,7 @@ function runtime(profile, root = "/external/highlight-run") {
   };
 }
 
-test("builds silent no-overwrite 25fps native X11 capture commands", () => {
+test("builds silent no-overwrite 25fps native RGB X11 capture commands", () => {
   for (const scenarioProfile of [
     DESKTOP_SCENARIO_PROFILE,
     MOBILE_SCENARIO_PROFILE,
@@ -175,7 +175,7 @@ test("builds silent no-overwrite 25fps native X11 capture commands", () => {
     const plan = buildFfmpegCapturePlan({
       runtime: runtime(profile),
       profile,
-      encoder: { name: "libx264", source: "portable-fallback" },
+      encoder: { name: "libx264rgb", source: "portable-fallback" },
     });
     const joined = plan.args.join(" ");
 
@@ -196,19 +196,19 @@ test("builds silent no-overwrite 25fps native X11 capture commands", () => {
     ]);
     assert.match(joined, /-i :261\.0\+0,0/);
     assert.match(joined, /-an/);
-    assert.match(joined, /-c:v libx264/);
+    assert.match(joined, /-c:v libx264rgb/);
     assert.match(joined, /-qp 0/);
     assert.match(joined, /-profile:v high444/);
-    assert.match(joined, /-pix_fmt yuv444p/);
-    assert.match(joined, /-threads 3/);
+    assert.match(joined, /-pix_fmt bgr0/);
+    assert.match(joined, /-threads 2/);
     assert.match(
       joined,
       /-progress \/external\/highlight-run\/logs\/ffmpeg\.progress/,
     );
     assert.match(joined, /-stats_period 0\.040/);
     assert.equal(plan.master.lossless, true);
-    assert.equal(plan.master.pixelFormat, "yuv444p");
-    assert.equal(plan.master.profile, "high444");
+    assert.equal(plan.master.pixelFormat, "gbrp");
+    assert.equal(plan.master.profile, "High 4:4:4 Predictive");
     assert.ok(
       !plan.args.includes("-nostdin"),
       "recorder must accept q on stdin for clean finalization",
@@ -345,7 +345,7 @@ test("remote browser teardown surfaces a rejected Chromium close command", async
 test("encoder readiness plan amortizes cold startup while proving sustained full-source throughput", () => {
   const profile = resolveCaptureProfile(DESKTOP_SCENARIO_PROFILE);
   const plan = buildEncoderProbePlan({
-    encoder: { name: "libx264", source: "portable-fallback" },
+    encoder: { name: "libx264rgb", source: "portable-fallback" },
     profile,
     ffmpegExecutable: "/usr/bin/ffmpeg",
   });
@@ -355,7 +355,11 @@ test("encoder readiness plan amortizes cold startup while proving sustained full
   assert.doesNotMatch(joined, /color=c=black/);
   assert.match(joined, /-frames:v 75/);
   assert.match(joined, /-qp 0/);
-  assert.match(joined, /-threads 3/);
+  assert.match(joined, /-c:v libx264rgb/);
+  assert.match(joined, /-pix_fmt bgr0/);
+  assert.match(joined, /-threads 2/);
+  assert.equal(plan.master.pixelFormat, "gbrp");
+  assert.equal(plan.master.profile, "High 4:4:4 Predictive");
   assert.equal(plan.sourceDurationMs, 3_000);
   assert.equal(plan.startupAllowanceMs, 750);
   assert.equal(plan.maximumElapsedMs, 3_750);
@@ -400,11 +404,20 @@ test("story frame alignment uses FFmpeg media samples instead of recorder wall t
 test("prefers advertised hardware encoder and falls back portably", () => {
   assert.deepEqual(
     selectCaptureEncoder(
-      " V..... h264_nvenc NVIDIA NVENC\n V..... libx264 H.264 ",
+      " V..... h264_nvenc NVIDIA NVENC\n V..... libx264rgb H.264 RGB\n V..... libx264 H.264 ",
     ),
     {
       name: "h264_nvenc",
       source: "ffmpeg-encoder-probe",
+    },
+  );
+  assert.deepEqual(
+    selectCaptureEncoder(
+      " V..... libx264rgb H.264 RGB\n V..... libx264 H.264 ",
+    ),
+    {
+      name: "libx264rgb",
+      source: "portable-fallback",
     },
   );
   assert.deepEqual(selectCaptureEncoder(" V..... libx264 H.264 "), {
@@ -413,14 +426,15 @@ test("prefers advertised hardware encoder and falls back portably", () => {
   });
   assert.throws(
     () => selectCaptureEncoder(" V..... vp9 "),
-    /requires h264_nvenc or portable libx264/,
+    /requires h264_nvenc, portable libx264rgb, or portable libx264/,
   );
 });
 
 test("proves hardware usability before capture and selects portable fallback before story starts", async () => {
   const probes = [];
   const result = await chooseReadyCaptureEncoder({
-    encodersOutput: " V..... h264_nvenc NVIDIA NVENC\n V..... libx264 H.264 ",
+    encodersOutput:
+      " V..... h264_nvenc NVIDIA NVENC\n V..... libx264rgb H.264 RGB\n V..... libx264 H.264 ",
     profile: resolveCaptureProfile(DESKTOP_SCENARIO_PROFILE),
     probeEncoder: async (encoder) => {
       probes.push(encoder.name);
@@ -429,13 +443,35 @@ test("proves hardware usability before capture and selects portable fallback bef
     },
   });
 
-  assert.deepEqual(probes, ["h264_nvenc", "libx264"]);
+  assert.deepEqual(probes, ["h264_nvenc", "libx264rgb"]);
   assert.deepEqual(result.encoder, {
-    name: "libx264",
+    name: "libx264rgb",
     source: "portable-fallback",
   });
   assert.equal(result.attempts[0].ready, false);
   assert.match(result.attempts[0].error, /no NVIDIA device/);
+  assert.equal(result.attempts[1].ready, true);
+});
+
+test("falls back from an unusable RGB encoder to portable YUV x264", async () => {
+  const probes = [];
+  const result = await chooseReadyCaptureEncoder({
+    encodersOutput:
+      " V..... libx264rgb H.264 RGB\n V..... libx264 H.264 ",
+    profile: resolveCaptureProfile(DESKTOP_SCENARIO_PROFILE),
+    probeEncoder: async (encoder) => {
+      probes.push(encoder.name);
+      if (encoder.name === "libx264rgb") throw new Error("RGB probe failed");
+      return { elapsedMs: 120 };
+    },
+  });
+
+  assert.deepEqual(probes, ["libx264rgb", "libx264"]);
+  assert.deepEqual(result.encoder, {
+    name: "libx264",
+    source: "portable-fallback",
+  });
+  assert.match(result.attempts[0].error, /RGB probe failed/);
   assert.equal(result.attempts[1].ready, true);
 });
 
