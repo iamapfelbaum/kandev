@@ -6,6 +6,7 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 
+import { runOwnedRuntimeProcess } from "./runtime-owned-process.mjs";
 import {
   allocateRuntimeCoordinates,
   planCaptureRuntime,
@@ -247,17 +248,12 @@ test("runtime rejects Chromium argv drift from the recorded network policy befor
       label: "missing Blink transport switch",
       apply: (args) =>
         args.filter(
-          (argument) =>
-            argument !==
-            "--disable-blink-features=DirectSockets",
+          (argument) => argument !== "--disable-blink-features=DirectSockets",
         ),
     },
     {
       label: "Blink transport override",
-      apply: (args) => [
-        ...args,
-        "--enable-blink-features=DirectSockets",
-      ],
+      apply: (args) => [...args, "--enable-blink-features=DirectSockets"],
     },
     {
       label: "WebRTC override",
@@ -624,6 +620,96 @@ test("managed process waits for SIGKILL exit and rejects a surviving child", asy
   await assert.rejects(() => handle.stop(), /survived SIGKILL/i);
   assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
   assert.deepEqual(waits, [5_000, 2_000]);
+});
+
+test("managed process inherits its owner group and signals only its exact child", async (t) => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "highlight-contained-process-test-"),
+  );
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.pid = 7_332;
+  child.exitCode = null;
+  child.signalCode = null;
+  let spawnOptions;
+  const signaledPids = [];
+  const handle = await spawnManagedProcess(
+    {
+      name: "fixture",
+      command: "/fixture/process",
+      args: [],
+      env: {},
+      logPath: path.join(root, "fixture.log"),
+    },
+    {
+      spawnProcess: (_command, _args, options) => {
+        spawnOptions = options;
+        queueMicrotask(() => child.emit("spawn"));
+        return child;
+      },
+      killProcess: (pid) => signaledPids.push(pid),
+      waitForChildExit: async () => false,
+    },
+  );
+
+  assert.equal(spawnOptions.detached, false);
+  await assert.rejects(() => handle.stop(), /survived SIGKILL/i);
+  assert.deepEqual(signaledPids, [child.pid, child.pid]);
+});
+
+test("owned worker deadline contains a managed process that ignores SIGTERM", async (t) => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "highlight-managed-containment-"),
+  );
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const leafPidPath = path.join(root, "leaf.pid");
+  let leafPid;
+  t.after(() => {
+    if (!leafPid) return;
+    for (const pid of [-leafPid, leafPid]) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    }
+  });
+  const captureRuntimeUrl = new URL("./capture-runtime.mjs", import.meta.url)
+    .href;
+  const script = [
+    'import fs from "node:fs/promises";',
+    `import { spawnManagedProcess } from ${JSON.stringify(captureRuntimeUrl)};`,
+    "const handle = await spawnManagedProcess({",
+    '  name: "nested-fixture",',
+    `  command: ${JSON.stringify(process.execPath)},`,
+    '  args: ["-e", "process.on(\\"SIGTERM\\", () => {}); setInterval(() => {}, 1000)"],',
+    "  env: {},",
+    `  logPath: ${JSON.stringify(path.join(root, "leaf.log"))},`,
+    "});",
+    `await fs.writeFile(${JSON.stringify(leafPidPath)}, String(handle.pid));`,
+    "setInterval(() => {}, 1000);",
+  ].join("\n");
+
+  const result = await runOwnedRuntimeProcess({
+    command: {
+      command: process.execPath,
+      args: ["--input-type=module", "-e", script],
+      cwd: root,
+    },
+    env: { PATH: process.env.PATH ?? "/usr/bin" },
+    logPath: path.join(root, "worker.log"),
+    deadlineMs: 1_000,
+    termGraceMs: 100,
+    killGraceMs: 1_000,
+    logLimitBytes: 4_096,
+  });
+  leafPid = Number(await fs.readFile(leafPidPath, "utf8"));
+
+  assert.equal(result.timedOut, true);
+  assert.equal(result.processGroup.gone, true);
+  assert.throws(() => process.kill(leafPid, 0), { code: "ESRCH" });
 });
 
 test("reservation is atomic and preserves durable raw/log/evidence directories", async (t) => {

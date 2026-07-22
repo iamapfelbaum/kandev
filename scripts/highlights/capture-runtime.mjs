@@ -945,7 +945,7 @@ export async function spawnManagedProcess(
   const child = spawnProcess(spec.command, spec.args, {
     env: { ...process.env, ...spec.env },
     stdio: ["ignore", "pipe", "pipe"],
-    detached: true,
+    detached: false,
   });
   child.stdout?.pipe(log, { end: false });
   child.stderr?.pipe(log, { end: false });
@@ -968,13 +968,13 @@ export async function spawnManagedProcess(
       try {
         if (child.pid && child.exitCode === null && child.signalCode === null) {
           try {
-            killProcess(-child.pid, "SIGTERM");
+            killProcess(child.pid, "SIGTERM");
           } catch (error) {
             if (error.code !== "ESRCH") throw error;
           }
           if (!(await waitForChildExit(child, 5_000))) {
             try {
-              killProcess(-child.pid, "SIGKILL");
+              killProcess(child.pid, "SIGKILL");
             } catch (error) {
               if (error.code !== "ESRCH") throw error;
             }
