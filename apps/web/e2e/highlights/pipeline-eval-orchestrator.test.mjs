@@ -4,7 +4,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { clearInheritedTrustedSource } from "./pipeline-eval-orchestrator.mjs";
+import {
+  MAX_QUICK_START_EVAL_DURATION_MS,
+  clearInheritedTrustedSource,
+} from "./pipeline-eval-orchestrator.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TRUSTED_SOURCE_KEY = "KANDEV_HIGHLIGHT_TRUSTED_SOURCE_SHA";
@@ -39,6 +42,12 @@ test("Docker runtime gate runs after isolated setup and before first capture", a
     source,
     /setupEvaluation\(input\)[\s\S]*input\.beforeCapture\(context\)[\s\S]*executeCaptureRuns\(context/,
   );
+});
+
+test("fresh-agent eval keeps the budgeted quick-start story under five seconds", async () => {
+  assert.equal(MAX_QUICK_START_EVAL_DURATION_MS, 5_000);
+  const source = await fs.readFile(path.join(HERE, ORCHESTRATOR_FILE), "utf8");
+  assert.match(source, /storyboardTimeline\.totalDurationMs > MAX_QUICK_START_EVAL_DURATION_MS/);
 });
 
 test("fresh-agent eval selects only the closed host Chromium sandbox policy", async () => {

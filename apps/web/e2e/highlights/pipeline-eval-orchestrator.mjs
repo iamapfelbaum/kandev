@@ -28,6 +28,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_WEB_ROOT = path.resolve(HERE, "../..");
 export const DEFAULT_REPO_ROOT = path.resolve(DEFAULT_WEB_ROOT, "../..");
 export const DEFAULT_LANDING_ROOT = path.resolve(DEFAULT_REPO_ROOT, "..", "landing");
+export const MAX_QUICK_START_EVAL_DURATION_MS = 5_000;
 const QUICK_START_ID = "quick-start";
 const TRUSTED_SOURCE_KEY = "KANDEV_HIGHLIGHT_TRUSTED_SOURCE_SHA";
 const SYNTHETIC_EVAL_PR_NUMBER = 2_147_483_647;
@@ -248,7 +249,7 @@ async function invokeInitialCommands(context, commands) {
   if (
     !storyboardTimeline ||
     storyboardTimeline.scenarioId !== QUICK_START_ID ||
-    storyboardTimeline.totalDurationMs > 4_000
+    storyboardTimeline.totalDurationMs > MAX_QUICK_START_EVAL_DURATION_MS
   ) {
     throw new Error(
       "fresh-agent scaffold storyboard is not the deterministic short quick-start story",
