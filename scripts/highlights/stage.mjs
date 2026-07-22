@@ -15,6 +15,7 @@ import {
 export const STAGE_MANIFEST_VERSION = 1;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
+const ADAPTER_SHA_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const ASSET_KEYS = ["webm", "mp4", "poster"];
 const ASSET_EXTENSIONS = { webm: ".webm", mp4: ".mp4", poster: ".webp" };
 const ASSET_NAMES = { webm: "webm", mp4: "mp4", poster: "webp" };
@@ -238,7 +239,7 @@ function validateManifestShape(manifest) {
   if (!DIGEST_PATTERN.test(manifest.qa.reportDigest) || !validDate(manifest.qa.acceptedAt)) throw new Error("QA requires report digest and acceptedAt");
   validateProvenance(manifest.provenance);
   if (!isObject(manifest.assets) || !manifest.assets.desktop) throw new Error("stage assets require desktop deliveries");
-  assertObjectKeys(manifest.assets, ["desktop", "mobile"], "assets");
+  assertObjectKeys(manifest.assets, ["desktop", "mobile"], "assets", { optional: true });
   for (const form of ["desktop", "mobile"]) {
     if (!manifest.assets[form]) continue;
     assertObjectKeys(manifest.assets[form], ASSET_KEYS, `${form} assets`);
@@ -257,12 +258,19 @@ function validateHighlightMetadata(highlight) {
 }
 
 function validateProvenance(provenance) {
-  const common = ["captureMode", "sourceSha", "capturedAt", "seedId", "seedDigest", "toolVersion"];
+  const common = ["captureMode", "sourceSha", "capturedAt", "seedId", "seedDigest", "toolVersion", "landingAdapter"];
   const pr = ["prNumber", "prBaseSha", "prHeadSha"];
   const main = ["sourceRef"];
   assertObjectKeys(provenance, [...common, ...pr, ...main], "provenance", { optional: true });
   if (!["pr_head", "current_main"].includes(provenance.captureMode)) throw new Error("stage provenance captureMode is invalid");
   if (!SHA_PATTERN.test(provenance.sourceSha) || !validDate(provenance.capturedAt) || typeof provenance.seedId !== "string" || !provenance.seedId.trim() || !DIGEST_PATTERN.test(provenance.seedDigest) || typeof provenance.toolVersion !== "string" || !provenance.toolVersion.trim()) throw new Error("stage provenance is incomplete");
+  assertObjectKeys(provenance.landingAdapter, ["sourceSha", "contractVersion"], "landing adapter provenance");
+  if (!ADAPTER_SHA_PATTERN.test(provenance.landingAdapter.sourceSha)) {
+    throw new Error("landing adapter provenance requires exact lowercase Git SHA");
+  }
+  if (typeof provenance.landingAdapter.contractVersion !== "string" || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(provenance.landingAdapter.contractVersion)) {
+    throw new Error("landing adapter provenance requires a stable contract version");
+  }
   if (provenance.captureMode === "pr_head") {
     if (!Number.isInteger(provenance.prNumber) || provenance.prNumber < 1 || !SHA_PATTERN.test(provenance.prBaseSha) || provenance.prHeadSha !== provenance.sourceSha) throw new Error("pr_head stage provenance is invalid");
   } else if (provenance.sourceRef !== "origin/main") {
@@ -317,6 +325,10 @@ function buildCompactProvenance(manifest) {
     seed_id: manifest.provenance.seedId,
     seed_digest: manifest.provenance.seedDigest,
     tool_version: manifest.provenance.toolVersion,
+    landing_adapter: {
+      source_sha: manifest.provenance.landingAdapter.sourceSha,
+      contract_version: manifest.provenance.landingAdapter.contractVersion,
+    },
     qa: {
       status: "accepted",
       report_digest: manifest.qa.reportDigest,
@@ -333,6 +345,10 @@ function buildDescriptor({ manifest, existingDescriptor, desktop, mobileAssets, 
     seed_id: manifest.provenance.seedId,
     seed_digest: manifest.provenance.seedDigest,
     tool_version: manifest.provenance.toolVersion,
+    landing_adapter: {
+      source_sha: manifest.provenance.landingAdapter.sourceSha,
+      contract_version: manifest.provenance.landingAdapter.contractVersion,
+    },
     scenario_digest: manifest.scenario.digest,
     capture_digest: manifest.capture.digest,
     stage_digest: manifest.stageDigest,

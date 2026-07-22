@@ -116,6 +116,72 @@ after(async () => {
   );
 });
 
+test("capture, render, qa, and run CLI forward strict declarative pipeline options", async () => {
+  const { runHighlightsCli } = await import("./highlights.mjs");
+  const received = [];
+  const pipelineRunner = async (options) => {
+    received.push(options);
+    return { contract: "test-result", command: options.command };
+  };
+  const common = { repoRoot: "/repo", log: () => {}, pipelineRunner };
+
+  await runHighlightsCli([
+    "capture", "story.json", "--artifact-root", "/external/story", "--source", "pr_head",
+    "--landing-root", "/landing", "--run-id", "ci-42", "--pr-number", "42",
+    "--pr-base-sha", "b".repeat(40), "--allow-extension", "fixture.open",
+    "--allow-extension", "fixture.close", "--dry-run",
+  ], common);
+  await runHighlightsCli([
+    "render", "story.json", "--artifact-root", "/external/story", "--landing-root", "/landing", "--run-id", "ci-42",
+  ], common);
+  await runHighlightsCli([
+    "qa", "story.json", "--artifact-root", "/external/story", "--landing-root", "/landing", "--run-id", "ci-42",
+  ], common);
+  await runHighlightsCli([
+    "run", "story.json", "--artifact-root", "/external/story", "--source", "current_main", "--landing-root", "/landing",
+  ], common);
+
+  assert.deepEqual(received.map(({ command }) => command), ["capture", "render", "qa", "run"]);
+  assert.equal(received[0].scenarioPath, "/repo/story.json");
+  assert.equal(received[0].artifactRoot, "/external/story");
+  assert.equal(received[0].source, "pr_head");
+  assert.equal(received[0].prNumber, 42);
+  assert.equal(received[0].prBaseSha, "b".repeat(40));
+  assert.equal(received[0].dryRun, true);
+  assert.deepEqual(received[0].allowedExtensionIds, ["fixture.open", "fixture.close"]);
+  assert.equal(received[1].source, undefined);
+  assert.equal(received[3].source, "current_main");
+});
+
+test("declarative pipeline CLI rejects missing, unknown, and duplicate options", async () => {
+  const { runHighlightsCli } = await import("./highlights.mjs");
+  const options = { repoRoot: "/repo", log: () => {}, pipelineRunner: async () => ({}) };
+  await assert.rejects(
+    runHighlightsCli(["run", "story.json", "--artifact-root", "/external/story"], options),
+    /--source.*required|usage/i,
+  );
+  await assert.rejects(
+    runHighlightsCli(["capture", "story.json", "--artifact-root", "/external/story", "--source", "bad"], options),
+    /source.*pr_head.*current_main/i,
+  );
+  await assert.rejects(
+    runHighlightsCli(["render", "story.json", "--artifact-root", "/external/story", "--source", "pr_head"], options),
+    /unknown option --source/i,
+  );
+  await assert.rejects(
+    runHighlightsCli(["qa", "story.json", "--artifact-root", "/one", "--artifact-root", "/two"], options),
+    /--artifact-root.*only once/i,
+  );
+  await assert.rejects(
+    runHighlightsCli(["run", "story.json", "--artifact-root", "/external/story", "--source", "pr_head", "--dry-run", "--dry-run"], options),
+    /--dry-run.*only once/i,
+  );
+  await assert.rejects(
+    runHighlightsCli(["run", "story.json", "extra.json", "--artifact-root", "/external/story", "--source", "pr_head"], options),
+    /usage|exactly one scenario/i,
+  );
+});
+
 test("exports the Highlights contract module", async () => {
   const modulePath = path.resolve("scripts/highlights.mjs");
   await assert.doesNotReject(fs.access(modulePath));
@@ -224,6 +290,10 @@ test("treats durable scenario and compact provenance as hashed revision files", 
     capture_digest: captureDigest,
     stage_digest: stageDigest,
     source_sha: descriptor.provenance.source_sha,
+    landing_adapter: {
+      source_sha: "89abcdef0123456789abcdef0123456789abcdef",
+      contract_version: "1.0.0",
+    },
     qa: { status: "accepted", report_digest: `sha256:${"4".repeat(64)}` },
   })}\n`);
   await fs.writeFile(path.join(revisionDir, "scenario.json"), scenarioBytes);
@@ -241,6 +311,10 @@ test("treats durable scenario and compact provenance as hashed revision files", 
   descriptor.provenance.scenario_digest = scenarioDigest;
   descriptor.provenance.capture_digest = captureDigest;
   descriptor.provenance.stage_digest = stageDigest;
+  descriptor.provenance.landing_adapter = {
+    source_sha: "89abcdef0123456789abcdef0123456789abcdef",
+    contract_version: "1.0.0",
+  };
   descriptor.revision_history = [{
     revision: "r1",
     files: [
@@ -266,6 +340,48 @@ test("treats durable scenario and compact provenance as hashed revision files", 
     }),
   });
   assert.equal(result.count, 1);
+
+  const provenancePath = path.join(revisionDir, "provenance.json");
+  const mismatchedCompact = JSON.parse(await fs.readFile(provenancePath, "utf8"));
+  mismatchedCompact.landing_adapter.contract_version = "2.0.0";
+  const rewriteCompact = async (compact) => {
+    const bytes = Buffer.from(`${JSON.stringify(compact)}\n`);
+    await fs.writeFile(provenancePath, bytes);
+    const record = companionRecord("provenance.json", bytes);
+    descriptor.provenance_record = record;
+    const tracked = descriptor.revision_history[0].files.find((file) => file.path.endsWith("/provenance.json"));
+    Object.assign(tracked, record);
+    await fs.writeFile(path.join(highlightDir, "highlight.json"), JSON.stringify(descriptor, null, 2));
+    descriptor.source_digest = await computeSourceDigest(highlightDir);
+    await fs.writeFile(path.join(highlightDir, "highlight.json"), JSON.stringify(descriptor, null, 2));
+  };
+  await rewriteCompact(mismatchedCompact);
+  await assert.rejects(validateHighlights({
+    repoRoot: root,
+    probe: async (filePath) => ({
+      codec: filePath.endsWith(".webp") ? "webp" : filePath.endsWith(".webm") ? "vp9" : "h264",
+      width: 1920,
+      height: 1200,
+      fps: filePath.endsWith(".webp") ? null : 25,
+      duration: filePath.endsWith(".webp") ? null : 8.2,
+      audio: false,
+    }),
+  }), /landing adapter.*(?:match|version)/i);
+
+  mismatchedCompact.landing_adapter.contract_version = "1.0.0";
+  delete descriptor.provenance.landing_adapter;
+  await rewriteCompact(mismatchedCompact);
+  await assert.rejects(validateHighlights({
+    repoRoot: root,
+    probe: async (filePath) => ({
+      codec: filePath.endsWith(".webp") ? "webp" : filePath.endsWith(".webm") ? "vp9" : "h264",
+      width: 1920,
+      height: 1200,
+      fps: filePath.endsWith(".webp") ? null : 25,
+      duration: filePath.endsWith(".webp") ? null : 8.2,
+      audio: false,
+    }),
+  }), /(?:requires.*landing adapter|landing adapter.*require)/i);
 });
 
 test("rejects missing mobile declaration, stale provenance, and orphan files", async () => {

@@ -21,6 +21,7 @@ test("reads a content-addressed external stage and verifies source, capture, QA,
   assert.equal(result.manifest.stageDigest, `sha256:${path.basename(fixture.stageDir)}`);
   assert.equal(result.scenario.id, "quick-start");
   assert.match(declarations, /export interface HighlightStageManifestV1/);
+  assert.match(declarations, /landingAdapter: \{ sourceSha: string; contractVersion: string \}/);
 
   await fs.appendFile(path.join(fixture.stageDir, fixture.manifest.capture.path), "tampered");
   await assert.rejects(
@@ -36,6 +37,17 @@ test("staged provenance seed identity must match the declarative scenario", asyn
     readStageManifest(fixture.manifestPath, { repoRoot: fixture.repoRoot }),
     /seed.*scenario|scenario.*seed/i,
   );
+});
+
+test("stage provenance requires exact landing adapter SHA and contract version", async () => {
+  const missing = await createStage({ landingAdapter: null });
+  const malformed = await createStage({
+    payloadSuffix: "-malformed-landing",
+    landingAdapter: { sourceSha: "dirty", contractVersion: "" },
+  });
+  const { readStageManifest } = await import("./stage.mjs");
+  await assert.rejects(readStageManifest(missing.manifestPath, { repoRoot: missing.repoRoot }), /landing adapter.*(?:required|object)|landingAdapter/i);
+  await assert.rejects(readStageManifest(malformed.manifestPath, { repoRoot: malformed.repoRoot }), /landing adapter.*SHA|contract version|landingAdapter/i);
 });
 
 test("rejects non-accepted QA even when the stage digest is internally consistent", async () => {
@@ -125,6 +137,10 @@ test("atomically promotes only deliveries, scenario, and compact provenance", as
   assert.equal(result.descriptor.provenance.scenario_digest, fixture.manifest.scenario.digest);
   assert.equal(result.descriptor.provenance.capture_digest, fixture.manifest.capture.digest);
   assert.equal(result.descriptor.provenance.stage_digest, fixture.manifest.stageDigest);
+  assert.deepEqual(result.descriptor.provenance.landing_adapter, {
+    source_sha: "89abcdef0123456789abcdef0123456789abcdef",
+    contract_version: "1.0.0",
+  });
   assert.match(result.descriptor.source_digest, /^sha256:[a-f0-9]{64}$/);
 
   const promotedFiles = await relativeFiles(path.join(fixture.highlightsDir, "stage-demo"));
@@ -225,7 +241,7 @@ test("CLI promote dry-run verifies an external stage without touching the reposi
   await assert.rejects(fs.access(path.join(fixture.highlightsDir, "stage-demo")));
 });
 
-async function createStage({ revision = "r1", qaStatus = "accepted", reportStatus = qaStatus, seedId = "kandev.empty-workspace", existing, payloadSuffix = "", desktopWidth = 1920, desktopHeight = 1200 } = {}) {
+async function createStage({ revision = "r1", qaStatus = "accepted", reportStatus = qaStatus, seedId = "kandev.empty-workspace", existing, payloadSuffix = "", desktopWidth = 1920, desktopHeight = 1200, landingAdapter = { sourceSha: "89abcdef0123456789abcdef0123456789abcdef", contractVersion: "1.0.0" } } = {}) {
   let base;
   let repoRoot;
   let highlightsDir;
@@ -302,6 +318,7 @@ async function createStage({ revision = "r1", qaStatus = "accepted", reportStatu
       seedId,
       seedDigest: `sha256:${"1".repeat(64)}`,
       toolVersion: "highlights/1",
+      ...(landingAdapter ? { landingAdapter } : {}),
       prNumber: 42,
       prBaseSha: "fedcba9876543210fedcba9876543210fedcba98",
       prHeadSha: "0123456789abcdef0123456789abcdef01234567",

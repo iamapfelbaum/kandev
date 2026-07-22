@@ -25,6 +25,8 @@ export const ALLOWED_HIGHLIGHT_LABELS = new Set([
   "highlight:required",
   "highlight:approved",
 ]);
+const LANDING_ADAPTER_SHA_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+const CONTRACT_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 
 // Keep both legacy docs deliveries and current declarative production
 // deliveries valid. New staged production capture is pinned to 1920x1200.
@@ -556,6 +558,10 @@ function assertProvenance(descriptor) {
       if (!isDigest(provenance[field])) throw new Error(`${descriptor.id} provenance requires ${field}`);
     }
     if (provenance.scenario_digest !== descriptor.scenario.digest) throw new Error(`${descriptor.id} scenario digest does not match provenance`);
+    const landing = provenance.landing_adapter;
+    if (!landing || !LANDING_ADAPTER_SHA_PATTERN.test(landing.source_sha ?? "") || !CONTRACT_VERSION_PATTERN.test(landing.contract_version ?? "")) {
+      throw new Error(`${descriptor.id} declarative provenance requires exact landing adapter SHA and contract version`);
+    }
   }
 }
 
@@ -641,6 +647,15 @@ async function validateRevisionFiles({ highlightDir, descriptor, allowedExtensio
   }
   if (compact.source_sha !== descriptor.provenance.source_sha || compact.qa?.status !== "accepted" || !isDigest(compact.qa?.report_digest)) {
     throw new Error(`${descriptor.id} compact provenance requires accepted QA and matching source SHA`);
+  }
+  const compactLanding = compact.landing_adapter;
+  const descriptorLanding = descriptor.provenance.landing_adapter;
+  if (
+    !compactLanding ||
+    compactLanding.source_sha !== descriptorLanding.source_sha ||
+    compactLanding.contract_version !== descriptorLanding.contract_version
+  ) {
+    throw new Error(`${descriptor.id} compact landing adapter provenance must match descriptor SHA and contract version`);
   }
   return [...recordsByPath.values()];
 }
@@ -795,7 +810,11 @@ async function exists(filePath) {
   }
 }
 
-export async function runHighlightsCli(argv = process.argv.slice(2), { repoRoot = process.cwd(), log = console.log } = {}) {
+export async function runHighlightsCli(argv = process.argv.slice(2), {
+  repoRoot = process.cwd(),
+  log = console.log,
+  pipelineRunner,
+} = {}) {
   const [command, ...args] = argv;
   const highlightsDir = path.join(repoRoot, HIGHLIGHTS_RELATIVE_DIR);
   if (command === "validate") {
@@ -849,6 +868,41 @@ export async function runHighlightsCli(argv = process.argv.slice(2), { repoRoot 
     } else {
       log(output.trimEnd());
     }
+  } else if (["capture", "render", "qa", "run"].includes(command)) {
+    const capturesSource = command === "capture" || command === "run";
+    const allowed = capturesSource
+      ? new Set(["artifact-root", "source", "landing-root", "run-id", "pr-number", "pr-base-sha", "allow-extension", "dry-run"])
+      : new Set(["artifact-root", "landing-root", "run-id", "allow-extension", "dry-run"]);
+    const parsed = parseCliArgs(args, allowed);
+    if (parsed.positionals.length !== 1 || !parsed.values["artifact-root"] || (capturesSource && !parsed.values.source)) {
+      throw new Error(`usage: highlights.mjs ${command} <scenario.json> --artifact-root <external-directory>${capturesSource ? " --source pr_head|current_main" : ""} [--landing-root <landing-repo>] [--run-id <id>] [--dry-run]`);
+    }
+    if (capturesSource && !ALLOWED_CAPTURE_MODES.has(parsed.values.source)) {
+      throw new Error(`${command} --source must be pr_head or current_main`);
+    }
+    let prNumber;
+    if (parsed.values["pr-number"] !== undefined) {
+      prNumber = Number(parsed.values["pr-number"]);
+      if (!Number.isInteger(prNumber) || prNumber < 1) throw new Error("--pr-number must be a positive integer");
+    }
+    if (parsed.values["pr-base-sha"] !== undefined && !/^[a-f0-9]{40}$/.test(parsed.values["pr-base-sha"])) {
+      throw new Error("--pr-base-sha must be an exact lowercase 40-character Git SHA");
+    }
+    const execute = pipelineRunner ?? (await import("./highlights/pipeline.mjs")).runDeclarativeHighlightCommand;
+    const result = await execute({
+      command,
+      scenarioPath: path.resolve(repoRoot, parsed.positionals[0]),
+      artifactRoot: path.resolve(repoRoot, parsed.values["artifact-root"]),
+      source: parsed.values.source,
+      landingRoot: parsed.values["landing-root"] ? path.resolve(repoRoot, parsed.values["landing-root"]) : undefined,
+      runId: parsed.values["run-id"],
+      prNumber,
+      prBaseSha: parsed.values["pr-base-sha"],
+      allowedExtensionIds: parsed.repeated["allow-extension"] ?? [],
+      dryRun: parsed.flags.has("dry-run"),
+      repoRoot,
+    });
+    log(JSON.stringify(result, null, 2));
   } else if (command === "digest") {
     if (!args[0]) throw new Error("usage: highlights.mjs digest <highlight-directory|scenario.json>");
     const target = path.resolve(repoRoot, args[0]);
@@ -887,7 +941,7 @@ export async function runHighlightsCli(argv = process.argv.slice(2), { repoRoot 
     if (!args[0] || args.length < 2) throw new Error("usage: highlights.mjs withdraw <highlight-directory> <reason>");
     log(JSON.stringify(await withdrawHighlight({ highlightDir: path.resolve(repoRoot, args[0]), reason: args.slice(1).join(" ") }), null, 2));
   } else {
-    throw new Error("usage: highlights.mjs scaffold|validate [scenario]|storyboard|digest|promote|activate|activate-release|withdraw");
+    throw new Error("usage: highlights.mjs scaffold|validate [scenario]|storyboard|capture|render|qa|run|digest|promote|activate|activate-release|withdraw");
   }
 }
 
@@ -905,6 +959,7 @@ function parseCliArgs(args, allowedOptions) {
     const name = arg.slice(2);
     if (!allowedOptions.has(name)) throw new Error(`unknown option --${name}`);
     if (name === "dry-run") {
+      if (flags.has(name)) throw new Error(`--${name} may be specified only once`);
       flags.add(name);
       continue;
     }

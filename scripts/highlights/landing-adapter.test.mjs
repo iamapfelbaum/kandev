@@ -26,9 +26,9 @@ const sha = "a".repeat(40);
 
 function highlightExports(callLog = []) {
   return {
-    HIGHLIGHT_CAMERA_DIRECTIVE_CONTRACT: "kandev.highlight-camera-directives",
-    HIGHLIGHT_CAMERA_CONTRACT: "kandev.highlight-camera",
-    HIGHLIGHT_ENCODER_CONTRACT: "kandev.highlight-encoder",
+    HIGHLIGHT_CAMERA_DIRECTIVE_CONTRACT: { id: "kandev.highlight-camera-directives", version: "1.0.0", types: {} },
+    HIGHLIGHT_CAMERA_CONTRACT: { id: "kandev.highlight-camera", version: "1.0.0", profiles: {} },
+    HIGHLIGHT_ENCODER_CONTRACT: { id: "kandev.highlight-encoder", version: "1.0.0", capabilities: [] },
     createHighlightCameraTrack(input) {
       callLog.push(["camera", input]);
       return { contract: "kandev.highlight-camera", contractVersion: "1.0.0", keyframes: [] };
@@ -56,9 +56,9 @@ test("adapter verifies legacy markers, records clean SHA, and binds exact named 
   assert.equal(imports.length, 1);
   assert.match(imports[0], /product-loop-highlight\.mjs$/);
   assert.deepEqual(adapter.contracts, {
-    cameraDirectives: "kandev.highlight-camera-directives",
-    camera: "kandev.highlight-camera",
-    encoder: "kandev.highlight-encoder",
+    cameraDirectives: { id: "kandev.highlight-camera-directives", version: "1.0.0", types: {} },
+    camera: { id: "kandev.highlight-camera", version: "1.0.0", profiles: {} },
+    encoder: { id: "kandev.highlight-encoder", version: "1.0.0", capabilities: [] },
   });
   assert.equal(typeof adapter.createHighlightCameraTrack, "function");
   assert.equal(typeof adapter.buildHighlightEncodingPlan, "function");

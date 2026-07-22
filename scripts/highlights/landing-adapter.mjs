@@ -44,7 +44,10 @@ function assertNamedExports(module) {
   for (const name of REQUIRED_EXPORTS) {
     const value = module?.[name];
     const expectedFunction = !name.startsWith("HIGHLIGHT_");
-    if ((expectedFunction && typeof value !== "function") || (!expectedFunction && typeof value !== "string")) {
+    const validContract = value && typeof value === "object" && !Array.isArray(value)
+      && typeof value.id === "string" && value.id.startsWith("kandev.highlight-")
+      && typeof value.version === "string" && /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(value.version);
+    if ((expectedFunction && typeof value !== "function") || (!expectedFunction && !validContract)) {
       throw new Error(`landing Highlight export ${name} is required`);
     }
   }

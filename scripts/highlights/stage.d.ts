@@ -44,6 +44,7 @@ export interface HighlightStageManifestV1 {
     seedId: string;
     seedDigest: string;
     toolVersion: string;
+    landingAdapter: { sourceSha: string; contractVersion: string };
     prNumber?: number;
     prBaseSha?: string;
     prHeadSha?: string;
