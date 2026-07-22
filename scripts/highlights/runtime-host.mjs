@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,7 +16,8 @@ import {
   preflightHighlightRuntime,
   resolveHighlightRuntime,
 } from "./runtime-catalog.mjs";
-import { readScenario } from "./scenario.mjs";
+import { computeScenarioDigest, readScenario } from "./scenario.mjs";
+import { isDisplayAvailable } from "./capture-runtime.mjs";
 import {
   assertExternalArtifactRoot,
   verifySourceGate,
@@ -63,6 +66,15 @@ const WORKER_REQUEST_KEYS = Object.freeze([
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SHA_PATTERN = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 const SAFE_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+const CAPTURE_CONTENT_BOUNDS = Object.freeze({
+  maxVisibleDomTextRecords: 512,
+  maxVisibleDomTextBytes: 65_536,
+  maxBrowserConsoleRecords: 128,
+  maxBrowserConsoleTextBytes: 2_048,
+});
+const DEFAULT_PROCESS_DEADLINE_MS = 240_000;
+const DEFAULT_LOG_LIMIT_BYTES = 8 * 1024 * 1024;
+const MAX_CAPTURE_CONTENT_EVIDENCE_BYTES = 512 * 1024;
 
 function isRecord(value) {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -93,6 +105,61 @@ function canonicalJson(value) {
 
 function digestBytes(value) {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+function sourceCaptureDigest(request, sourceProof) {
+  return digestBytes(
+    canonicalJson({
+      captureMode: request.source,
+      sourceSha: sourceProof.selectedSha,
+      ...(request.source === "pr_head"
+        ? {
+            prNumber: request.pullRequest.number,
+            prBaseSha: request.pullRequest.baseSha,
+            prHeadSha: sourceProof.selectedSha,
+          }
+        : { sourceRef: "origin/main" }),
+    }),
+  );
+}
+
+function compactSourceProof(proof) {
+  return {
+    contract: proof.contract,
+    mode: proof.source,
+    selectedSha: proof.selectedSha,
+    headSha: proof.headSha,
+    currentMainSha: proof.currentMainSha,
+  };
+}
+
+function expectedCapturePaths(workerRequest, scenarioId) {
+  const attemptRoot = path.join(
+    workerRequest.artifactRoot,
+    scenarioId,
+    "runs",
+    workerRequest.runId,
+  );
+  const captureRoot = path.join(attemptRoot, "capture");
+  return {
+    attemptRoot,
+    captureRoot,
+    phaseManifestPath: path.join(attemptRoot, "evidence", "capture.json"),
+    captureManifestPath: path.join(captureRoot, "evidence", "capture.json"),
+    rawMasterPath: path.join(captureRoot, "raw", `${scenarioId}.source.mp4`),
+    captureEvidencePath: path.join(
+      captureRoot,
+      "evidence",
+      "capture-content.json",
+    ),
+    runtimeReceiptPath: path.join(
+      attemptRoot,
+      "evidence",
+      "application-runtime.json",
+    ),
+    captureProfileDir: path.join(captureRoot, "runtime", "browser-profile"),
+    captureLockPath: path.join(captureRoot, "runtime", "capture.lock"),
+  };
 }
 
 function isInside(root, candidate) {
@@ -498,6 +565,7 @@ export function sanitizeRuntimeHostEnvironment(
       "homeRoot",
       "requestPath",
       "workerResultPath",
+      "fixtureRoot",
       "portOffset",
       "playwrightBrowsersPath",
     ],
@@ -532,6 +600,10 @@ export function sanitizeRuntimeHostEnvironment(
     KANDEV_HIGHLIGHT_RUNTIME_WORKER_RESULT: requireAbsolute(
       options.workerResultPath,
       "runtime host worker result",
+    ),
+    KANDEV_HIGHLIGHT_FIXTURE_ROOT: requireAbsolute(
+      options.fixtureRoot,
+      "runtime host fixture root",
     ),
   };
 }
@@ -573,39 +645,299 @@ export function buildRuntimeHostCommand({
   };
 }
 
-async function defaultProcessRunner({ command, env, logPath }) {
-  const log = await fs.open(logPath, "a");
+function duration(value, fallback, label) {
+  const selected = value ?? fallback;
+  if (!Number.isInteger(selected) || selected <= 0) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  return selected;
+}
+
+function waitMilliseconds(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function processGroupGone(pid, killProcess = process.kill) {
   try {
-    return await new Promise((resolve, reject) => {
-      const child = spawn(command.command, command.args, {
-        cwd: command.cwd,
-        env,
-        stdio: ["ignore", log.fd, log.fd],
+    killProcess(-pid, 0);
+    return false;
+  } catch (error) {
+    if (error.code === "ESRCH") return true;
+    if (error.code === "EPERM") return false;
+    throw error;
+  }
+}
+
+async function waitForProcessGroupGone(
+  pid,
+  timeoutMs,
+  { killProcess = process.kill } = {},
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (processGroupGone(pid, killProcess)) return true;
+    await waitMilliseconds(20);
+  }
+  return processGroupGone(pid, killProcess);
+}
+
+export async function runOwnedRuntimeProcess({
+  command,
+  env,
+  logPath,
+  deadlineMs = DEFAULT_PROCESS_DEADLINE_MS,
+  termGraceMs = 5_000,
+  killGraceMs = 2_000,
+  logLimitBytes = DEFAULT_LOG_LIMIT_BYTES,
+  signalSource = process,
+  spawnProcess = spawn,
+  killProcess = process.kill,
+} = {}) {
+  const trustedDeadline = duration(deadlineMs, null, "runtime deadlineMs");
+  const trustedTermGrace = duration(termGraceMs, null, "runtime termGraceMs");
+  const trustedKillGrace = duration(killGraceMs, null, "runtime killGraceMs");
+  const trustedLogLimit = duration(
+    logLimitBytes,
+    null,
+    "runtime logLimitBytes",
+  );
+  if (
+    !isRecord(command) ||
+    typeof command.command !== "string" ||
+    !path.isAbsolute(command.command) ||
+    !Array.isArray(command.args) ||
+    typeof command.cwd !== "string" ||
+    !path.isAbsolute(command.cwd)
+  ) {
+    throw new Error("owned runtime process requires an absolute fixed command");
+  }
+  const log = await fs.open(
+    logPath,
+    fsConstants.O_WRONLY |
+      fsConstants.O_APPEND |
+      fsConstants.O_CREAT |
+      fsConstants.O_NOFOLLOW,
+    0o600,
+  );
+  let child;
+  let logWrites = Promise.resolve();
+  let capturedBytes = 0;
+  let discardedBytes = 0;
+  let termSent = false;
+  let killSent = false;
+  let timedOut = false;
+  let parentSignal = null;
+  let closeOutcome = null;
+  let finishClose;
+  const closed = new Promise((resolve) => {
+    finishClose = resolve;
+  });
+  let finishStopStarted;
+  const stopStarted = new Promise((resolve) => {
+    finishStopStarted = resolve;
+  });
+  const consume = (chunk) => {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    const available = Math.max(0, trustedLogLimit - capturedBytes);
+    const retained = bytes.subarray(0, available);
+    capturedBytes += retained.byteLength;
+    discardedBytes += bytes.byteLength - retained.byteLength;
+    if (retained.byteLength > 0) {
+      logWrites = logWrites.then(() => log.write(retained));
+    }
+  };
+  const sendGroupSignal = (signal) => {
+    if (!child?.pid) return;
+    try {
+      killProcess(-child.pid, signal);
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
+  };
+  let stopping = null;
+  const stop = () => {
+    if (stopping) return stopping;
+    finishStopStarted();
+    stopping = (async () => {
+      if (!child?.pid || processGroupGone(child.pid, killProcess)) return;
+      termSent = true;
+      sendGroupSignal("SIGTERM");
+      if (
+        await waitForProcessGroupGone(child.pid, trustedTermGrace, {
+          killProcess,
+        })
+      ) {
+        return;
+      }
+      killSent = true;
+      sendGroupSignal("SIGKILL");
+      await waitForProcessGroupGone(child.pid, trustedKillGrace, {
+        killProcess,
       });
-      child.once("error", (error) =>
-        reject(
-          new Error(
-            `cannot launch fixed Highlight Playwright host: ${error.message}`,
-            { cause: error },
-          ),
-        ),
-      );
-      child.once("close", (code, signal) =>
-        resolve({ exitCode: code, signal }),
-      );
+    })();
+    return stopping;
+  };
+  const signalHandlers = new Map();
+  let deadline;
+  try {
+    child = spawnProcess(command.command, command.args, {
+      cwd: command.cwd,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
     });
+    child.stdout?.on("data", consume);
+    child.stderr?.on("data", consume);
+    child.once("error", (error) => {
+      if (!closeOutcome) {
+        closeOutcome = { launchError: error, exitCode: null, signal: null };
+        finishClose(closeOutcome);
+      }
+    });
+    child.once("close", (exitCode, signal) => {
+      if (!closeOutcome) {
+        closeOutcome = { launchError: null, exitCode, signal };
+        finishClose(closeOutcome);
+      }
+    });
+    for (const signal of ["SIGINT", "SIGTERM"]) {
+      const handler = () => {
+        parentSignal ??= signal;
+        void stop();
+      };
+      signalHandlers.set(signal, handler);
+      signalSource.on(signal, handler);
+    }
+    deadline = setTimeout(() => {
+      timedOut = true;
+      void stop();
+    }, trustedDeadline);
+    deadline.unref?.();
+    await Promise.race([
+      closed,
+      (async () => {
+        await stopStarted;
+        await stopping;
+        if (!closeOutcome) {
+          closeOutcome = {
+            launchError: null,
+            exitCode: null,
+            signal: killSent ? "SIGKILL" : "SIGTERM",
+          };
+          finishClose(closeOutcome);
+        }
+      })(),
+    ]);
+    if (stopping) await stopping;
+    let gone = child.pid ? processGroupGone(child.pid, killProcess) : true;
+    if (!gone) {
+      await stop();
+      gone = processGroupGone(child.pid, killProcess);
+    }
+    await logWrites;
+    if (closeOutcome.launchError) {
+      throw new Error(
+        `cannot launch fixed Highlight Playwright host: ${closeOutcome.launchError.message}`,
+        { cause: closeOutcome.launchError },
+      );
+    }
+    if (parentSignal && signalSource === process) {
+      process.exitCode = parentSignal === "SIGINT" ? 130 : 143;
+    }
+    return {
+      exitCode: parentSignal ? null : closeOutcome.exitCode,
+      signal: parentSignal ?? closeOutcome.signal,
+      timedOut,
+      deadlineMs: trustedDeadline,
+      processGroup: {
+        pid: child.pid ?? null,
+        termSent,
+        killSent,
+        exited: closeOutcome.exitCode !== null || closeOutcome.signal !== null,
+        gone,
+      },
+      log: {
+        limitBytes: trustedLogLimit,
+        capturedBytes,
+        discardedBytes,
+        truncated: discardedBytes > 0,
+      },
+    };
   } finally {
+    if (deadline) clearTimeout(deadline);
+    for (const [signal, handler] of signalHandlers) {
+      signalSource.off(signal, handler);
+    }
+    if (child?.pid && !processGroupGone(child.pid, killProcess)) {
+      try {
+        await stop();
+      } catch {
+        // The caller receives the primary launch/execution failure.
+      }
+    }
+    await logWrites.catch(() => {});
     await log.close();
   }
 }
 
+async function defaultProcessRunner(options) {
+  return runOwnedRuntimeProcess(options);
+}
+
+async function regularFileSnapshot(filePath, label, { maxBytes = null } = {}) {
+  const pathStat = await requireCanonicalPath(filePath, {
+    kind: "file",
+    label,
+  });
+  let handle;
+  try {
+    handle = await fs.open(
+      filePath,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+    );
+  } catch (error) {
+    throw new Error(
+      `cannot open ${label} without following symlinks: ${error.message}`,
+    );
+  }
+  try {
+    const before = await handle.stat();
+    if (before.dev !== pathStat.dev || before.ino !== pathStat.ino) {
+      throw new Error(`${label} changed while opening: ${filePath}`);
+    }
+    if (maxBytes !== null && before.size > maxBytes) {
+      throw new Error(
+        `${label} exceeds its ${maxBytes}-byte bound: ${before.size}`,
+      );
+    }
+    const contents = await handle.readFile();
+    const after = await handle.stat();
+    if (
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size ||
+      contents.byteLength !== before.size
+    ) {
+      throw new Error(`${label} changed while reading: ${filePath}`);
+    }
+    return {
+      path: path.resolve(filePath),
+      bytes: before.size,
+      digest: digestBytes(contents),
+      contents,
+      stat: before,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
 async function fileIdentity(filePath, label) {
-  const stat = await requireCanonicalPath(filePath, { kind: "file", label });
-  const bytes = await fs.readFile(filePath);
+  const snapshot = await regularFileSnapshot(filePath, label);
   return {
-    path: path.resolve(filePath),
-    bytes: stat.size,
-    digest: digestBytes(bytes),
+    path: snapshot.path,
+    bytes: snapshot.bytes,
+    digest: snapshot.digest,
   };
 }
 
@@ -621,10 +953,36 @@ async function writeJsonExclusive(filePath, value, label) {
   }
 }
 
-async function readJsonRegular(filePath, label) {
-  await requireCanonicalPath(filePath, { kind: "file", label });
+async function writeJsonAtomicExclusive(filePath, value, label) {
+  const temporary = `${filePath}.tmp-${process.pid}-${createHash("sha256")
+    .update(`${filePath}:${Date.now()}:${Math.random()}`)
+    .digest("hex")
+    .slice(0, 12)}`;
+  let handle;
   try {
-    return JSON.parse(await fs.readFile(filePath, "utf8"));
+    handle = await fs.open(temporary, "wx", 0o600);
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`);
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await fs.link(temporary, filePath);
+  } catch (error) {
+    if (error.code === "EEXIST") {
+      throw new Error(`refusing to overwrite ${label}: ${filePath}`);
+    }
+    throw error;
+  } finally {
+    if (handle) await handle.close().catch(() => {});
+    await fs.unlink(temporary).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
+}
+
+async function readJsonRegular(filePath, label) {
+  const snapshot = await regularFileSnapshot(filePath, label);
+  try {
+    return JSON.parse(snapshot.contents.toString("utf8"));
   } catch (error) {
     throw new Error(`cannot parse ${label}: ${error.message}`);
   }
@@ -695,6 +1053,12 @@ function validateApplicationRuntime(value, workerRequest) {
     requireAbsolute(nested, `applicationRuntime isolation ${key}`);
   }
   const tempRoot = path.resolve(value.isolation.fixtureTempRoot);
+  const expectedTempRoot = path.join(workerRequest.bundleRoot, "fixture-root");
+  if (tempRoot !== expectedTempRoot) {
+    throw new Error(
+      "applicationRuntime fixtureTempRoot must equal the host-owned fixture root",
+    );
+  }
   for (const key of [
     "homeRoot",
     "databasePath",
@@ -812,6 +1176,105 @@ function validateCaptureEvidence(value) {
   return structuredClone(value);
 }
 
+function validateCaptureContent(value) {
+  requireExactKeys(
+    value,
+    [
+      "contract",
+      "version",
+      "bounds",
+      "visibleDomText",
+      "browserConsole",
+      "truncated",
+    ],
+    "capture content",
+  );
+  if (
+    value.contract !== "kandev-highlight-capture-content-v1" ||
+    value.version !== 1
+  ) {
+    throw new Error("capture content contract must be version 1");
+  }
+  requireExactKeys(
+    value.bounds,
+    Object.keys(CAPTURE_CONTENT_BOUNDS),
+    "capture content bounds",
+  );
+  for (const [key, expected] of Object.entries(CAPTURE_CONTENT_BOUNDS)) {
+    if (value.bounds[key] !== expected) {
+      throw new Error(`capture content ${key} must equal ${expected}`);
+    }
+  }
+  requireExactKeys(
+    value.truncated,
+    ["visibleDomText", "browserConsole"],
+    "capture content truncated",
+  );
+  if (
+    typeof value.truncated.visibleDomText !== "boolean" ||
+    typeof value.truncated.browserConsole !== "boolean"
+  ) {
+    throw new Error("capture content truncated flags must be boolean");
+  }
+  if (
+    !Array.isArray(value.visibleDomText) ||
+    value.visibleDomText.length >
+      CAPTURE_CONTENT_BOUNDS.maxVisibleDomTextRecords ||
+    value.visibleDomText.some((entry) => typeof entry !== "string")
+  ) {
+    throw new Error("capture content visibleDomText exceeds its record bound");
+  }
+  const visibleBytes = value.visibleDomText.reduce(
+    (total, entry) => total + Buffer.byteLength(entry),
+    0,
+  );
+  if (visibleBytes > CAPTURE_CONTENT_BOUNDS.maxVisibleDomTextBytes) {
+    throw new Error("capture content visibleDomText exceeds its byte bound");
+  }
+  if (
+    !Array.isArray(value.browserConsole) ||
+    value.browserConsole.length >
+      CAPTURE_CONTENT_BOUNDS.maxBrowserConsoleRecords
+  ) {
+    throw new Error("capture content browserConsole exceeds its record bound");
+  }
+  let consoleBytes = 0;
+  for (const [index, record] of value.browserConsole.entries()) {
+    requireExactKeys(
+      record,
+      ["type", "text", "digest"],
+      `capture content browserConsole ${index}`,
+    );
+    if (
+      typeof record.type !== "string" ||
+      !/^[a-z][a-zA-Z-]{0,31}$/.test(record.type) ||
+      typeof record.text !== "string" ||
+      Buffer.byteLength(record.text) >
+        CAPTURE_CONTENT_BOUNDS.maxBrowserConsoleTextBytes ||
+      record.digest !==
+        digestBytes(canonicalJson({ type: record.type, text: record.text }))
+    ) {
+      throw new Error(`capture content browserConsole ${index} is invalid`);
+    }
+    consoleBytes += Buffer.byteLength(record.text);
+  }
+  return {
+    value: structuredClone(value),
+    visibleDomText: {
+      records: value.visibleDomText.length,
+      bytes: visibleBytes,
+      digest: digestBytes(canonicalJson(value.visibleDomText)),
+      truncated: value.truncated.visibleDomText,
+    },
+    browserConsole: {
+      records: value.browserConsole.length,
+      bytes: consoleBytes,
+      digest: digestBytes(canonicalJson(value.browserConsole)),
+      truncated: value.truncated.browserConsole,
+    },
+  };
+}
+
 export function validateRuntimeWorkerResult(value, workerRequest) {
   const trustedRequest = validateRuntimeWorkerRequest(workerRequest);
   requireExactKeys(value, WORKER_RESULT_KEYS, "runtime worker result");
@@ -887,37 +1350,56 @@ export async function writeRuntimeWorkerResult(
   return validated;
 }
 
-async function verifyCaptureArtifacts(workerResult, workerRequest) {
-  for (const [key, filePath] of Object.entries({
-    phaseManifestPath: workerResult.capture.phaseManifestPath,
-    captureManifestPath: workerResult.capture.captureManifestPath,
-    rawMasterPath: workerResult.capture.rawMasterPath,
-    captureEvidencePath: workerResult.capture.captureEvidence.path,
+async function verifyCaptureArtifacts(
+  workerResult,
+  workerRequest,
+  { scenarioId, scenarioDigest, sourceDigest },
+) {
+  const expected = expectedCapturePaths(workerRequest, scenarioId);
+  for (const [key, expectedPath] of Object.entries({
+    phaseManifestPath: expected.phaseManifestPath,
+    captureManifestPath: expected.captureManifestPath,
+    rawMasterPath: expected.rawMasterPath,
+    captureEvidencePath: expected.captureEvidencePath,
   })) {
-    if (!isInside(workerRequest.artifactRoot, filePath)) {
-      throw new Error(`runtime worker ${key} escapes artifactRoot`);
+    const actual =
+      key === "captureEvidencePath"
+        ? workerResult.capture.captureEvidence.path
+        : workerResult.capture[key];
+    if (path.resolve(actual) !== expectedPath) {
+      throw new Error(
+        `runtime worker ${key} must equal the fixed scenario/run capture path`,
+      );
     }
   }
-  const [phaseIdentity, captureIdentity, rawIdentity, evidenceIdentity] =
+  const [phaseSnapshot, captureSnapshot, rawSnapshot, evidenceSnapshot] =
     await Promise.all([
-      fileIdentity(
-        workerResult.capture.phaseManifestPath,
-        "capture phase manifest",
-      ),
-      fileIdentity(
-        workerResult.capture.captureManifestPath,
+      regularFileSnapshot(expected.phaseManifestPath, "capture phase manifest"),
+      regularFileSnapshot(
+        expected.captureManifestPath,
         "source capture manifest",
       ),
-      fileIdentity(workerResult.capture.rawMasterPath, "raw capture master"),
-      fileIdentity(
-        workerResult.capture.captureEvidence.path,
+      regularFileSnapshot(expected.rawMasterPath, "raw capture master"),
+      regularFileSnapshot(
+        expected.captureEvidencePath,
         "capture content evidence",
+        {
+          maxBytes: MAX_CAPTURE_CONTENT_EVIDENCE_BYTES,
+        },
       ),
     ]);
-  const [phase, receipt] = await Promise.all([
-    readJsonRegular(phaseIdentity.path, "capture phase manifest"),
-    readJsonRegular(captureIdentity.path, "source capture manifest"),
-  ]);
+  let phase;
+  let receipt;
+  let captureContent;
+  try {
+    phase = JSON.parse(phaseSnapshot.contents.toString("utf8"));
+    receipt = JSON.parse(captureSnapshot.contents.toString("utf8"));
+    captureContent = validateCaptureContent(
+      JSON.parse(evidenceSnapshot.contents.toString("utf8")),
+    );
+  } catch (error) {
+    throw new Error(`cannot parse verified capture evidence: ${error.message}`);
+  }
   const phaseDigestInput = structuredClone(phase);
   delete phaseDigestInput.recordDigest;
   if (
@@ -934,12 +1416,18 @@ async function verifyCaptureArtifacts(workerResult, workerRequest) {
   }
   if (
     receipt.contract !== "kandev-highlight-source-capture-v1" ||
-    receipt.scenarioDigest !== workerResult.capture.scenarioDigest ||
-    receipt.sourceDigest !== workerResult.capture.sourceDigest ||
+    receipt.scenarioDigest !== scenarioDigest ||
+    workerResult.capture.scenarioDigest !== scenarioDigest ||
+    receipt.sourceDigest !== sourceDigest ||
+    workerResult.capture.sourceDigest !== sourceDigest ||
     receipt.source?.selectedSha !== workerRequest.sourceProof.selectedSha ||
     receipt.build?.manifestDigest !== workerRequest.build.manifestDigest ||
-    receipt.rawMaster?.digest !== rawIdentity.digest ||
-    workerResult.capture.rawMasterDigest !== rawIdentity.digest ||
+    phase.value?.rawMasterPath !== expected.rawMasterPath ||
+    phase.value?.captureManifestPath !== expected.captureManifestPath ||
+    receipt.rawMaster?.path !== expected.rawMasterPath ||
+    receipt.rawMaster?.bytes !== rawSnapshot.bytes ||
+    receipt.rawMaster?.digest !== rawSnapshot.digest ||
+    workerResult.capture.rawMasterDigest !== rawSnapshot.digest ||
     canonicalJson(receipt.applicationRuntime) !==
       canonicalJson(workerResult.applicationRuntime) ||
     canonicalJson(receipt.captureEvidence) !==
@@ -950,19 +1438,157 @@ async function verifyCaptureArtifacts(workerResult, workerRequest) {
     );
   }
   if (
-    evidenceIdentity.bytes !== workerResult.capture.captureEvidence.bytes ||
-    evidenceIdentity.digest !== workerResult.capture.captureEvidence.digest
+    evidenceSnapshot.bytes !== workerResult.capture.captureEvidence.bytes ||
+    evidenceSnapshot.digest !== workerResult.capture.captureEvidence.digest
   ) {
     throw new Error("capture content evidence hash or byte count mismatch");
   }
+  for (const key of ["visibleDomText", "browserConsole"]) {
+    if (
+      canonicalJson(captureContent[key]) !==
+      canonicalJson(workerResult.capture.captureEvidence[key])
+    ) {
+      throw new Error(`capture content ${key} summary mismatch`);
+    }
+  }
   return {
-    phaseManifestPath: phaseIdentity.path,
-    phaseManifestDigest: phaseIdentity.digest,
-    captureManifestPath: captureIdentity.path,
-    captureManifestDigest: captureIdentity.digest,
-    rawMasterPath: rawIdentity.path,
-    rawMasterDigest: rawIdentity.digest,
+    attemptRoot: expected.attemptRoot,
+    scenarioDigest,
+    sourceDigest,
+    phaseManifestPath: phaseSnapshot.path,
+    phaseManifestDigest: phaseSnapshot.digest,
+    captureManifestPath: captureSnapshot.path,
+    captureManifestDigest: captureSnapshot.digest,
+    rawMasterPath: rawSnapshot.path,
+    rawMasterDigest: rawSnapshot.digest,
+    rawMaster: {
+      path: rawSnapshot.path,
+      bytes: rawSnapshot.bytes,
+      digest: rawSnapshot.digest,
+    },
     captureEvidence: workerResult.capture.captureEvidence,
+    receipt,
+  };
+}
+
+async function verifyCaptureTeardown(capture, workerRequest, scenarioId, deps) {
+  const runtime = capture.receipt?.runtime;
+  requireExactKeys(runtime, ["allocation", "teardown"], "capture runtime");
+  requireExactKeys(
+    runtime.allocation,
+    [
+      "display",
+      "displayNumber",
+      "cdpPort",
+      "artifactRoot",
+      "profileDir",
+      "lockPath",
+    ],
+    "capture runtime allocation",
+  );
+  const expected = expectedCapturePaths(workerRequest, scenarioId);
+  if (
+    !Number.isInteger(runtime.allocation.displayNumber) ||
+    runtime.allocation.display !== `:${runtime.allocation.displayNumber}.0` ||
+    !Number.isInteger(runtime.allocation.cdpPort) ||
+    runtime.allocation.cdpPort < 1_024 ||
+    runtime.allocation.cdpPort > 65_535 ||
+    runtime.allocation.artifactRoot !== expected.captureRoot ||
+    runtime.allocation.profileDir !== expected.captureProfileDir ||
+    runtime.allocation.lockPath !== expected.captureLockPath
+  ) {
+    throw new Error(
+      "capture runtime allocation does not match fixed attempt paths",
+    );
+  }
+  requireExactKeys(
+    runtime.teardown,
+    [
+      "processesGone",
+      "coordinatesReleased",
+      "profileRemoved",
+      "lockRemoved",
+      "display",
+      "cdpPort",
+      "processes",
+      "recorder",
+    ],
+    "capture runtime teardown",
+  );
+  requireExactKeys(
+    runtime.teardown.recorder,
+    ["exitCode", "signal", "processGone"],
+    "capture recorder teardown",
+  );
+  if (
+    runtime.teardown.processesGone !== true ||
+    runtime.teardown.coordinatesReleased !== true ||
+    runtime.teardown.profileRemoved !== true ||
+    runtime.teardown.lockRemoved !== true ||
+    runtime.teardown.display !== runtime.allocation.display ||
+    runtime.teardown.cdpPort !== runtime.allocation.cdpPort ||
+    runtime.teardown.recorder.exitCode !== 0 ||
+    runtime.teardown.recorder.signal !== null ||
+    runtime.teardown.recorder.processGone !== true
+  ) {
+    throw new Error("capture runtime teardown declaration is incomplete");
+  }
+  if (
+    !Array.isArray(runtime.teardown.processes) ||
+    runtime.teardown.processes.length !== 2
+  ) {
+    throw new Error(
+      "capture runtime teardown needs Xvfb and Chromium processes",
+    );
+  }
+  const processes = new Map();
+  for (const record of runtime.teardown.processes) {
+    requireExactKeys(
+      record,
+      ["name", "pid", "gone"],
+      "capture runtime process",
+    );
+    if (
+      !["xvfb", "chromium"].includes(record.name) ||
+      processes.has(record.name) ||
+      !Number.isInteger(record.pid) ||
+      record.pid <= 0 ||
+      record.gone !== true
+    ) {
+      throw new Error("capture runtime process teardown is invalid");
+    }
+    processes.set(record.name, record);
+  }
+  if (!processes.has("xvfb") || !processes.has("chromium")) {
+    throw new Error("capture runtime teardown omitted Xvfb or Chromium");
+  }
+  const coordinateLockPath = path.join(
+    os.tmpdir(),
+    `kandev-highlight-${runtime.allocation.displayNumber}-${runtime.allocation.cdpPort}.lock`,
+  );
+  const [
+    cdpPortReleased,
+    displayReleased,
+    profileRemoved,
+    captureLockRemoved,
+    coordinateLockRemoved,
+    ...processGoneChecks
+  ] = await Promise.all([
+    deps.waitForPortRelease(runtime.allocation.cdpPort),
+    deps.isDisplayReleased(runtime.allocation.displayNumber),
+    pathRemoved(expected.captureProfileDir),
+    pathRemoved(expected.captureLockPath),
+    pathRemoved(coordinateLockPath),
+    ...[...processes.values()].map((record) => deps.isProcessGone(record.pid)),
+  ]);
+  return {
+    declared: true,
+    cdpPortReleased: cdpPortReleased === true,
+    displayReleased: displayReleased === true,
+    processesGone: processGoneChecks.every((gone) => gone === true),
+    recorderGone: true,
+    profileRemoved,
+    locksRemoved: captureLockRemoved && coordinateLockRemoved,
   };
 }
 
@@ -976,7 +1602,21 @@ async function pathRemoved(filePath) {
   }
 }
 
+function isProcessGone(pid, killProcess = process.kill) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    killProcess(pid, 0);
+    return false;
+  } catch (error) {
+    if (error.code === "ESRCH") return true;
+    if (error.code === "EPERM") return false;
+    throw error;
+  }
+}
+
 function runtimeReceipt({
+  scenario,
+  source,
   requestIdentity,
   workerIdentity,
   logIdentity,
@@ -991,12 +1631,10 @@ function runtimeReceipt({
     contract: "kandev-highlight-application-runtime-v1",
     version: 1,
     runtimeId: workerResult.runtimeId,
+    scenario,
     request: requestIdentity,
     preTeardown: workerResult.applicationRuntime,
-    source: {
-      mode: workerResult.applicationRuntime.source.mode,
-      selectedSha: workerResult.applicationRuntime.source.selectedSha,
-    },
+    source,
     build: {
       manifestDigest: build.manifestDigest,
       sourceSha: build.sourceSha,
@@ -1011,6 +1649,10 @@ function runtimeReceipt({
       phaseManifestDigest: capture.phaseManifestDigest,
       captureManifestPath: capture.captureManifestPath,
       captureManifestDigest: capture.captureManifestDigest,
+      attemptRoot: capture.attemptRoot,
+      scenarioDigest: capture.scenarioDigest,
+      sourceDigest: capture.sourceDigest,
+      rawMaster: capture.rawMaster,
       rawMasterDigest: capture.rawMasterDigest,
       captureEvidenceDigest: capture.captureEvidence.digest,
     },
@@ -1025,6 +1667,40 @@ function runtimeReceipt({
 
 function compactFailure(code) {
   return { code };
+}
+
+function retryGuidance() {
+  return {
+    nextRunIdRequired: true,
+    reason: "immutable-run-id-reserved",
+  };
+}
+
+function structuredFailure(code, phase) {
+  return { code, phase, retry: retryGuidance() };
+}
+
+function runtimeFailureEvidence({ request, phase, code, completedAt }) {
+  const body = {
+    contract: "kandev-highlight-runtime-host-failure-v1",
+    version: 1,
+    runtimeId: request.runtimeId,
+    runId: request.runId,
+    phase,
+    failure: structuredFailure(code, phase),
+    completedAt,
+  };
+  return { ...body, failureDigest: digestBytes(canonicalJson(body)) };
+}
+
+function safeCompletedAt(clock) {
+  try {
+    const value = clock().toISOString();
+    if (Number.isFinite(Date.parse(value))) return value;
+  } catch {
+    // A broken injected/system clock is itself failure evidence; use wall time.
+  }
+  return new Date().toISOString();
 }
 
 class RuntimeHostFailure extends Error {
@@ -1045,6 +1721,8 @@ function dependenciesWithDefaults(dependencies) {
     selectIntegrationPortOffset,
     processRunner: defaultProcessRunner,
     waitForPortRelease: waitForIntegrationPortRelease,
+    isDisplayReleased: isDisplayAvailable,
+    isProcessGone,
     clock: () => new Date(),
     ...dependencies,
   };
@@ -1091,14 +1769,14 @@ async function reserveBundle(request) {
     }
     throw error;
   }
-  const homeRoot = path.join(bundleRoot, "runner-home");
-  await fs.mkdir(homeRoot);
   return {
     bundleRoot,
-    homeRoot,
+    homeRoot: path.join(bundleRoot, "runner-home"),
+    fixtureRoot: path.join(bundleRoot, "fixture-root"),
     requestPath: path.join(bundleRoot, "request.json"),
     workerResultPath: path.join(bundleRoot, "worker-result.json"),
     logPath: path.join(bundleRoot, "playwright.log"),
+    failurePath: path.join(bundleRoot, "failure.json"),
     resultPath: path.join(bundleRoot, "result.json"),
   };
 }
@@ -1107,6 +1785,8 @@ function hostResult({
   status,
   request,
   paths,
+  scenario,
+  source,
   requestIdentity,
   workerIdentity,
   logIdentity,
@@ -1123,11 +1803,14 @@ function hostResult({
     status,
     runtimeId: request.runtimeId,
     runId: request.runId,
+    scenario,
+    source,
     bundle: {
       path: paths.bundleRoot,
       requestPath: paths.requestPath,
       workerResultPath: paths.workerResultPath,
       logPath: paths.logPath,
+      failurePath: paths.failurePath,
       resultPath: paths.resultPath,
     },
     request: requestIdentity,
@@ -1143,6 +1826,53 @@ function hostResult({
   return { ...body, resultDigest: digestBytes(canonicalJson(body)) };
 }
 
+function normalizedExecution(value, deadlineMs = DEFAULT_PROCESS_DEADLINE_MS) {
+  if (
+    !isRecord(value) ||
+    !(value.exitCode === null || Number.isInteger(value.exitCode)) ||
+    !(value.signal === null || typeof value.signal === "string")
+  ) {
+    throw new Error("runtime process result is invalid");
+  }
+  const processGroup = isRecord(value.processGroup)
+    ? structuredClone(value.processGroup)
+    : {
+        pid: null,
+        termSent: false,
+        killSent: false,
+        exited: value.exitCode !== null || value.signal !== null,
+        gone: value.exitCode !== null || value.signal !== null,
+      };
+  const log = isRecord(value.log)
+    ? structuredClone(value.log)
+    : {
+        limitBytes: DEFAULT_LOG_LIMIT_BYTES,
+        capturedBytes: null,
+        discardedBytes: 0,
+        truncated: false,
+      };
+  return {
+    exitCode: value.exitCode,
+    signal: value.signal,
+    timedOut: value.timedOut === true,
+    deadlineMs:
+      Number.isInteger(value.deadlineMs) && value.deadlineMs > 0
+        ? value.deadlineMs
+        : deadlineMs,
+    processGroup,
+    log,
+  };
+}
+
+async function maybeFileIdentity(filePath, label) {
+  try {
+    return await fileIdentity(filePath, label);
+  } catch (error) {
+    if (/does not exist/.test(error.message)) return null;
+    return null;
+  }
+}
+
 export async function runHighlightRuntimeHost({
   request: input,
   inheritedEnv = process.env,
@@ -1153,9 +1883,20 @@ export async function runHighlightRuntimeHost({
   const expectedRepositoryRoot =
     dependencies.expectedRepositoryRoot ?? DEFAULT_REPOSITORY_ROOT;
   await preflightRequestPaths(request, expectedRepositoryRoot);
+  const scenarioFileBefore = await regularFileSnapshot(
+    request.scenarioPath,
+    "runtime scenario",
+  );
   const scenario = await deps.readScenario(request.scenarioPath);
+  const scenarioDigest = computeScenarioDigest(scenario);
+  const scenarioEvidence = {
+    id: scenario.id,
+    path: request.scenarioPath,
+    bytes: scenarioFileBefore.bytes,
+    digest: scenarioDigest,
+  };
   deps.preflightHighlightRuntime({ runtimeId: request.runtimeId, scenario });
-  const sourceProof = validateSourceProof(
+  const sourceProofBefore = validateSourceProof(
     await deps.verifySourceGate({
       repoRoot: request.repositoryRoot,
       source: request.source,
@@ -1164,9 +1905,10 @@ export async function runHighlightRuntimeHost({
   );
   const build = compactBuildProof(
     await deps.verifyBuildProvenance(request.buildManifestPath, {
-      expectedSourceSha: sourceProof.selectedSha,
+      expectedSourceSha: sourceProofBefore.selectedSha,
+      expectedRepositoryRoot: request.repositoryRoot,
     }),
-    sourceProof,
+    sourceProofBefore,
   );
   const tools = validateToolPreflight(
     await deps.preflightCaptureIntegration({
@@ -1186,151 +1928,342 @@ export async function runHighlightRuntimeHost({
   }
 
   const paths = await reserveBundle(request);
-  const workerRequest = buildWorkerRequest({
-    request,
-    sourceProof,
-    build,
-    tools,
-    port,
-    bundleRoot: paths.bundleRoot,
-  });
-  await writeJsonExclusive(
-    paths.requestPath,
-    workerRequest,
-    "runtime worker request",
-  );
-  await fs.writeFile(paths.logPath, "", { flag: "wx" });
-  const requestIdentity = await fileIdentity(
-    paths.requestPath,
-    "runtime worker request",
-  );
-  const env = sanitizeRuntimeHostEnvironment(inheritedEnv, {
-    homeRoot: paths.homeRoot,
-    requestPath: paths.requestPath,
-    workerResultPath: paths.workerResultPath,
-    portOffset: port.offset,
-    playwrightBrowsersPath: playwrightBrowsersRoot(tools.chromium),
-  });
-  const command = buildRuntimeHostCommand({
-    webRoot: path.join(request.repositoryRoot, "apps", "web"),
-  });
-
-  let execution;
-  let processFailure = null;
-  try {
-    execution = await deps.processRunner({
-      command,
-      env,
-      logPath: paths.logPath,
-    });
-  } catch {
-    execution = { exitCode: null, signal: null };
-    processFailure = compactFailure("playwright-launch-failed");
-  }
-  if (
-    !isRecord(execution) ||
-    !(execution.exitCode === null || Number.isInteger(execution.exitCode)) ||
-    !(execution.signal === null || typeof execution.signal === "string")
-  ) {
-    execution = { exitCode: null, signal: null };
-    processFailure = compactFailure("playwright-result-invalid");
-  } else if (execution.exitCode !== 0) {
-    processFailure = compactFailure("playwright-exit-failed");
-  }
-
-  let portReleased = false;
-  try {
-    portReleased = (await deps.waitForPortRelease(port.backendPort)) === true;
-  } catch {
-    portReleased = false;
-  }
-  const logIdentity = await fileIdentity(paths.logPath, "runtime host log");
+  let phase = "bundle-setup";
+  let requestIdentity = null;
   let workerIdentity = null;
+  let logIdentity = null;
   let workerResult = null;
   let capture = null;
-  let workerFailure = null;
-  try {
-    workerIdentity = await fileIdentity(
-      paths.workerResultPath,
-      "runtime worker result",
-    );
-    workerResult = validateRuntimeWorkerResult(
-      await readJsonRegular(paths.workerResultPath, "runtime worker result"),
-      workerRequest,
-    );
-    capture = await verifyCaptureArtifacts(workerResult, workerRequest);
-  } catch {
-    workerFailure = compactFailure("worker-result-invalid");
-  }
-  const fixtureTempRootRemoved = workerResult
-    ? await pathRemoved(
-        workerResult.applicationRuntime.isolation.fixtureTempRoot,
-      )
-    : false;
-  const teardown = {
-    playwrightExited: execution.exitCode === 0,
-    backendPortReleased: portReleased,
-    fixtureTempRootRemoved,
-  };
-  let failure = processFailure ?? workerFailure;
-  if (!failure && (!portReleased || !fixtureTempRootRemoved)) {
-    failure = compactFailure("runtime-teardown-incomplete");
-  }
-  const completedAt = deps.clock().toISOString();
-  if (!Number.isFinite(Date.parse(completedAt)))
-    throw new Error("runtime host clock returned invalid time");
-
+  let execution = null;
+  let teardown = null;
   let applicationRuntime = null;
-  if (workerResult && capture && workerIdentity) {
-    const receipt = runtimeReceipt({
+  let sourceAfter = null;
+  const sourceEvidence = {
+    pre: compactSourceProof(sourceProofBefore),
+    post: null,
+    unchanged: false,
+  };
+  try {
+    await Promise.all([fs.mkdir(paths.homeRoot), fs.mkdir(paths.fixtureRoot)]);
+    const fixtureIdentity = await requireCanonicalPath(paths.fixtureRoot, {
+      kind: "directory",
+      label: "host-owned fixture root",
+    });
+    if (!Number.isInteger(fixtureIdentity.ino) || fixtureIdentity.ino <= 0) {
+      throw new Error("host-owned fixture root identity is invalid");
+    }
+    const workerRequest = buildWorkerRequest({
+      request,
+      sourceProof: sourceProofBefore,
+      build,
+      tools,
+      port,
+      bundleRoot: paths.bundleRoot,
+    });
+    phase = "request";
+    await writeJsonExclusive(
+      paths.requestPath,
+      workerRequest,
+      "runtime worker request",
+    );
+    await fs.writeFile(paths.logPath, "", { flag: "wx", mode: 0o600 });
+    requestIdentity = await fileIdentity(
+      paths.requestPath,
+      "runtime worker request",
+    );
+    const env = sanitizeRuntimeHostEnvironment(inheritedEnv, {
+      homeRoot: paths.homeRoot,
+      fixtureRoot: paths.fixtureRoot,
+      requestPath: paths.requestPath,
+      workerResultPath: paths.workerResultPath,
+      portOffset: port.offset,
+      playwrightBrowsersPath: playwrightBrowsersRoot(tools.chromium),
+    });
+    const command = buildRuntimeHostCommand({
+      webRoot: path.join(request.repositoryRoot, "apps", "web"),
+    });
+
+    phase = "playwright";
+    let processFailure = null;
+    try {
+      execution = normalizedExecution(
+        await deps.processRunner({
+          command,
+          env,
+          logPath: paths.logPath,
+          deadlineMs:
+            dependencies.processDeadlineMs ?? DEFAULT_PROCESS_DEADLINE_MS,
+        }),
+        dependencies.processDeadlineMs ?? DEFAULT_PROCESS_DEADLINE_MS,
+      );
+    } catch {
+      execution = normalizedExecution(
+        { exitCode: null, signal: null },
+        dependencies.processDeadlineMs ?? DEFAULT_PROCESS_DEADLINE_MS,
+      );
+      processFailure = structuredFailure(
+        "playwright-launch-failed",
+        "playwright",
+      );
+    }
+    if (!processFailure && execution.exitCode !== 0) {
+      processFailure = structuredFailure(
+        execution.timedOut
+          ? "playwright-deadline-exceeded"
+          : "playwright-exit-failed",
+        "playwright",
+      );
+    }
+
+    phase = "postflight";
+    let postflightFailure = null;
+    try {
+      sourceAfter = validateSourceProof(
+        await deps.verifySourceGate({
+          repoRoot: request.repositoryRoot,
+          source: request.source,
+        }),
+        request,
+      );
+      if (canonicalJson(sourceAfter) !== canonicalJson(sourceProofBefore)) {
+        throw new Error("source proof changed during runtime capture");
+      }
+      sourceEvidence.post = compactSourceProof(sourceAfter);
+    } catch {
+      postflightFailure = structuredFailure(
+        "source-postflight-failed",
+        "postflight",
+      );
+    }
+    try {
+      const [scenarioFileAfter, scenarioAfter] = await Promise.all([
+        regularFileSnapshot(request.scenarioPath, "post-run runtime scenario"),
+        deps.readScenario(request.scenarioPath),
+      ]);
+      if (
+        scenarioFileAfter.bytes !== scenarioFileBefore.bytes ||
+        scenarioFileAfter.digest !== scenarioFileBefore.digest ||
+        computeScenarioDigest(scenarioAfter) !== scenarioDigest ||
+        scenarioAfter.id !== scenario.id
+      ) {
+        throw new Error(
+          "scenario bytes or canonical digest changed during capture",
+        );
+      }
+    } catch {
+      postflightFailure ??= structuredFailure(
+        "scenario-postflight-failed",
+        "postflight",
+      );
+    }
+    sourceEvidence.unchanged =
+      !postflightFailure && sourceEvidence.post !== null;
+
+    phase = "teardown";
+    let portReleased = false;
+    try {
+      portReleased = (await deps.waitForPortRelease(port.backendPort)) === true;
+    } catch {
+      portReleased = false;
+    }
+    logIdentity = await fileIdentity(paths.logPath, "runtime host log");
+    execution.log.capturedBytes = logIdentity.bytes;
+
+    phase = "worker-result";
+    let workerFailure = null;
+    let captureTeardown = null;
+    try {
+      workerIdentity = await fileIdentity(
+        paths.workerResultPath,
+        "runtime worker result",
+      );
+      workerResult = validateRuntimeWorkerResult(
+        await readJsonRegular(paths.workerResultPath, "runtime worker result"),
+        workerRequest,
+      );
+      capture = await verifyCaptureArtifacts(workerResult, workerRequest, {
+        scenarioId: scenario.id,
+        scenarioDigest,
+        sourceDigest: sourceCaptureDigest(request, sourceProofBefore),
+      });
+      captureTeardown = await verifyCaptureTeardown(
+        capture,
+        workerRequest,
+        scenario.id,
+        deps,
+      );
+      const { receipt: _verifiedCaptureReceipt, ...compactCapture } = capture;
+      capture = compactCapture;
+    } catch {
+      workerFailure = structuredFailure(
+        "worker-result-invalid",
+        "worker-result",
+      );
+    }
+    const fixtureTempRootRemoved = await pathRemoved(paths.fixtureRoot);
+    teardown = {
+      playwrightExited:
+        execution.exitCode === 0 &&
+        execution.signal === null &&
+        execution.timedOut === false,
+      playwrightProcessGroupGone: execution.processGroup.gone === true,
+      backendPortReleased: portReleased,
+      frontendPortReleased: portReleased,
+      fixtureTempRootOwned: true,
+      fixtureTempRootRemoved,
+      capture: captureTeardown,
+    };
+    let failure = processFailure ?? postflightFailure ?? workerFailure;
+    if (
+      !failure &&
+      (!portReleased ||
+        !fixtureTempRootRemoved ||
+        !teardown.playwrightProcessGroupGone ||
+        !captureTeardown ||
+        Object.entries(captureTeardown).some(
+          ([key, value]) => key !== "declared" && value !== true,
+        ))
+    ) {
+      failure = structuredFailure("runtime-teardown-incomplete", "teardown");
+    }
+    phase = "finalize";
+    const completedAt = deps.clock().toISOString();
+    if (!Number.isFinite(Date.parse(completedAt))) {
+      throw new Error("runtime host clock returned invalid time");
+    }
+
+    if (workerResult && capture && workerIdentity) {
+      const receipt = runtimeReceipt({
+        scenario: scenarioEvidence,
+        source: sourceEvidence,
+        requestIdentity,
+        workerIdentity,
+        logIdentity,
+        workerResult,
+        capture,
+        build,
+        execution,
+        teardown,
+        completedAt,
+      });
+      const runtimeReceiptPath = expectedCapturePaths(
+        workerRequest,
+        scenario.id,
+      ).runtimeReceiptPath;
+      await writeJsonExclusive(
+        runtimeReceiptPath,
+        receipt,
+        "application runtime receipt",
+      );
+      applicationRuntime = {
+        receiptPath: runtimeReceiptPath,
+        digest: receipt.receiptDigest,
+      };
+    }
+    if (failure) {
+      const evidence = runtimeFailureEvidence({
+        request,
+        phase: failure.phase,
+        code: failure.code,
+        completedAt,
+      });
+      await writeJsonAtomicExclusive(
+        paths.failurePath,
+        evidence,
+        "runtime host failure evidence",
+      );
+    }
+    const result = hostResult({
+      status: failure ? "failed" : "succeeded",
+      request,
+      paths,
+      scenario: scenarioEvidence,
+      source: sourceEvidence,
       requestIdentity,
       workerIdentity,
       logIdentity,
-      workerResult,
+      applicationRuntime,
       capture,
-      build,
       execution,
       teardown,
+      failure,
       completedAt,
     });
-    const runtimeReceiptPath = path.join(
-      path.dirname(capture.phaseManifestPath),
-      "application-runtime.json",
+    await writeJsonAtomicExclusive(
+      paths.resultPath,
+      result,
+      "runtime host result",
     );
-    await writeJsonExclusive(
-      runtimeReceiptPath,
-      receipt,
-      "application runtime receipt",
-    );
-    applicationRuntime = {
-      receiptPath: runtimeReceiptPath,
-      digest: receipt.receiptDigest,
-    };
-  }
-  const result = hostResult({
-    status: failure ? "failed" : "succeeded",
-    request,
-    paths,
-    requestIdentity,
-    workerIdentity,
-    logIdentity,
-    applicationRuntime,
-    capture,
-    execution,
-    teardown,
-    failure,
-    completedAt,
-  });
-  await writeJsonExclusive(paths.resultPath, result, "runtime host result");
-  if (failure) {
-    const message =
-      failure.code === "runtime-teardown-incomplete" && !portReleased
-        ? `Highlight runtime backend port ${port.backendPort} was not released`
-        : `Highlight runtime host failed closed: ${failure.code}`;
+    if (failure) {
+      const message =
+        failure.code === "runtime-teardown-incomplete" && !portReleased
+          ? `Highlight runtime backend port ${port.backendPort} was not released`
+          : `Highlight runtime host failed closed: ${failure.code}`;
+      throw new RuntimeHostFailure(
+        `${message}; evidence preserved at ${paths.resultPath}`,
+        paths.resultPath,
+      );
+    }
+    return result;
+  } catch (error) {
+    if (error instanceof RuntimeHostFailure) throw error;
+    await fs
+      .rm(paths.fixtureRoot, { recursive: true, force: true })
+      .catch(() => {});
+    logIdentity ??= await maybeFileIdentity(paths.logPath, "runtime host log");
+    const completedAt = safeCompletedAt(deps.clock);
+    const failure = structuredFailure("runtime-host-internal", phase);
+    const evidence = runtimeFailureEvidence({
+      request,
+      phase,
+      code: failure.code,
+      completedAt,
+    });
+    let evidenceWriteError = null;
+    try {
+      await writeJsonAtomicExclusive(
+        paths.failurePath,
+        evidence,
+        "runtime host failure evidence",
+      );
+    } catch (writeError) {
+      evidenceWriteError = writeError;
+    }
+    const result = hostResult({
+      status: "failed",
+      request,
+      paths,
+      scenario: scenarioEvidence,
+      source: sourceEvidence,
+      requestIdentity,
+      workerIdentity,
+      logIdentity,
+      applicationRuntime,
+      capture,
+      execution,
+      teardown,
+      failure,
+      completedAt,
+    });
+    let resultWriteError = null;
+    try {
+      await writeJsonAtomicExclusive(
+        paths.resultPath,
+        result,
+        "runtime host result",
+      );
+    } catch (writeError) {
+      resultWriteError = writeError;
+    }
+    if (evidenceWriteError || resultWriteError) {
+      throw new AggregateError(
+        [error, evidenceWriteError, resultWriteError].filter(Boolean),
+        `Highlight runtime host failed and could not preserve complete failure evidence in ${paths.bundleRoot}`,
+      );
+    }
     throw new RuntimeHostFailure(
-      `${message}; evidence preserved at ${paths.resultPath}`,
+      `Highlight runtime host failed closed during ${phase}; evidence preserved at ${paths.resultPath}`,
       paths.resultPath,
     );
   }
-  return result;
 }

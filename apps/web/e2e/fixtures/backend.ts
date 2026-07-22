@@ -104,8 +104,27 @@ async function waitForPortFree(port: number, timeoutMs = 10_000): Promise<void> 
     if (free) return;
     await new Promise((r) => setTimeout(r, 100));
   }
-  // Timeout expired — proceed anyway; the new process will fail-fast if the
-  // port is still held and waitForHealth will surface the error.
+  throw new Error(`backend port ${port} remained occupied after ${timeoutMs}ms`);
+}
+
+function processGroupGone(pid: number): boolean {
+  try {
+    process.kill(-pid, 0);
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return true;
+    if ((error as NodeJS.ErrnoException).code === "EPERM") return false;
+    throw error;
+  }
+}
+
+async function waitForProcessGroupGone(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (processGroupGone(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return processGroupGone(pid);
 }
 
 /**
@@ -114,37 +133,42 @@ async function waitForPortFree(port: number, timeoutMs = 10_000): Promise<void> 
  * to the negative PID targets all processes in that group (backend + agentctl).
  * The 7s grace period gives agentctl time to cascade cleanup to agent process groups.
  */
-function killProcessGroup(proc: ChildProcess): Promise<void> {
-  return new Promise<void>((resolve) => {
-    if (!proc.pid) {
-      resolve();
-      return;
-    }
+async function killProcessGroup(proc: ChildProcess): Promise<void> {
+  if (!proc.pid) return;
+  const pid = proc.pid;
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+  if (await waitForProcessGroupGone(pid, 7_000)) return;
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+  if (!(await waitForProcessGroupGone(pid, 2_000))) {
+    throw new Error(`backend process group ${pid} survived SIGKILL`);
+  }
+}
 
-    const pid = proc.pid;
-
-    try {
-      process.kill(-pid, "SIGTERM");
-    } catch {
-      // Process group may already be gone
-      resolve();
-      return;
-    }
-
-    const timeout = setTimeout(() => {
-      try {
-        process.kill(-pid, "SIGKILL");
-      } catch {
-        // Already dead
-      }
-      resolve();
-    }, 7_000);
-
-    proc.on("exit", () => {
-      clearTimeout(timeout);
-      resolve();
-    });
-  });
+function fixtureTempRoot(workerIndex: number): string {
+  const hostOwned = process.env.KANDEV_HIGHLIGHT_FIXTURE_ROOT;
+  if (!hostOwned) {
+    return fs.mkdtempSync(path.join(os.tmpdir(), `kandev-e2e-${workerIndex}-`));
+  }
+  if (!path.isAbsolute(hostOwned)) {
+    throw new Error("KANDEV_HIGHLIGHT_FIXTURE_ROOT must be absolute");
+  }
+  const resolved = path.resolve(hostOwned);
+  const stat = fs.lstatSync(resolved);
+  if (!stat.isDirectory() || stat.isSymbolicLink() || fs.realpathSync(resolved) !== resolved) {
+    throw new Error("KANDEV_HIGHLIGHT_FIXTURE_ROOT must be a canonical non-symlink directory");
+  }
+  if (fs.readdirSync(resolved).length !== 0) {
+    throw new Error("KANDEV_HIGHLIGHT_FIXTURE_ROOT must be empty before fixture setup");
+  }
+  return resolved;
 }
 
 /**
@@ -194,9 +218,7 @@ export const backendFixture = base.extend<object, { backend: BackendContext }>({
     async ({ browserName: _browserName }, use, workerInfo) => {
       const backendPort = BACKEND_BASE_PORT + workerInfo.workerIndex;
       const frontendPort = backendPort;
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), `kandev-e2e-${workerInfo.workerIndex}-`),
-      );
+      const tmpDir = fixtureTempRoot(workerInfo.workerIndex);
       const homeDir = path.join(tmpDir, ".kandev");
       const dbPath = path.join(tmpDir, "kandev.db");
       const worktreeBase = path.join(tmpDir, "worktrees");
@@ -377,14 +399,22 @@ exec git "$@"
       try {
         await use({ port: backendPort, baseUrl, frontendPort, frontendUrl, tmpDir, restart });
       } finally {
-        // Shutdown the backend process group.
-        await killProcessGroup(backendProc);
-
-        // Cleanup temp directory — ignore errors (backend may still hold files briefly)
+        const teardownErrors: Error[] = [];
         try {
-          fs.rmSync(tmpDir, { recursive: true, force: true });
-        } catch {
-          // Non-fatal: OS may not have released all file handles yet
+          await killProcessGroup(backendProc);
+        } catch (error) {
+          teardownErrors.push(error as Error);
+        }
+        try {
+          fs.rmSync(tmpDir, { recursive: true, force: false });
+        } catch (error) {
+          teardownErrors.push(error as Error);
+        }
+        if (teardownErrors.length > 0) {
+          throw new AggregateError(
+            teardownErrors,
+            "backend process/temp teardown did not complete",
+          );
         }
       }
     },

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +13,7 @@ import {
   validateRuntimeHostRequest,
   validateRuntimeWorkerRequest,
 } from "./runtime-host.mjs";
+import { computeScenarioDigest, readScenario } from "./scenario.mjs";
 
 const REPOSITORY_ROOT = path.resolve(
   path.dirname(new URL(import.meta.url).pathname),
@@ -155,20 +157,49 @@ function runtimeProof({ workerRequest, fixtureTempRoot }) {
   };
 }
 
-async function writeSuccessfulWorkerResult({ env, logPath }) {
+function sourceCaptureDigest(workerRequest) {
+  return digestBytes(
+    canonicalJson({
+      captureMode: workerRequest.source,
+      sourceSha: workerRequest.sourceProof.selectedSha,
+      ...(workerRequest.source === "pr_head"
+        ? {
+            prNumber: workerRequest.pullRequest.number,
+            prBaseSha: workerRequest.pullRequest.baseSha,
+            prHeadSha: workerRequest.sourceProof.selectedSha,
+          }
+        : { sourceRef: "origin/main" }),
+    }),
+  );
+}
+
+async function writeSuccessfulWorkerResult({
+  env,
+  logPath,
+  scenarioDigest: suppliedScenarioDigest,
+  captureScenarioId,
+  captureRunId,
+  captureContentPaddingBytes = 0,
+  captureEvidenceTransform,
+  applicationRuntimeTransform,
+  receiptTransform,
+}) {
   const workerRequest = JSON.parse(
     await fs.readFile(env.KANDEV_HIGHLIGHT_RUNTIME_REQUEST, "utf8"),
   );
-  const fixtureTempRoot = path.join(
-    path.dirname(workerRequest.bundleRoot),
-    "fixture-temp-gone",
-  );
-  const preTeardown = runtimeProof({ workerRequest, fixtureTempRoot });
+  const scenario = await readScenario(workerRequest.scenarioPath);
+  const scenarioDigest =
+    suppliedScenarioDigest ?? computeScenarioDigest(scenario);
+  const fixtureTempRoot = env.KANDEV_HIGHLIGHT_FIXTURE_ROOT;
+  const preTeardownBase = runtimeProof({ workerRequest, fixtureTempRoot });
+  const preTeardown = applicationRuntimeTransform
+    ? applicationRuntimeTransform(preTeardownBase, workerRequest)
+    : preTeardownBase;
   const captureRoot = path.join(
     workerRequest.artifactRoot,
-    "quick-start",
+    captureScenarioId ?? scenario.id,
     "runs",
-    workerRequest.runId,
+    captureRunId ?? workerRequest.runId,
   );
   const evidenceRoot = path.join(captureRoot, "evidence");
   const sourceCaptureRoot = path.join(captureRoot, "capture", "evidence");
@@ -196,14 +227,14 @@ async function writeSuccessfulWorkerResult({ env, logPath }) {
     truncated: { visibleDomText: false, browserConsole: false },
   };
   const rawEvidenceBytes = Buffer.from(
-    `${JSON.stringify(rawCaptureEvidence, null, 2)}\n`,
+    `${JSON.stringify(rawCaptureEvidence, null, 2)}\n${" ".repeat(captureContentPaddingBytes)}`,
   );
   const captureEvidencePath = path.join(
     sourceCaptureRoot,
     "capture-content.json",
   );
   await fs.writeFile(captureEvidencePath, rawEvidenceBytes, { flag: "wx" });
-  const captureEvidence = {
+  const captureEvidenceBase = {
     contract: "kandev-highlight-capture-evidence-v1",
     version: 1,
     path: captureEvidencePath,
@@ -222,10 +253,13 @@ async function writeSuccessfulWorkerResult({ env, logPath }) {
       truncated: false,
     },
   };
-  const captureReceipt = {
+  const captureEvidence = captureEvidenceTransform
+    ? captureEvidenceTransform(captureEvidenceBase, rawCaptureEvidence)
+    : captureEvidenceBase;
+  const captureReceiptBase = {
     contract: "kandev-highlight-source-capture-v1",
-    scenarioDigest: `sha256:${"4".repeat(64)}`,
-    sourceDigest: `sha256:${"5".repeat(64)}`,
+    scenarioDigest,
+    sourceDigest: sourceCaptureDigest(workerRequest),
     source: workerRequest.sourceProof,
     build: {
       contract: workerRequest.build.contract,
@@ -238,9 +272,40 @@ async function writeSuccessfulWorkerResult({ env, logPath }) {
       bytes: Buffer.byteLength("raw-master"),
       digest: digestBytes("raw-master"),
     },
+    runtime: {
+      allocation: {
+        display: ":240.0",
+        displayNumber: 240,
+        cdpPort: 50_001,
+        artifactRoot: path.join(captureRoot, "capture"),
+        profileDir: path.join(
+          captureRoot,
+          "capture",
+          "runtime",
+          "browser-profile",
+        ),
+        lockPath: path.join(captureRoot, "capture", "runtime", "capture.lock"),
+      },
+      teardown: {
+        processesGone: true,
+        coordinatesReleased: true,
+        profileRemoved: true,
+        lockRemoved: true,
+        display: ":240.0",
+        cdpPort: 50_001,
+        processes: [
+          { name: "xvfb", pid: 2_147_483_646, gone: true },
+          { name: "chromium", pid: 2_147_483_645, gone: true },
+        ],
+        recorder: { exitCode: 0, signal: null, processGone: true },
+      },
+    },
     applicationRuntime: preTeardown,
     captureEvidence,
   };
+  const captureReceipt = receiptTransform
+    ? receiptTransform(captureReceiptBase, workerRequest)
+    : captureReceiptBase;
   const captureManifestPath = path.join(sourceCaptureRoot, "capture.json");
   await fs.writeFile(
     captureManifestPath,
@@ -296,7 +361,26 @@ async function writeSuccessfulWorkerResult({ env, logPath }) {
     { flag: "wx" },
   );
   await fs.appendFile(logPath, "fixed Playwright worker completed\n");
-  return { exitCode: 0, signal: null };
+  await fs.rm(fixtureTempRoot, { recursive: true, force: true });
+  return {
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    deadlineMs: 240_000,
+    processGroup: {
+      pid: 12345,
+      termSent: false,
+      killSent: false,
+      exited: true,
+      gone: true,
+    },
+    log: {
+      limitBytes: 8 * 1024 * 1024,
+      capturedBytes: null,
+      discardedBytes: 0,
+      truncated: false,
+    },
+  };
 }
 
 function dependencies(buildManifestPath, overrides = {}) {
@@ -377,6 +461,7 @@ test("child environment is an allowlist with no provider, cloud, API, or GitHub 
     },
     {
       homeRoot: "/external/host-home",
+      fixtureRoot: "/external/fixture-root",
       requestPath: "/external/request.json",
       workerResultPath: "/external/worker-result.json",
       portOffset: 7,
@@ -389,6 +474,7 @@ test("child environment is an allowlist with no provider, cloud, API, or GitHub 
     LANG: "C.UTF-8",
     TZ: "UTC",
     HOME: "/external/host-home",
+    KANDEV_HIGHLIGHT_FIXTURE_ROOT: "/external/fixture-root",
     CI: "1",
     E2E_PORT_OFFSET: "7",
     PLAYWRIGHT_BROWSERS_PATH: "/verified/ms-playwright",
@@ -503,7 +589,9 @@ test("closed host preflights then writes an immutable digest-linked post-teardow
     "tools",
     "port",
     "spawn",
+    "source",
     "release:18087",
+    "release:50001",
   ]);
   assert.equal(result.contract, "kandev-highlight-runtime-host-result-v1");
   assert.equal(result.status, "succeeded");
@@ -514,11 +602,17 @@ test("closed host preflights then writes an immutable digest-linked post-teardow
   assert.match(result.capture.captureManifestDigest, /^sha256:[a-f0-9]{64}$/);
   assert.match(result.capture.rawMasterDigest, /^sha256:[a-f0-9]{64}$/);
   assert.match(result.capture.captureEvidence.digest, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(
+    Object.hasOwn(result.capture, "receipt"),
+    false,
+    "host result must not expose the unbounded internal capture receipt",
+  );
   assert.equal(result.teardown.backendPortReleased, true);
   assert.equal(result.teardown.fixtureTempRootRemoved, true);
   assert.equal(result.execution.exitCode, 0);
   assert.equal(result.execution.signal, null);
   assert.deepEqual(Object.keys(result.bundle).sort(), [
+    "failurePath",
     "logPath",
     "path",
     "requestPath",
@@ -556,7 +650,9 @@ test("closed host preflights then writes an immutable digest-linked post-teardow
     runtimeReceipt.capture.captureManifestDigest,
     result.capture.captureManifestDigest,
   );
-  assert.equal(runtimeReceipt.source.selectedSha, SHA);
+  assert.equal(runtimeReceipt.source.pre.selectedSha, SHA);
+  assert.equal(runtimeReceipt.source.post.selectedSha, SHA);
+  assert.equal(runtimeReceipt.source.unchanged, true);
   assert.equal(runtimeReceipt.build.manifestDigest, `sha256:${"d".repeat(64)}`);
   assert.equal(runtimeReceipt.teardown.backendPortReleased, true);
   assert.equal(runtimeReceipt.teardown.fixtureTempRootRemoved, true);
@@ -566,6 +662,372 @@ test("closed host preflights then writes an immutable digest-linked post-teardow
   assert.doesNotMatch(
     JSON.stringify(result),
     /must-not-leak|Quick start|Review API/,
+  );
+});
+
+test("runtime host rejects a self-consistent capture from another scenario run", async (t) => {
+  const value = await fixture(t);
+  const deps = dependencies(value.buildManifestPath, {
+    processRunner: ({ env, logPath }) =>
+      writeSuccessfulWorkerResult({
+        env,
+        logPath,
+        scenarioDigest: `sha256:${"9".repeat(64)}`,
+        captureScenarioId: "other-story",
+        captureRunId: "other-run",
+      }),
+  });
+
+  await assert.rejects(
+    runHighlightRuntimeHost({
+      request: value.request,
+      dependencies: deps.value,
+    }),
+    /worker-result-invalid|scenario|attempt|capture path/i,
+  );
+});
+
+test("runtime host recomputes capture-content summaries instead of trusting the worker", async (t) => {
+  const value = await fixture(t);
+  const deps = dependencies(value.buildManifestPath, {
+    processRunner: ({ env, logPath }) =>
+      writeSuccessfulWorkerResult({
+        env,
+        logPath,
+        captureEvidenceTransform: (evidence) => ({
+          ...evidence,
+          visibleDomText: {
+            ...evidence.visibleDomText,
+            records: 0,
+            bytes: 0,
+            digest: `sha256:${"0".repeat(64)}`,
+          },
+        }),
+      }),
+  });
+
+  await assert.rejects(
+    runHighlightRuntimeHost({
+      request: value.request,
+      dependencies: deps.value,
+    }),
+    /worker-result-invalid|capture content|visibleDomText/i,
+  );
+});
+
+test("runtime host bounds capture-content evidence before reading it", async (t) => {
+  const value = await fixture(t);
+  const deps = dependencies(value.buildManifestPath, {
+    processRunner: ({ env, logPath }) =>
+      writeSuccessfulWorkerResult({
+        env,
+        logPath,
+        captureContentPaddingBytes: 600_000,
+      }),
+  });
+
+  await assert.rejects(
+    runHighlightRuntimeHost({
+      request: value.request,
+      dependencies: deps.value,
+    }),
+    /worker-result-invalid|capture content|too large|byte bound/i,
+  );
+});
+
+test("runtime host rechecks source and scenario identity after the child exits", async (t) => {
+  const value = await fixture(t);
+  const canonicalScenario = await readScenario(value.request.scenarioPath);
+  let sourceChecks = 0;
+  let scenarioReads = 0;
+  const deps = dependencies(value.buildManifestPath, {
+    verifySourceGate: async () => {
+      sourceChecks += 1;
+      return sourceChecks === 1
+        ? sourceProof()
+        : { ...sourceProof(), status: " M scenario.json", clean: false };
+    },
+    readScenario: async () => {
+      scenarioReads += 1;
+      return scenarioReads === 1
+        ? canonicalScenario
+        : { ...canonicalScenario, title: "changed during capture" };
+    },
+  });
+
+  await assert.rejects(
+    runHighlightRuntimeHost({
+      request: value.request,
+      dependencies: deps.value,
+    }),
+    /source|scenario|changed|post-run/i,
+  );
+  assert.equal(sourceChecks, 2);
+  assert.equal(scenarioReads, 2);
+});
+
+test("post-reservation exceptions atomically preserve failed result and retry guidance", async (t) => {
+  const value = await fixture(t);
+  const deps = dependencies(value.buildManifestPath, {
+    clock: () => new Date("invalid"),
+  });
+
+  let thrown;
+  try {
+    await runHighlightRuntimeHost({
+      request: value.request,
+      dependencies: deps.value,
+    });
+  } catch (error) {
+    thrown = error;
+  }
+  assert.match(thrown?.message ?? "", /evidence preserved|failed closed/i);
+  const bundleRoot = path.join(
+    value.artifactRoot,
+    "runtime-host",
+    value.request.runId,
+  );
+  const result = JSON.parse(
+    await fs.readFile(path.join(bundleRoot, "result.json"), "utf8"),
+  );
+  const failure = JSON.parse(
+    await fs.readFile(path.join(bundleRoot, "failure.json"), "utf8"),
+  );
+  assert.equal(result.status, "failed");
+  assert.equal(result.failure.retry.nextRunIdRequired, true);
+  assert.equal(
+    result.bundle.failurePath,
+    path.join(bundleRoot, "failure.json"),
+  );
+  assert.equal(failure.contract, "kandev-highlight-runtime-host-failure-v1");
+  assert.match(failure.failureDigest, /^sha256:[a-f0-9]{64}$/);
+});
+
+test("runtime host rejects a never-created worker-selected fixture root", async (t) => {
+  const value = await fixture(t);
+  const deps = dependencies(value.buildManifestPath, {
+    processRunner: ({ env, logPath }) =>
+      writeSuccessfulWorkerResult({
+        env,
+        logPath,
+        applicationRuntimeTransform: (runtime) => ({
+          ...runtime,
+          isolation: {
+            fixtureTempRoot: path.join(value.root, "never-created"),
+            homeRoot: path.join(value.root, "never-created", ".kandev"),
+            databasePath: path.join(value.root, "never-created", "kandev.db"),
+            worktreeRoot: path.join(value.root, "never-created", "worktrees"),
+            repositoryCloneRoot: path.join(
+              value.root,
+              "never-created",
+              "repos",
+            ),
+          },
+        }),
+      }),
+  });
+
+  await assert.rejects(
+    runHighlightRuntimeHost({
+      request: value.request,
+      dependencies: deps.value,
+    }),
+    /worker-result-invalid|fixture|owned|isolation/i,
+  );
+});
+
+test("owned runtime process enforces its deadline and proves its process group gone", async (t) => {
+  const runtime = await import("./runtime-host.mjs");
+  assert.equal(typeof runtime.runOwnedRuntimeProcess, "function");
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "runtime-owned-process-"),
+  );
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const result = await runtime.runOwnedRuntimeProcess({
+    command: {
+      command: process.execPath,
+      args: ["-e", "setInterval(() => {}, 1000)"],
+      cwd: root,
+    },
+    env: { PATH: process.env.PATH ?? "/usr/bin" },
+    logPath: path.join(root, "process.log"),
+    deadlineMs: 80,
+    termGraceMs: 40,
+    killGraceMs: 500,
+    logLimitBytes: 1024,
+  });
+
+  assert.equal(result.timedOut, true);
+  assert.equal(result.processGroup.termSent, true);
+  assert.equal(result.processGroup.exited, true);
+  assert.equal(result.processGroup.gone, true);
+});
+
+test("owned runtime process consumes output while bounding the preserved log", async (t) => {
+  const runtime = await import("./runtime-host.mjs");
+  assert.equal(typeof runtime.runOwnedRuntimeProcess, "function");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "runtime-bounded-log-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const logPath = path.join(root, "process.log");
+  const result = await runtime.runOwnedRuntimeProcess({
+    command: {
+      command: process.execPath,
+      args: [
+        "-e",
+        "process.stdout.write('x'.repeat(65536)); process.stderr.write('y'.repeat(65536))",
+      ],
+      cwd: root,
+    },
+    env: { PATH: process.env.PATH ?? "/usr/bin" },
+    logPath,
+    deadlineMs: 2_000,
+    termGraceMs: 50,
+    killGraceMs: 500,
+    logLimitBytes: 1024,
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.log.limitBytes, 1024);
+  assert.equal(result.log.capturedBytes, 1024);
+  assert.equal(result.log.truncated, true);
+  assert(result.log.discardedBytes > 0);
+  assert.equal((await fs.stat(logPath)).size, 1024);
+});
+
+test("owned runtime process removes surviving members after its leader exits", async (t) => {
+  const runtime = await import("./runtime-host.mjs");
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "runtime-orphan-group-"),
+  );
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const leafPidPath = path.join(root, "leaf.pid");
+  let groupPid;
+  t.after(() => {
+    if (!groupPid) return;
+    try {
+      process.kill(-groupPid, "SIGKILL");
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
+  });
+  const script = [
+    'const { spawn } = require("node:child_process");',
+    'const fs = require("node:fs");',
+    'const leaf = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
+    `fs.writeFileSync(${JSON.stringify(leafPidPath)}, String(leaf.pid));`,
+    "leaf.unref();",
+  ].join("\n");
+  const result = await runtime.runOwnedRuntimeProcess({
+    command: {
+      command: process.execPath,
+      args: ["-e", script],
+      cwd: root,
+    },
+    env: { PATH: process.env.PATH ?? "/usr/bin" },
+    logPath: path.join(root, "process.log"),
+    deadlineMs: 2_000,
+    termGraceMs: 50,
+    killGraceMs: 500,
+    logLimitBytes: 1024,
+  });
+  groupPid = result.processGroup.pid;
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.processGroup.termSent, true);
+  assert.equal(result.processGroup.gone, true);
+  const leafPid = Number(await fs.readFile(leafPidPath, "utf8"));
+  assert.throws(() => process.kill(leafPid, 0), { code: "ESRCH" });
+});
+
+test("owned runtime process cleans its group when the parent receives a signal", async (t) => {
+  const runtime = await import("./runtime-host.mjs");
+  assert.equal(typeof runtime.runOwnedRuntimeProcess, "function");
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "runtime-parent-signal-"),
+  );
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const signalSource = new EventEmitter();
+  const running = runtime.runOwnedRuntimeProcess({
+    command: {
+      command: process.execPath,
+      args: [
+        "-e",
+        "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)",
+      ],
+      cwd: root,
+    },
+    env: { PATH: process.env.PATH ?? "/usr/bin" },
+    logPath: path.join(root, "process.log"),
+    deadlineMs: 5_000,
+    termGraceMs: 40,
+    killGraceMs: 500,
+    logLimitBytes: 1024,
+    signalSource,
+  });
+  setTimeout(() => signalSource.emit("SIGTERM"), 80);
+  const result = await running;
+
+  assert.equal(result.timedOut, false);
+  assert.equal(result.processGroup.termSent, true);
+  assert.equal(result.processGroup.killSent, true);
+  assert.equal(result.processGroup.gone, true);
+  assert.equal(signalSource.listenerCount("SIGTERM"), 0);
+});
+
+test("runtime host rejects capture receipts that only assert teardown", async (t) => {
+  const value = await fixture(t);
+  const deps = dependencies(value.buildManifestPath, {
+    processRunner: ({ env, logPath }) =>
+      writeSuccessfulWorkerResult({
+        env,
+        logPath,
+        receiptTransform: (receipt) => ({
+          ...receipt,
+          runtime: {
+            ...receipt.runtime,
+            teardown: {
+              ...receipt.runtime.teardown,
+              recorder: {
+                ...receipt.runtime.teardown.recorder,
+                processGone: false,
+              },
+            },
+          },
+        }),
+      }),
+  });
+
+  await assert.rejects(
+    runHighlightRuntimeHost({
+      request: value.request,
+      dependencies: deps.value,
+    }),
+    /worker-result-invalid|teardown|recorder/i,
+  );
+});
+
+test("runtime host observes capture CDP and X display release independently", async (t) => {
+  const value = await fixture(t);
+  const checkedPorts = [];
+  const deps = dependencies(value.buildManifestPath, {
+    waitForPortRelease: async (port) => {
+      checkedPorts.push(port);
+      return port !== 50_001;
+    },
+    isDisplayReleased: async (displayNumber) => displayNumber !== 240,
+    isProcessGone: async () => true,
+  });
+
+  await assert.rejects(
+    runHighlightRuntimeHost({
+      request: value.request,
+      dependencies: deps.value,
+    }),
+    /teardown|CDP|display|failed closed/i,
+  );
+  assert.deepEqual(
+    checkedPorts.sort((a, b) => a - b),
+    [18_087, 50_001],
   );
 });
 
@@ -612,6 +1074,16 @@ test("teardown failure preserves request, worker result, and log but fails close
   assert.equal(failed.status, "failed");
   assert.equal(failed.teardown.backendPortReleased, false);
   assert.equal(failed.failure.code, "runtime-teardown-incomplete");
+  const failureEvidence = JSON.parse(
+    await fs.readFile(failed.bundle.failurePath, "utf8"),
+  );
+  assert.equal(
+    failureEvidence.contract,
+    "kandev-highlight-runtime-host-failure-v1",
+  );
+  assert.deepEqual(failureEvidence.failure, failed.failure);
+  assert.equal(failureEvidence.phase, failed.failure.phase);
+  assert.match(failureEvidence.failureDigest, /^sha256:[a-f0-9]{64}$/);
   await fs.access(failed.bundle.requestPath);
   await fs.access(failed.bundle.workerResultPath);
   await fs.access(failed.bundle.logPath);
@@ -625,11 +1097,13 @@ test("fixed Playwright worker reuses backendFixture with product-like isolated s
     "e2e",
     "highlights",
   );
-  const [fixtureSource, specSource, configSource] = await Promise.all([
-    fs.readFile(path.join(webRoot, "runtime-fixture.ts"), "utf8"),
-    fs.readFile(path.join(webRoot, "pipeline-capture.spec.ts"), "utf8"),
-    fs.readFile(path.join(webRoot, "pipeline-playwright.config.ts"), "utf8"),
-  ]);
+  const [fixtureSource, specSource, configSource, backendFixtureSource] =
+    await Promise.all([
+      fs.readFile(path.join(webRoot, "runtime-fixture.ts"), "utf8"),
+      fs.readFile(path.join(webRoot, "pipeline-capture.spec.ts"), "utf8"),
+      fs.readFile(path.join(webRoot, "pipeline-playwright.config.ts"), "utf8"),
+      fs.readFile(path.join(webRoot, "../fixtures/backend.ts"), "utf8"),
+    ]);
 
   assert.match(fixtureSource, /backendFixture\.extend/);
   assert.match(fixtureSource, /Product Workspace/);
@@ -642,6 +1116,12 @@ test("fixed Playwright worker reuses backendFixture with product-like isolated s
   assert.match(configSource, /testMatch:\s*"pipeline-capture\.spec\.ts"/);
   assert.match(configSource, /workers:\s*1/);
   assert.doesNotMatch(configSource, /testMatch:\s*"capture\.spec\.ts"/);
+  assert.match(backendFixtureSource, /KANDEV_HIGHLIGHT_FIXTURE_ROOT/);
+  assert.match(backendFixtureSource, /waitForProcessGroupGone/);
+  assert.doesNotMatch(
+    backendFixtureSource,
+    /Cleanup temp directory[^\n]*ignore errors/i,
+  );
 });
 
 test("runtime host declarations expose versioned closed requests and digest-only compact evidence", async () => {
@@ -657,6 +1137,16 @@ test("runtime host declarations expose versioned closed requests and digest-only
     /captureEvidence: HighlightCaptureEvidenceIdentity/,
   );
   assert.match(declarations, /visibleDomText: HighlightCaptureEvidenceSummary/);
+  assert.match(declarations, /scenario: HighlightScenarioIdentity/);
+  assert.match(declarations, /pre: HighlightRuntimeCompactSourceProof/);
+  assert.match(
+    declarations,
+    /post: HighlightRuntimeCompactSourceProof \| null/,
+  );
+  assert.match(declarations, /unchanged: boolean/);
+  assert.match(declarations, /playwrightProcessGroupGone: boolean/);
+  assert.match(declarations, /failurePath: string/);
+  assert.match(declarations, /runOwnedRuntimeProcess/);
   assert.doesNotMatch(
     declarations,
     /modulePath|shellCommand|javascriptSource|visibleDomText: string\[\]/i,

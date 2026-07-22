@@ -152,44 +152,145 @@ export interface HighlightFileIdentity {
   digest: HighlightSha256;
 }
 
+export interface HighlightScenarioIdentity {
+  id: string;
+  path: string;
+  bytes: number;
+  digest: HighlightSha256;
+}
+
+export interface HighlightRuntimeCompactSourceProof {
+  contract: "kandev-highlight-source-v1";
+  mode: HighlightSourceMode;
+  selectedSha: string;
+  headSha: string;
+  currentMainSha: string;
+}
+
+export interface HighlightRuntimeSourceEvidence {
+  pre: HighlightRuntimeCompactSourceProof;
+  post: HighlightRuntimeCompactSourceProof | null;
+  unchanged: boolean;
+}
+
+export interface HighlightRuntimeProcessGroupEvidence {
+  pid: number | null;
+  termSent: boolean;
+  killSent: boolean;
+  exited: boolean;
+  gone: boolean;
+}
+
+export interface HighlightRuntimeLogEvidence {
+  limitBytes: number;
+  capturedBytes: number | null;
+  discardedBytes: number;
+  truncated: boolean;
+}
+
+export interface HighlightRuntimeExecution {
+  exitCode: number | null;
+  signal: string | null;
+  timedOut: boolean;
+  deadlineMs: number;
+  processGroup: HighlightRuntimeProcessGroupEvidence;
+  log: HighlightRuntimeLogEvidence;
+}
+
+export interface HighlightCaptureTeardownEvidence {
+  declared: true;
+  cdpPortReleased: boolean;
+  displayReleased: boolean;
+  processesGone: boolean;
+  recorderGone: boolean;
+  profileRemoved: boolean;
+  locksRemoved: boolean;
+}
+
+export interface HighlightRuntimeTeardownEvidence {
+  playwrightExited: boolean;
+  playwrightProcessGroupGone: boolean;
+  backendPortReleased: boolean;
+  frontendPortReleased: boolean;
+  fixtureTempRootOwned: boolean;
+  fixtureTempRootRemoved: boolean;
+  capture: HighlightCaptureTeardownEvidence | null;
+}
+
+export interface HighlightRuntimeFailure {
+  code: string;
+  phase: string;
+  retry: {
+    nextRunIdRequired: true;
+    reason: "immutable-run-id-reserved";
+  };
+}
+
+export interface HighlightRuntimeCaptureIdentity {
+  attemptRoot: string;
+  scenarioDigest: HighlightSha256;
+  sourceDigest: HighlightSha256;
+  phaseManifestPath: string;
+  phaseManifestDigest: HighlightSha256;
+  captureManifestPath: string;
+  captureManifestDigest: HighlightSha256;
+  rawMasterPath: string;
+  rawMasterDigest: HighlightSha256;
+  rawMaster: HighlightFileIdentity;
+  captureEvidence: HighlightCaptureEvidenceIdentity;
+}
+
 export interface HighlightRuntimeHostResult {
   contract: "kandev-highlight-runtime-host-result-v1";
   version: 1;
   status: "succeeded" | "failed";
   runtimeId: HighlightRuntimeId;
   runId: string;
+  scenario: HighlightScenarioIdentity;
+  source: HighlightRuntimeSourceEvidence;
   bundle: {
     path: string;
     requestPath: string;
     workerResultPath: string;
     logPath: string;
+    failurePath: string;
     resultPath: string;
   };
-  request: HighlightFileIdentity;
+  request: HighlightFileIdentity | null;
   workerResult: HighlightFileIdentity | null;
-  log: HighlightFileIdentity;
+  log: HighlightFileIdentity | null;
   applicationRuntime: {
     receiptPath: string;
     digest: HighlightSha256;
   } | null;
-  capture: {
-    phaseManifestPath: string;
-    phaseManifestDigest: HighlightSha256;
-    captureManifestPath: string;
-    captureManifestDigest: HighlightSha256;
-    rawMasterPath: string;
-    rawMasterDigest: HighlightSha256;
-    captureEvidence: HighlightCaptureEvidenceIdentity;
-  } | null;
-  execution: { exitCode: number | null; signal: string | null };
-  teardown: {
-    playwrightExited: boolean;
-    backendPortReleased: boolean;
-    fixtureTempRootRemoved: boolean;
-  };
-  failure: { code: string } | null;
+  capture: HighlightRuntimeCaptureIdentity | null;
+  execution: HighlightRuntimeExecution | null;
+  teardown: HighlightRuntimeTeardownEvidence | null;
+  failure: HighlightRuntimeFailure | null;
   completedAt: string;
   resultDigest: HighlightSha256;
+}
+
+export interface HighlightRuntimeFailureEvidence {
+  contract: "kandev-highlight-runtime-host-failure-v1";
+  version: 1;
+  runtimeId: HighlightRuntimeId;
+  runId: string;
+  phase: string;
+  failure: HighlightRuntimeFailure;
+  completedAt: string;
+  failureDigest: HighlightSha256;
+}
+
+export interface HighlightRuntimeSignalSource {
+  on(signal: "SIGINT" | "SIGTERM", listener: () => void): unknown;
+  off(signal: "SIGINT" | "SIGTERM", listener: () => void): unknown;
+}
+
+export interface HighlightRuntimeOwnedCommand {
+  command: string;
+  args: string[];
+  cwd: string;
 }
 
 export function validateRuntimeHostRequest(
@@ -211,6 +312,7 @@ export function sanitizeRuntimeHostEnvironment(
   inheritedEnv: Record<string, string | undefined>,
   options: {
     homeRoot: string;
+    fixtureRoot: string;
     requestPath: string;
     workerResultPath: string;
     portOffset: number;
@@ -221,6 +323,16 @@ export function buildRuntimeHostCommand(options?: {
   webRoot?: string;
   nodeExecutable?: string;
 }): { command: string; args: string[]; cwd: string };
+export function runOwnedRuntimeProcess(options: {
+  command: HighlightRuntimeOwnedCommand;
+  env: Record<string, string>;
+  logPath: string;
+  deadlineMs?: number;
+  termGraceMs?: number;
+  killGraceMs?: number;
+  logLimitBytes?: number;
+  signalSource?: HighlightRuntimeSignalSource;
+}): Promise<HighlightRuntimeExecution>;
 export function runHighlightRuntimeHost(options: {
   request: HighlightRuntimeHostRequest;
   inheritedEnv?: Record<string, string | undefined>;
