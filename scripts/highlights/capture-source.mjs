@@ -23,6 +23,7 @@ import {
 import { executePreparedScenario, prepareScenario } from "./executor.mjs";
 import {
   allocateRuntimeCoordinates,
+  chromiumNetworkCommandEvidence,
   planCaptureRuntime,
   startCaptureRuntime,
 } from "./capture-runtime.mjs";
@@ -933,10 +934,16 @@ function runtimeEvidence(plan, teardown) {
       displayNumber: plan.displayNumber,
       cdpPort: plan.cdpPort,
       chromiumSandbox: structuredClone(plan.chromiumSandbox),
+      chromiumNetworkPolicy: structuredClone(plan.chromiumNetworkPolicy),
+      chromiumCommand: chromiumNetworkCommandEvidence(
+        plan.chromium,
+        plan.chromiumNetworkPolicy,
+      ),
       artifactRoot: plan.artifactRoot,
       profileDir: plan.profileDir,
       lockPath: plan.lockPath,
       coordinateLockRoot: plan.coordinateLockRoot,
+      coordinateLockIdentity: structuredClone(plan.coordinateLockIdentity),
       coordinateLockPath: plan.coordinateLockPath,
     },
     teardown: teardown ?? null,
@@ -1557,6 +1564,7 @@ export async function captureScenario({
   displayNumber,
   cdpPort,
   coordinateLockRoot,
+  coordinateLockIdentity,
   browserExecutable,
   chromiumSandbox = defaultChromiumSandboxPolicy(),
   ffmpegExecutable = "ffmpeg",
@@ -1623,7 +1631,10 @@ export async function captureScenario({
   const coordinates =
     displayNumber && cdpPort
       ? { displayNumber, cdpPort }
-      : await allocateRuntimeCoordinates({ coordinateLockRoot });
+      : await allocateRuntimeCoordinates({
+          coordinateLockRoot,
+          coordinateLockIdentity,
+        });
   const resolution = await deps.resolveCaptureTools({
     browserExecutable,
     ffmpegExecutable,
@@ -1645,6 +1656,7 @@ export async function captureScenario({
     repositoryRoots,
     runId,
     coordinateLockRoot,
+    coordinateLockIdentity,
     ...coordinates,
     browserExecutable: tools.chromium.executable,
     chromiumSandbox: sandboxPolicy,

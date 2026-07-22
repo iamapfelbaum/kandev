@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import {
   createDisabledChromiumSandboxAuthorization,
@@ -19,6 +21,8 @@ const EXPECTED_PROBE_STATUSES = Object.freeze([
   "unknown",
 ]);
 const OPTIONAL_FILE_ERRORS = Object.freeze(["ENOENT", "EACCES", "EPERM"]);
+const SHA_PATTERN = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
+const execFileAsync = promisify(execFile);
 
 function isOptionalFileError(error) {
   return OPTIONAL_FILE_ERRORS.includes(error.code);
@@ -191,6 +195,158 @@ function disabledPolicy(proof, authorizationInput) {
   });
 }
 
+async function defaultRunGit(args, { repoRoot }) {
+  const result = await execFileAsync("git", ["-C", repoRoot, ...args], {
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024,
+    timeout: 30_000,
+    env: {
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
+      LANG: "C",
+      LC_ALL: "C",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_TERMINAL_PROMPT: "0",
+    },
+  });
+  return result.stdout;
+}
+
+function exactScenarioRelativePath(repoRoot, scenarioPath) {
+  const repository = requireAbsolute(repoRoot, "Docker source repository");
+  const scenario = requireAbsolute(
+    scenarioPath,
+    "Docker derived scenario path",
+  );
+  const relative = path
+    .relative(repository, scenario)
+    .split(path.sep)
+    .join("/");
+  if (
+    relative === "" ||
+    relative.startsWith("../") ||
+    path.posix.isAbsolute(relative) ||
+    !relative.endsWith(".scenario.json")
+  ) {
+    throw new Error(
+      "Docker derived source must change one scenario file inside its repository",
+    );
+  }
+  return relative;
+}
+
+function dockerSourceBindingBase(sourceProof, outerBoundary) {
+  const invalid = [
+    !SHA_PATTERN.test(sourceProof?.selectedSha ?? ""),
+    !SHA_PATTERN.test(sourceProof?.currentMainSha ?? ""),
+    sourceProof.currentMainSha !== outerBoundary.originMainSha,
+  ];
+  if (invalid.some(Boolean)) {
+    throw new Error(
+      "Docker boundary origin/main does not match the exact capture source proof",
+    );
+  }
+  return {
+    contract: "kandev-highlight-docker-source-binding-v1",
+    version: 1,
+    selectedSha: sourceProof.selectedSha,
+    boundarySourceSha: outerBoundary.boundarySourceSha,
+    originMainSha: outerBoundary.originMainSha,
+  };
+}
+
+function derivedSourceBinding({
+  base,
+  sourceProof,
+  outerBoundary,
+  relativeScenario,
+  parentLine,
+  changed,
+  objectType,
+}) {
+  const parents = String(parentLine).trim().split(/\s+/);
+  const changes = String(changed).trim().split("\n").filter(Boolean);
+  const invalid = [
+    parents.length !== 2,
+    parents[0] !== sourceProof.selectedSha,
+    parents[1] !== outerBoundary.boundarySourceSha,
+    changes.length !== 1,
+    changes[0] !== `A\t${relativeScenario}`,
+    String(objectType).trim() !== "blob",
+  ];
+  if (invalid.some(Boolean)) {
+    throw new Error(
+      "Docker derived source must be one exact child adding only the declared scenario",
+    );
+  }
+  return {
+    ...base,
+    mode: "scenario-child",
+    parentSha: outerBoundary.boundarySourceSha,
+    scenarioPath: relativeScenario,
+  };
+}
+
+async function resolveDockerSourceBinding({
+  sourceProof,
+  outerBoundary,
+  scenarioPath,
+  runGit,
+}) {
+  const base = dockerSourceBindingBase(sourceProof, outerBoundary);
+  if (sourceProof.selectedSha === outerBoundary.boundarySourceSha) {
+    return {
+      ...base,
+      mode: "exact-boundary",
+      parentSha: null,
+      scenarioPath: null,
+    };
+  }
+  const relativeScenario = exactScenarioRelativePath(
+    sourceProof.repoRoot,
+    scenarioPath,
+  );
+  let parentLine;
+  let changed;
+  let objectType;
+  try {
+    [parentLine, changed, objectType] = await Promise.all([
+      runGit(["rev-list", "--parents", "-n", "1", sourceProof.selectedSha], {
+        repoRoot: sourceProof.repoRoot,
+      }),
+      runGit(
+        [
+          "diff-tree",
+          "--no-commit-id",
+          "--name-status",
+          "-r",
+          "--no-renames",
+          sourceProof.selectedSha,
+        ],
+        { repoRoot: sourceProof.repoRoot },
+      ),
+      runGit(
+        ["cat-file", "-t", `${sourceProof.selectedSha}:${relativeScenario}`],
+        { repoRoot: sourceProof.repoRoot },
+      ),
+    ]);
+  } catch (error) {
+    throw new Error(
+      `cannot attest Docker scenario-only source child: ${error.message}`,
+      { cause: error },
+    );
+  }
+  return derivedSourceBinding({
+    base,
+    sourceProof,
+    outerBoundary,
+    relativeScenario,
+    parentLine,
+    changed,
+    objectType,
+  });
+}
+
 function compactOuterBoundary(value, authorizationPath) {
   if (
     value?.contract !== "kandev-highlight-docker-boundary-authorization-v1" ||
@@ -292,8 +448,10 @@ export async function resolveChromiumSandboxPolicy({
   sourceProof,
   trustedSourceSha,
   allowedOrigin,
+  scenarioPath,
   probeNativeSandbox = probeNativeChromiumSandbox,
   readFile = fs.readFile,
+  runGit = defaultRunGit,
 } = {}) {
   const requested = inheritedEnv[CHROMIUM_SANDBOX_ENV] ?? "native";
   if (!["native", "disabled", "auto"].includes(requested)) {
@@ -306,11 +464,20 @@ export async function resolveChromiumSandboxPolicy({
     sourceProof?.source === "pr_head" && proof.status === "unavailable"
       ? await loadOuterBoundaryAuthorization(inheritedEnv, readFile)
       : null;
+  const sourceBinding = outerBoundary
+    ? await resolveDockerSourceBinding({
+        sourceProof,
+        outerBoundary,
+        scenarioPath,
+        runGit,
+      })
+    : null;
   const authorizationInput = {
     sourceProof,
     trustedSourceSha,
     allowedOrigin,
     outerBoundary,
+    sourceBinding,
   };
   if (requested === "auto") {
     return resolveAutomaticPolicy(proof, authorizationInput);

@@ -5,6 +5,8 @@ const OUTER_AUTHORIZATION_CONTRACT =
   "kandev-highlight-disabled-sandbox-authorization-v2";
 const DOCKER_BOUNDARY_CONTRACT =
   "kandev-highlight-docker-boundary-authorization-v1";
+const DOCKER_SOURCE_BINDING_CONTRACT =
+  "kandev-highlight-docker-source-binding-v1";
 const ORIGIN_GUARD_CONTRACT = "kandev-highlight-origin-isolation-v1";
 const MODES = Object.freeze(["native", "disabled"]);
 const STATUSES = Object.freeze(["available", "unavailable", "unknown"]);
@@ -109,6 +111,79 @@ function validateOuterBoundary(value) {
   return structuredClone(proof);
 }
 
+function validateScenarioRelativePath(value) {
+  if (
+    typeof value !== "string" ||
+    value === "" ||
+    value.startsWith("/") ||
+    value.includes("\\") ||
+    /[\0\r\n]/.test(value) ||
+    value
+      .split("/")
+      .some(
+        (segment) => segment === "" || segment === "." || segment === "..",
+      ) ||
+    !value.endsWith(".scenario.json")
+  ) {
+    throw new Error(
+      "chromiumSandbox sourceBinding scenarioPath must be one safe repository-relative scenario file",
+    );
+  }
+  return value;
+}
+
+function validateSourceBinding(value, authorization, outerBoundary) {
+  const binding = exactKeys(
+    value,
+    [
+      "contract",
+      "version",
+      "mode",
+      "selectedSha",
+      "boundarySourceSha",
+      "originMainSha",
+      "parentSha",
+      "scenarioPath",
+    ],
+    "chromiumSandbox sourceBinding",
+  );
+  const headerInvalid = [
+    binding.contract !== DOCKER_SOURCE_BINDING_CONTRACT,
+    binding.version !== 1,
+    !["exact-boundary", "scenario-child"].includes(binding.mode),
+    !SHA_PATTERN.test(binding.selectedSha ?? ""),
+    !SHA_PATTERN.test(binding.boundarySourceSha ?? ""),
+    !SHA_PATTERN.test(binding.originMainSha ?? ""),
+    binding.selectedSha !== authorization.sourceSha,
+    binding.boundarySourceSha !== outerBoundary.boundarySourceSha,
+    binding.originMainSha !== outerBoundary.originMainSha,
+  ];
+  if (headerInvalid.some(Boolean)) {
+    throw new Error(
+      "chromiumSandbox sourceBinding does not match authorization and Docker boundary source",
+    );
+  }
+  const exact = binding.mode === "exact-boundary";
+  const modeInvalid = exact
+    ? [
+        binding.selectedSha !== binding.boundarySourceSha,
+        binding.parentSha !== null,
+        binding.scenarioPath !== null,
+      ]
+    : [
+        binding.selectedSha === binding.boundarySourceSha,
+        binding.parentSha !== binding.boundarySourceSha,
+        validateScenarioRelativePath(binding.scenarioPath) !==
+          binding.scenarioPath,
+      ];
+  if (modeInvalid.some(Boolean)) {
+    throw new Error(
+      "chromiumSandbox sourceBinding must be the exact boundary or its attested scenario-only child",
+    );
+  }
+  return structuredClone(binding);
+}
+
 function validateAuthorization(value) {
   const contract = value?.contract;
   const outer = contract === OUTER_AUTHORIZATION_CONTRACT;
@@ -120,7 +195,7 @@ function validateAuthorization(value) {
       "sourceSha",
       "allowedOrigin",
       "guardContract",
-      ...(outer ? ["outerBoundary"] : []),
+      ...(outer ? ["sourceBinding", "outerBoundary"] : []),
     ],
     "chromiumSandbox authorization",
   );
@@ -151,11 +226,19 @@ function validateAuthorization(value) {
       "chromiumSandbox authorization guardContract is unsupported",
     );
   }
+  const outerBoundary = outer
+    ? validateOuterBoundary(authorization.outerBoundary)
+    : null;
+  const sourceBinding = outer
+    ? validateSourceBinding(
+        authorization.sourceBinding,
+        authorization,
+        outerBoundary,
+      )
+    : null;
   return {
     ...structuredClone(authorization),
-    ...(outer
-      ? { outerBoundary: validateOuterBoundary(authorization.outerBoundary) }
-      : {}),
+    ...(outer ? { sourceBinding, outerBoundary } : {}),
   };
 }
 
@@ -177,6 +260,7 @@ export function createDisabledChromiumSandboxAuthorization({
   trustedSourceSha,
   allowedOrigin,
   outerBoundary,
+  sourceBinding,
 }) {
   if (sourceProof?.source === "pr_head") {
     if (!outerBoundary) {
@@ -184,14 +268,28 @@ export function createDisabledChromiumSandboxAuthorization({
         "disabled Chromium sandbox forbids pr_head without independently attested whole-worker OS isolation",
       );
     }
-    return validateAuthorization({
+    if (!sourceBinding) {
+      throw new Error(
+        "disabled Chromium pr_head requires an attested Docker source binding",
+      );
+    }
+    const authorization = validateAuthorization({
       contract: OUTER_AUTHORIZATION_CONTRACT,
       sourceMode: sourceProof.source,
       sourceSha: sourceProof.selectedSha,
       allowedOrigin,
       guardContract: ORIGIN_GUARD_CONTRACT,
+      sourceBinding,
       outerBoundary,
     });
+    if (
+      authorization.sourceBinding.originMainSha !== sourceProof.currentMainSha
+    ) {
+      throw new Error(
+        "disabled Chromium pr_head Docker boundary origin/main does not match source proof",
+      );
+    }
+    return authorization;
   }
   if (
     sourceProof?.source !== "current_main" ||
@@ -254,11 +352,18 @@ export function validateChromiumSandboxCaptureBoundary(
 ) {
   const policy = validateChromiumSandboxPolicy(value);
   if (policy.mode === "disabled") {
-    if (
-      policy.authorization.sourceMode !== sourceProof?.source ||
-      policy.authorization.sourceSha !== sourceProof?.selectedSha ||
-      policy.authorization.allowedOrigin !== allowedOrigin
-    ) {
+    const dockerBinding =
+      policy.authorization.contract === OUTER_AUTHORIZATION_CONTRACT
+        ? policy.authorization.sourceBinding
+        : null;
+    const mismatch = [
+      policy.authorization.sourceMode !== sourceProof?.source,
+      policy.authorization.sourceSha !== sourceProof?.selectedSha,
+      policy.authorization.allowedOrigin !== allowedOrigin,
+      dockerBinding !== null &&
+        dockerBinding.originMainSha !== sourceProof?.currentMainSha,
+    ];
+    if (mismatch.some(Boolean)) {
       throw new Error(
         "disabled chromiumSandbox authorization does not match the exact capture source and origin",
       );

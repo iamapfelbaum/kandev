@@ -69,9 +69,28 @@ intent or runtime source; never patch delivery bytes or provenance after QA.
 - source mismatch: stop. For `pr_head`, checked-out HEAD and selected PR head
   must match; for `current_main`, HEAD and freshly fetched `origin/main` must
   match. Never relabel the captured SHA.
-- lock conflict: first verify whether the recorded process still owns the lock.
-  Let owned teardown finish; remove only a proven stale, attempt-local lock.
-  Never delete another run's lock or kill an unowned process.
+- lock conflict: display/CDP coordinate locks are host-global across run roots.
+  First verify the recorded PID and process-start token. Let owned teardown
+  finish; the runtime reclaims only a proven-dead lock. Never delete another
+  run's lock or kill an unowned process.
+- Chromium `SingletonSocket` path failure: the runtime must use its serialized
+  short worker temp lease; long retained artifact roots are supported. Inspect
+  `result.json.runtimeTemp`. If `KANDEV_HIGHLIGHT_RUNTIME_TEMP_ROOT` is set, it
+  must name a short, absolute, private, uid-owned directory outside repository
+  and artifact roots. Never work around this with a symlink or by moving raw
+  evidence into the repository.
+- runtime temp verification/removal failure: preserve the worker temp root for
+  forensics. A changed inode, lease digest, owner start token, or namespace mode
+  is treated as tampering. Read `result.json.runtimeTemp.verification`: its
+  typed `phase`/`code`, digest-only reason, and exact `preservedRoot` distinguish
+  lease/namespace/cleanup tamper, a live process group, retained entries, and an
+  ordinary release failure. Start a new run after resolving ownership instead
+  of deleting the retained root by hand.
+- Chromium network-policy mismatch or UDP escape: capture evidence must retain
+  the fixed WebRTC non-proxied-UDP, QUIC, Direct Sockets, and WebTransport
+  controls, which the host rechecks. Do not drop a browser switch to make a
+  local probe pass; fix the trusted runtime or browser version and rerun the
+  real loopback STUN test.
 - host failure: inspect `runtime-host/<run-id>/failure.json`, `result.json`, the
   bounded host log, worker result, and teardown receipt. Fix the first failed
   invariant before a capture retry; a capture retry always uses a new run ID.

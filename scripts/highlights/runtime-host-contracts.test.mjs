@@ -21,6 +21,8 @@ test("runtime host contract accepts only its exact versioned request", () => {
     source: "current_main",
     runId: "run-contract",
     pullRequest: null,
+    runtimeTempNamespaceRoot: "/tmp/kandev-highlight-runtime-1000",
+    coordinateLockRoot: "/tmp",
   };
 
   assert.deepEqual(validateRuntimeHostRequest(request), request);

@@ -21,9 +21,10 @@ The checked template is
 `scripts/highlights/scenario.schema.json` and use
 `scripts/highlights/scenario.d.ts` when generating typed tooling. Executable
 runtime fixture is `apps/web/e2e/highlights/quick-start.scenario.json`.
-The forthcoming canonical integration/eval command is
-`pnpm e2e:highlight-pipeline`. App-local `e2e:highlight-capture` is a lower-level
-runtime contract test, not the authoring or production pipeline entry point.
+From the repository root, the canonical Docker-backed integration/eval command
+is `pnpm --dir apps/web e2e:highlight-pipeline`. App-local
+`e2e:highlight-capture` is a lower-level runtime contract test, not the
+authoring or production pipeline entry point.
 
 ## Runtime And Source
 

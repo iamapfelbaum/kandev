@@ -26,12 +26,15 @@ import {
   verifySourceGate,
 } from "./source-gate.mjs";
 import { runDeclarativeHighlightCommand } from "./pipeline.mjs";
+import { validateRuntimeTempEvidence as validateBoundRuntimeTempEvidence } from "./runtime-temp.mjs";
 
 const execFileAsync = promisify(execFile);
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SAFE_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const MAX_RUNTIME_HOST_LOG_BYTES = 8 * 1024 * 1024;
+const RUNTIME_TEMP_ROOT_ENV = "KANDEV_HIGHLIGHT_RUNTIME_TEMP_ROOT";
+const HOST_GLOBAL_COORDINATE_LOCK_ROOT = "/tmp";
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -97,6 +100,23 @@ function requireSafeRunId(value) {
     throw new Error("runtime runId must be a safe identifier");
   }
   return value;
+}
+
+function selectedRuntimeTempNamespaceRoot(env) {
+  const configured = env?.[RUNTIME_TEMP_ROOT_ENV];
+  if (configured !== undefined) {
+    if (typeof configured !== "string" || !path.isAbsolute(configured)) {
+      throw new Error(`${RUNTIME_TEMP_ROOT_ENV} must be an absolute path`);
+    }
+    return path.resolve(configured);
+  }
+  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  if (process.platform !== "linux" || !Number.isInteger(uid) || uid < 0) {
+    throw new Error(
+      `${RUNTIME_TEMP_ROOT_ENV} is required when a Linux uid-backed /tmp namespace cannot be selected`,
+    );
+  }
+  return path.join("/tmp", `kandev-highlight-runtime-${uid}`);
 }
 
 function allocateRunId({ requested, scenarioDigest, now, nonce }) {
@@ -329,6 +349,16 @@ function validateHostLogIdentity(identity, execution, expectedPath) {
   }
 }
 
+function validateRuntimeTempEvidence(value, request) {
+  validateBoundRuntimeTempEvidence(value, {
+    namespaceRoot: request.runtimeTempNamespaceRoot,
+    coordinateLockRoot: request.coordinateLockRoot,
+    runId: request.runId,
+    artifactRoot: request.artifactRoot,
+    requireReleased: true,
+  });
+}
+
 function validateHostResult(
   result,
   request,
@@ -352,6 +382,7 @@ function validateHostResult(
     "capture",
     "execution",
     "teardown",
+    "runtimeTemp",
     "failure",
     "completedAt",
     "resultDigest",
@@ -431,6 +462,8 @@ function validateHostResult(
       "frontendPortReleased",
       "fixtureTempRootOwned",
       "fixtureTempRootRemoved",
+      "runtimeTempLeaseVerified",
+      "runtimeTempRootRemoved",
       "capture",
     ],
     "runtime host teardown",
@@ -478,6 +511,7 @@ function validateHostResult(
     result.execution.log,
     expectedBundle.logPath,
   );
+  validateRuntimeTempEvidence(result.runtimeTemp, request);
   if (
     result.contract !== "kandev-highlight-runtime-host-result-v1" ||
     result.version !== 1 ||
@@ -573,6 +607,7 @@ function dryRunPlan({
   buildRoot,
   runId,
   hostCommand,
+  runtimeTempNamespaceRoot,
 }) {
   const order =
     command === "run"
@@ -615,6 +650,8 @@ function dryRunPlan({
     host: {
       requestContract: "kandev-highlight-runtime-host-request-v1",
       command: hostCommand,
+      runtimeTempNamespaceRoot,
+      coordinateLockRoot: HOST_GLOBAL_COORDINATE_LOCK_ROOT,
     },
     prerequisites: {
       tools: ["ffmpeg", "Xvfb", "Playwright Chromium", "ffprobe"],
@@ -701,6 +738,7 @@ export async function runTrustedHighlightCommand({
   });
   await rejectExistingSymlinks(externalRoot);
   const buildRoot = path.join(externalRoot, "runtime-builds", selectedRunId);
+  const runtimeTempNamespaceRoot = selectedRuntimeTempNamespaceRoot(env);
   const hostCommand = deps.buildRuntimeHostCommand({
     webRoot: path.join(absoluteRepository, "apps", "web"),
   });
@@ -720,6 +758,7 @@ export async function runTrustedHighlightCommand({
       buildRoot,
       runId: selectedRunId,
       hostCommand,
+      runtimeTempNamespaceRoot,
     });
   }
 
@@ -766,6 +805,8 @@ export async function runTrustedHighlightCommand({
     source,
     runId: selectedRunId,
     pullRequest,
+    runtimeTempNamespaceRoot,
+    coordinateLockRoot: HOST_GLOBAL_COORDINATE_LOCK_ROOT,
   });
   const hostResult = validateHostResult(
     await deps.runRuntimeHost({ request, inheritedEnv: env }),

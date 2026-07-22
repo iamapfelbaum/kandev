@@ -113,10 +113,12 @@ A unique automatic run ID is printed; use `--run-id` to select recovery input.
   `scripts/highlights/scenario.d.ts`; checked example:
   `scripts/highlights/examples/quick-start.scenario.json`; executable E2E fixture:
   `apps/web/e2e/highlights/quick-start.scenario.json`.
-- Runtime catalog: `scripts/highlights/runtime-catalog.mjs`. The canonical
-  end-to-end integration/eval entry point is forthcoming as
-  `pnpm e2e:highlight-pipeline`; app-local `e2e:highlight-capture` remains only
-  a lower-level runtime contract test, not the production pipeline command.
+- Runtime catalog: `scripts/highlights/runtime-catalog.mjs`. From the repository
+  root, run the canonical Docker-backed end-to-end integration/eval with
+  `pnpm --dir apps/web e2e:highlight-pipeline`. It snapshots clean source and
+  landing inputs, executes the fresh-agent story inside the attested boundary,
+  and retains bounded failure evidence. `e2e:highlight-capture` remains a
+  lower-level runtime contract test, not the production pipeline command.
 - Stable selectors only: `testId`, or role plus exact accessible name. No CSS,
   XPath, coordinates, regex names, or arbitrary code.
 - Default without camera directives is centered 1x identity: no zoom. Camera

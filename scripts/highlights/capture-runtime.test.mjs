@@ -104,6 +104,32 @@ test("plans an external collision-free desktop runtime at native source dimensio
   assert.ok(plan.chromium.args.includes("--kiosk"));
   assert.ok(plan.chromium.args.includes("--disable-infobars"));
   assert.ok(plan.chromium.args.includes("--test-type"));
+  assert.ok(
+    plan.chromium.args.includes(
+      "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+    ),
+  );
+  assert.ok(plan.chromium.args.includes("--disable-quic"));
+  assert.ok(
+    plan.chromium.args.some(
+      (argument) =>
+        argument.startsWith("--disable-features=") &&
+        argument.includes("DirectSockets") &&
+        argument.includes("WebTransport"),
+    ),
+  );
+  assert.deepEqual(plan.chromiumNetworkPolicy, {
+    contract: "kandev-highlight-chromium-network-policy-v1",
+    version: 1,
+    webrtcIpHandlingPolicy: "disable_non_proxied_udp",
+    quicDisabled: true,
+    disabledFeatures: ["DirectSockets", "WebTransport"],
+    switches: [
+      "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+      "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+      "--disable-quic",
+    ],
+  });
   assert.equal(plan.chromium.env.DISPLAY, ":261.0");
 });
 
@@ -181,8 +207,7 @@ test("keeps native Chromium sandboxing by default and only disables it through t
             mode: "disabled",
             proof: { status: "available", reason: "native works" },
             authorization: {
-              contract:
-                "kandev-highlight-disabled-sandbox-authorization-v1",
+              contract: "kandev-highlight-disabled-sandbox-authorization-v1",
               sourceMode: "current_main",
               sourceSha: "1".repeat(40),
               allowedOrigin: "http://localhost:18087",
@@ -193,6 +218,58 @@ test("keeps native Chromium sandboxing by default and only disables it through t
       ),
     /disabled.*proof.*unavailable/i,
   );
+});
+
+test("runtime rejects Chromium argv drift from the recorded network policy before writes", async (t) => {
+  const paths = await fixture();
+  t.after(() => fs.rm(paths.root, { recursive: true, force: true }));
+  const mutations = [
+    {
+      label: "missing WebRTC switch",
+      apply: (args) =>
+        args.filter(
+          (argument) =>
+            argument !== "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+        ),
+    },
+    {
+      label: "QUIC override",
+      apply: (args) => [...args, "--disable-quic=false"],
+    },
+    {
+      label: "disabled-feature override",
+      apply: (args) => [...args, "--disable-features="],
+    },
+    {
+      label: "WebRTC override",
+      apply: (args) => [
+        ...args,
+        "--force-webrtc-ip-handling-policy=default_public_interface_only",
+      ],
+    },
+  ];
+
+  for (const [index, mutation] of mutations.entries()) {
+    await t.test(mutation.label, async () => {
+      const plan = planCaptureRuntime(
+        runtimeOptions(paths, {
+          artifactRoot: path.join(paths.artifactParent, `drift-${index}`),
+        }),
+      );
+      plan.chromium.args = mutation.apply(plan.chromium.args);
+      await assert.rejects(
+        startCaptureRuntime(plan, {
+          spawnManaged: async () => {
+            throw new Error("network drift reached process spawn");
+          },
+          isDisplayFree: async () => true,
+          isPortFree: async () => true,
+        }),
+        /Chromium network.*argv|missing.*webrtc|forbidden direct transport|disabled feature/i,
+      );
+      await assert.rejects(fs.lstat(plan.artifactRoot), { code: "ENOENT" });
+    });
+  }
 });
 
 test("plans native-mobile as a portrait source with mobile metrics and touch", async (t) => {
@@ -321,6 +398,28 @@ test("allocation rejects a symlinked coordinate-lock root before scanning", asyn
   );
 });
 
+test("reservation binds the exact host-global coordinate root identity", async (t) => {
+  const paths = await fixture();
+  t.after(() => fs.rm(paths.root, { recursive: true, force: true }));
+  const stat = await fs.lstat(paths.coordinateLockRoot);
+  const plan = planCaptureRuntime(
+    runtimeOptions(paths, {
+      coordinateLockIdentity: {
+        dev: stat.dev,
+        ino: stat.ino + 1,
+        uid: stat.uid,
+        mode: stat.mode & 0o7777,
+      },
+    }),
+  );
+
+  await assert.rejects(
+    reserveCaptureRuntime(plan),
+    /coordinateLockRoot.*identity|inode.*changed/i,
+  );
+  await assert.rejects(fs.lstat(plan.artifactRoot), { code: "ENOENT" });
+});
+
 test("reservation reclaims only a proven-dead PID/start-token coordinate lock", async (t) => {
   const paths = await fixture();
   t.after(() => fs.rm(paths.root, { recursive: true, force: true }));
@@ -396,6 +495,38 @@ test("reservation never unlinks malformed or live coordinate locks", async (t) =
     await fs.readFile(malformedPlan.coordinateLockPath, "utf8"),
     /live-token/,
   );
+});
+
+test("distinct private run roots contend through one host-global coordinate lock", async (t) => {
+  const paths = await fixture();
+  t.after(() => fs.rm(paths.root, { recursive: true, force: true }));
+  const first = planCaptureRuntime(
+    runtimeOptions(paths, {
+      artifactRoot: path.join(paths.artifactParent, "private-worker-a"),
+      runId: "private-a",
+    }),
+  );
+  const second = planCaptureRuntime(
+    runtimeOptions(paths, {
+      artifactRoot: path.join(paths.artifactParent, "private-worker-b"),
+      runId: "private-b",
+    }),
+  );
+  t.after(() => fs.unlink(first.coordinateLockPath).catch(() => {}));
+
+  await reserveCaptureRuntime(first, {
+    isDisplayFree: async () => true,
+    isPortFree: async () => true,
+  });
+  await assert.rejects(
+    reserveCaptureRuntime(second, {
+      isDisplayFree: async () => true,
+      isPortFree: async () => true,
+    }),
+    /live coordinate lock occupies/i,
+  );
+  assert.equal(first.coordinateLockPath, second.coordinateLockPath);
+  await assert.rejects(fs.lstat(second.artifactRoot), { code: "ENOENT" });
 });
 
 test("reservation rejects a coordinate-lock symlink without touching its target", async (t) => {
@@ -565,6 +696,56 @@ test("starts Xvfb then Chromium and teardown proves transient resources gone", a
       { name: "chromium", pid: 102, gone: true },
     ],
   });
+});
+
+test("teardown preserves a replaced host-global coordinate lock", async (t) => {
+  const paths = await fixture();
+  t.after(() => fs.rm(paths.root, { recursive: true, force: true }));
+  const plan = planCaptureRuntime(runtimeOptions(paths));
+  const spawnManaged = async (spec) => ({
+    name: spec.name,
+    pid: spec.name === "xvfb" ? 111 : 112,
+    async stop() {},
+    isRunning: () => false,
+  });
+  const runtime = await startCaptureRuntime(plan, {
+    spawnManaged,
+    isDisplayFree: async () => true,
+    isPortFree: async () => true,
+    waitForDisplay: async () => {},
+    waitForCdp: async () => {},
+    verifyDisplayReleased: async () => {},
+    verifyPortReleased: async () => {},
+  });
+  const originalLock = `${plan.coordinateLockPath}.original`;
+  await fs.rename(plan.coordinateLockPath, originalLock);
+  const replacement = {
+    contract: "kandev-highlight-coordinate-lock-v1",
+    owner: { pid: 999_999, startToken: "12345" },
+    artifactRoot: path.join(paths.root, "another-run"),
+    display: plan.display,
+    cdpPort: plan.cdpPort,
+  };
+  await fs.writeFile(
+    plan.coordinateLockPath,
+    `${JSON.stringify(replacement)}\n`,
+    { flag: "wx" },
+  );
+
+  await assert.rejects(runtime.stop(), (error) => {
+    assert.equal(error instanceof AggregateError, true);
+    assert.equal(
+      error.errors.some((entry) =>
+        /coordinate lock changed/i.test(entry.message),
+      ),
+      true,
+    );
+    return true;
+  });
+  assert.deepEqual(
+    JSON.parse(await fs.readFile(plan.coordinateLockPath, "utf8")),
+    replacement,
+  );
 });
 
 test("startup failure tears down partial runtime without deleting recoverable artifacts", async (t) => {

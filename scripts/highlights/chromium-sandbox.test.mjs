@@ -10,7 +10,11 @@ import {
 const CHROMIUM_EXECUTABLE =
   "/verified/ms-playwright/chromium-1228/chrome-linux64/chrome";
 const SOURCE_SHA = "a".repeat(40);
+const ORIGIN_MAIN_SHA = "b".repeat(40);
+const DERIVED_SHA = "c".repeat(40);
 const ALLOWED_ORIGIN = "http://localhost:18087";
+const REPOSITORY_ROOT = "/work/source";
+const SCENARIO_PATH = "/work/source/eval/quick-start.scenario.json";
 const AVAILABLE = Object.freeze({
   status: "available",
   reason: "user namespaces enabled",
@@ -28,8 +32,8 @@ const OUTER_BOUNDARY = Object.freeze({
   requestDigest: `sha256:${"1".repeat(64)}`,
   containerId: "2".repeat(64),
   imageId: `sha256:${"3".repeat(64)}`,
-  sourceSha: "4".repeat(40),
-  sourceOriginMainSha: "5".repeat(40),
+  sourceSha: SOURCE_SHA,
+  sourceOriginMainSha: ORIGIN_MAIN_SHA,
   inspection: {
     containerId: "2".repeat(64),
     imageId: `sha256:${"3".repeat(64)}`,
@@ -40,10 +44,13 @@ const OUTER_BOUNDARY = Object.freeze({
 });
 const BOUNDARY_PATH = "/kandev-boundary/authorization.json";
 
-function sourceProof(source = "current_main") {
+function sourceProof(source = "current_main", selectedSha = SOURCE_SHA) {
   return {
     source,
-    selectedSha: SOURCE_SHA,
+    repoRoot: REPOSITORY_ROOT,
+    selectedSha,
+    headSha: selectedSha,
+    currentMainSha: ORIGIN_MAIN_SHA,
   };
 }
 
@@ -161,6 +168,7 @@ test("disabled pr_head requires independently attested read-only whole-worker Do
       }
       throw new Error(`unexpected read ${filePath}`);
     },
+    scenarioPath: SCENARIO_PATH,
   });
   assert.deepEqual(policy.authorization, {
     contract: "kandev-highlight-disabled-sandbox-authorization-v2",
@@ -168,6 +176,16 @@ test("disabled pr_head requires independently attested read-only whole-worker Do
     sourceSha: SOURCE_SHA,
     allowedOrigin: ALLOWED_ORIGIN,
     guardContract: "kandev-highlight-origin-isolation-v1",
+    sourceBinding: {
+      contract: "kandev-highlight-docker-source-binding-v1",
+      version: 1,
+      mode: "exact-boundary",
+      selectedSha: SOURCE_SHA,
+      boundarySourceSha: SOURCE_SHA,
+      originMainSha: ORIGIN_MAIN_SHA,
+      parentSha: null,
+      scenarioPath: null,
+    },
     outerBoundary: {
       contract: OUTER_BOUNDARY.contract,
       requestDigest: OUTER_BOUNDARY.requestDigest,
@@ -209,11 +227,86 @@ test("disabled pr_head requires independently attested read-only whole-worker Do
           trustedSourceSha: undefined,
           inheritedEnv,
           readFile,
+          scenarioPath: SCENARIO_PATH,
         }),
       /pr_head.*whole-worker|Docker boundary.*read-only/i,
       label,
     );
   }
+});
+
+test("disabled pr_head rejects source state outside the attested Docker derivation", async () => {
+  for (const [label, outerBoundary] of [
+    ["source", { ...OUTER_BOUNDARY, sourceSha: "6".repeat(40) }],
+    ["origin/main", { ...OUTER_BOUNDARY, sourceOriginMainSha: "7".repeat(40) }],
+  ]) {
+    await assert.rejects(
+      () =>
+        resolvePolicy({
+          requested: "disabled",
+          probe: UNAVAILABLE,
+          sourceProof: sourceProof("pr_head"),
+          trustedSourceSha: undefined,
+          inheritedEnv: {
+            KANDEV_HIGHLIGHT_CHROMIUM_SANDBOX: "disabled",
+            KANDEV_HIGHLIGHT_DOCKER_BOUNDARY_AUTHORIZATION: BOUNDARY_PATH,
+          },
+          scenarioPath: SCENARIO_PATH,
+          runGit: async () => "",
+          readFile: async (filePath) =>
+            filePath === BOUNDARY_PATH
+              ? JSON.stringify(outerBoundary)
+              : "42 35 0:51 / /kandev-boundary ro,nosuid,nodev,noexec - ext4 /dev/sda ro\n",
+        }),
+      /Docker boundary.*source|source.*boundary|origin\/main|scenario-only source child|one exact child/i,
+      label,
+    );
+  }
+});
+
+test("disabled pr_head binds one exact scenario-only child of the attested source", async () => {
+  const calls = [];
+  const policy = await resolvePolicy({
+    requested: "disabled",
+    probe: UNAVAILABLE,
+    sourceProof: sourceProof("pr_head", DERIVED_SHA),
+    trustedSourceSha: undefined,
+    scenarioPath: SCENARIO_PATH,
+    inheritedEnv: {
+      KANDEV_HIGHLIGHT_CHROMIUM_SANDBOX: "disabled",
+      KANDEV_HIGHLIGHT_DOCKER_BOUNDARY_AUTHORIZATION: BOUNDARY_PATH,
+    },
+    readFile: async (filePath) =>
+      filePath === BOUNDARY_PATH
+        ? JSON.stringify(OUTER_BOUNDARY)
+        : "42 35 0:51 / /kandev-boundary ro,nosuid,nodev,noexec - ext4 /dev/sda ro\n",
+    runGit: async (args) => {
+      calls.push(args);
+      if (args[0] === "rev-list") {
+        return `${DERIVED_SHA} ${SOURCE_SHA}\n`;
+      }
+      if (args[0] === "diff-tree") {
+        return "A\teval/quick-start.scenario.json\n";
+      }
+      if (args[0] === "cat-file") return "blob\n";
+      throw new Error(`unexpected git ${args.join(" ")}`);
+    },
+  });
+
+  assert.deepEqual(policy.authorization.sourceBinding, {
+    contract: "kandev-highlight-docker-source-binding-v1",
+    version: 1,
+    mode: "scenario-child",
+    selectedSha: DERIVED_SHA,
+    boundarySourceSha: SOURCE_SHA,
+    originMainSha: ORIGIN_MAIN_SHA,
+    parentSha: SOURCE_SHA,
+    scenarioPath: "eval/quick-start.scenario.json",
+  });
+  assert.deepEqual(
+    calls.map((args) => args[0]),
+    ["rev-list", "diff-tree", "cat-file"],
+  );
 });
 
 test("closed sandbox selector rejects policy and argv injection", async () => {

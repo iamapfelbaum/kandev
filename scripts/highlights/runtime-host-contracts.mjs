@@ -4,6 +4,7 @@ import path from "node:path";
 import { validateChromiumSandboxCaptureBoundary } from "./chromium-sandbox-contract.mjs";
 import { resolveHighlightRuntime } from "./runtime-catalog.mjs";
 import { assertExternalArtifactRoot } from "./source-gate.mjs";
+import { validateRuntimeTempLease } from "./runtime-temp.mjs";
 
 const REQUEST_KEYS = Object.freeze([
   "contract",
@@ -16,6 +17,8 @@ const REQUEST_KEYS = Object.freeze([
   "source",
   "runId",
   "pullRequest",
+  "runtimeTempNamespaceRoot",
+  "coordinateLockRoot",
 ]);
 const WORKER_RESULT_KEYS = Object.freeze([
   "contract",
@@ -36,8 +39,10 @@ const WORKER_REQUEST_KEYS = Object.freeze([
   "source",
   "runId",
   "pullRequest",
+  "runtimeTempNamespaceRoot",
+  "coordinateLockRoot",
   "bundleRoot",
-  "workerTempRoot",
+  "runtimeTemp",
   "sourceProof",
   "build",
   "tools",
@@ -158,6 +163,19 @@ export function validateRuntimeHostRequest(value) {
     value.buildManifestPath,
     "runtime host buildManifestPath",
   );
+  const runtimeTempNamespaceRoot = requireAbsolute(
+    value.runtimeTempNamespaceRoot,
+    "runtime host runtimeTempNamespaceRoot",
+  );
+  const coordinateLockRoot = requireAbsolute(
+    value.coordinateLockRoot,
+    "runtime host coordinateLockRoot",
+  );
+  if (coordinateLockRoot !== "/tmp") {
+    throw new Error(
+      "runtime host coordinateLockRoot must be the host-global /tmp resource namespace",
+    );
+  }
   if (
     !isInside(repositoryRoot, scenarioPath) ||
     scenarioPath === repositoryRoot
@@ -170,6 +188,15 @@ export function validateRuntimeHostRequest(value) {
   ) {
     throw new Error("runtime host buildManifestPath is outside artifactRoot");
   }
+  if (
+    isInside(repositoryRoot, runtimeTempNamespaceRoot) ||
+    isInside(artifactRoot, runtimeTempNamespaceRoot) ||
+    isInside(runtimeTempNamespaceRoot, artifactRoot)
+  ) {
+    throw new Error(
+      "runtime host runtimeTempNamespaceRoot must be external and separate from repository/artifacts",
+    );
+  }
   return {
     contract: value.contract,
     version: value.version,
@@ -181,6 +208,8 @@ export function validateRuntimeHostRequest(value) {
     source: value.source,
     runId: value.runId,
     pullRequest: validatePullRequest(value.pullRequest, value.source),
+    runtimeTempNamespaceRoot,
+    coordinateLockRoot,
   };
 }
 
@@ -292,19 +321,30 @@ export function validateRuntimeWorkerRequest(value) {
     value.bundleRoot,
     "runtime worker bundleRoot",
   );
-  const workerTempRoot = requireAbsolute(
-    value.workerTempRoot,
-    "runtime worker workerTempRoot",
+  const runtimeTempNamespaceRoot = requireAbsolute(
+    value.runtimeTempNamespaceRoot,
+    "runtime worker runtimeTempNamespaceRoot",
   );
+  const coordinateLockRoot = requireAbsolute(
+    value.coordinateLockRoot,
+    "runtime worker coordinateLockRoot",
+  );
+  const runtimeTemp = validateRuntimeTempLease(value.runtimeTemp);
   if (
     !isInside(repositoryRoot, scenarioPath) ||
     scenarioPath === repositoryRoot
   ) {
     throw new Error("runtime worker scenarioPath is outside repositoryRoot");
   }
-  if (workerTempRoot !== path.join(bundleRoot, "worker-tmp")) {
+  if (
+    runtimeTemp.namespaceRoot !== runtimeTempNamespaceRoot ||
+    coordinateLockRoot !== "/tmp" ||
+    runtimeTemp.coordinateLockRoot !== coordinateLockRoot ||
+    runtimeTemp.runId !== value.runId ||
+    runtimeTemp.artifactRoot !== artifactRoot
+  ) {
     throw new Error(
-      "runtime worker workerTempRoot must be the fixed worker-tmp directory inside bundleRoot",
+      "runtime worker runtimeTemp must bind its exact namespace, run, and artifact root",
     );
   }
   if (
@@ -417,8 +457,10 @@ export function validateRuntimeWorkerRequest(value) {
     source: value.source,
     runId: value.runId,
     pullRequest: validatePullRequest(value.pullRequest, value.source),
+    runtimeTempNamespaceRoot,
+    coordinateLockRoot,
     bundleRoot,
-    workerTempRoot,
+    runtimeTemp,
     sourceProof: structuredClone(sourceProof),
     build: structuredClone(value.build),
     tools,

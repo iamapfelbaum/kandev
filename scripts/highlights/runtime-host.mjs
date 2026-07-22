@@ -54,6 +54,14 @@ import {
   normalizeRuntimeProcessResult,
   runOwnedRuntimeProcess,
 } from "./runtime-owned-process.mjs";
+import {
+  prepareRuntimeTempNamespace,
+  recoverRuntimeWorkerTemps,
+  releaseRuntimeWorkerTemp,
+  reserveRuntimeWorkerTemp,
+  runtimeTempVerificationEvidence,
+  verifyRuntimeWorkerTemp,
+} from "./runtime-temp.mjs";
 
 export {
   runOwnedRuntimeProcess,
@@ -193,6 +201,11 @@ function dependenciesWithDefaults(dependencies) {
     waitForPortRelease: waitForIntegrationPortRelease,
     isDisplayReleased: isDisplayAvailable,
     isProcessGone: isRuntimeProcessGone,
+    prepareRuntimeTempNamespace,
+    recoverRuntimeWorkerTemps,
+    reserveRuntimeWorkerTemp,
+    verifyRuntimeWorkerTemp,
+    releaseRuntimeWorkerTemp,
     clock: () => new Date(),
     ...dependencies,
   };
@@ -206,7 +219,7 @@ function buildWorkerRequest({
   chromiumSandbox,
   port,
   bundleRoot,
-  workerTempRoot,
+  runtimeTemp,
 }) {
   return validateRuntimeWorkerRequest({
     contract: "kandev-highlight-runtime-worker-request-v1",
@@ -219,14 +232,67 @@ function buildWorkerRequest({
     source: request.source,
     runId: request.runId,
     pullRequest: request.pullRequest,
+    runtimeTempNamespaceRoot: request.runtimeTempNamespaceRoot,
+    coordinateLockRoot: request.coordinateLockRoot,
     bundleRoot,
-    workerTempRoot,
+    runtimeTemp,
     sourceProof,
     build,
     tools,
     chromiumSandbox,
     ports: { offset: port.offset, backend: port.backendPort },
   });
+}
+
+async function finalizeRuntimeWorkerTemp({ deps, lease, processGroupGone }) {
+  let verified = false;
+  try {
+    verified = (await deps.verifyRuntimeWorkerTemp(lease)).verified === true;
+    if (!verified) {
+      throw new Error("runtime temp verifier did not attest the exact lease");
+    }
+  } catch (error) {
+    return {
+      verified: false,
+      release: null,
+      verification: runtimeTempVerificationEvidence({
+        lease,
+        phase: "verify",
+        error,
+      }),
+    };
+  }
+  if (!processGroupGone) {
+    return {
+      verified,
+      release: null,
+      verification: runtimeTempVerificationEvidence({
+        lease,
+        phase: "process-group",
+        error: new Error(
+          "runtime worker process group remains live; worker temp preserved",
+        ),
+      }),
+    };
+  }
+  try {
+    const release = await deps.releaseRuntimeWorkerTemp(lease);
+    return {
+      verified,
+      release,
+      verification: runtimeTempVerificationEvidence({ lease, release }),
+    };
+  } catch (error) {
+    return {
+      verified,
+      release: null,
+      verification: runtimeTempVerificationEvidence({
+        lease,
+        phase: "release",
+        error,
+      }),
+    };
+  }
 }
 
 export async function runHighlightRuntimeHost({
@@ -288,6 +354,15 @@ export async function runHighlightRuntimeHost({
     sourceProof: sourceProofBefore,
     trustedSourceSha: inheritedEnv[CHROMIUM_TRUSTED_SOURCE_SHA_ENV],
     allowedOrigin: `http://localhost:${port.backendPort}`,
+    scenarioPath: request.scenarioPath,
+  });
+
+  const runtimeTempNamespace = await deps.prepareRuntimeTempNamespace({
+    namespaceRoot: request.runtimeTempNamespaceRoot,
+    coordinateLockRoot: request.coordinateLockRoot,
+  });
+  const runtimeTempRecovery = await deps.recoverRuntimeWorkerTemps({
+    namespace: runtimeTempNamespace,
   });
 
   const paths = await reserveRuntimeHostBundle(request);
@@ -300,6 +375,9 @@ export async function runHighlightRuntimeHost({
   let execution = null;
   let teardown = null;
   let applicationRuntime = null;
+  let runtimeTempLease = null;
+  let runtimeTempRelease = null;
+  let runtimeTempVerification = null;
   let sourceAfter = null;
   const sourceEvidence = {
     pre: compactRuntimeSourceProof(sourceProofBefore),
@@ -308,6 +386,11 @@ export async function runHighlightRuntimeHost({
   };
   try {
     await prepareRuntimeHostBundle(paths);
+    runtimeTempLease = await deps.reserveRuntimeWorkerTemp({
+      namespace: runtimeTempNamespace,
+      runId: request.runId,
+      artifactRoot: request.artifactRoot,
+    });
     const workerRequest = buildWorkerRequest({
       request,
       sourceProof: sourceProofBefore,
@@ -316,13 +399,13 @@ export async function runHighlightRuntimeHost({
       chromiumSandbox,
       port,
       bundleRoot: paths.bundleRoot,
-      workerTempRoot: paths.workerTempRoot,
+      runtimeTemp: runtimeTempLease,
     });
     phase = "request";
     requestIdentity = await initializeRuntimeHostBundle(paths, workerRequest);
     const env = sanitizeRuntimeHostEnvironment(inheritedEnv, {
       homeRoot: paths.homeRoot,
-      tempRoot: paths.workerTempRoot,
+      tempRoot: runtimeTempLease.workerTempRoot,
       fixtureRoot: paths.fixtureRoot,
       requestPath: paths.requestPath,
       workerResultPath: paths.workerResultPath,
@@ -474,10 +557,23 @@ export async function runHighlightRuntimeHost({
       capture: captureTeardown,
     };
     let failure = processFailure ?? postflightFailure ?? workerFailure;
+    const runtimeTempFinalization = await finalizeRuntimeWorkerTemp({
+      deps,
+      lease: runtimeTempLease,
+      processGroupGone: execution.processGroup.gone === true,
+    });
+    const runtimeTempVerified = runtimeTempFinalization.verified;
+    runtimeTempRelease = runtimeTempFinalization.release;
+    runtimeTempVerification = runtimeTempFinalization.verification;
+    const runtimeTempRemoved = runtimeTempRelease?.removed === true;
+    teardown.runtimeTempLeaseVerified = runtimeTempVerified;
+    teardown.runtimeTempRootRemoved = runtimeTempRemoved;
     if (
       !failure &&
       (!portReleased ||
         !fixtureTempRootRemoved ||
+        !runtimeTempVerified ||
+        !runtimeTempRemoved ||
         !teardown.playwrightProcessGroupGone ||
         !captureTeardown ||
         Object.entries(captureTeardown).some(
@@ -509,6 +605,13 @@ export async function runHighlightRuntimeHost({
         build,
         execution,
         teardown,
+        runtimeTemp: {
+          namespace: runtimeTempNamespace,
+          recovery: runtimeTempRecovery,
+          lease: runtimeTempLease,
+          release: runtimeTempRelease,
+          verification: runtimeTempVerification,
+        },
         completedAt,
       });
     }
@@ -538,6 +641,13 @@ export async function runHighlightRuntimeHost({
       capture,
       execution,
       teardown,
+      runtimeTemp: {
+        namespace: runtimeTempNamespace,
+        recovery: runtimeTempRecovery,
+        lease: runtimeTempLease,
+        release: runtimeTempRelease,
+        verification: runtimeTempVerification,
+      },
       failure,
       completedAt,
     });
@@ -555,6 +665,16 @@ export async function runHighlightRuntimeHost({
   } catch (error) {
     if (error instanceof RuntimeHostFailure) throw error;
     await cleanupRuntimeHostFixture(paths);
+    if (runtimeTempLease && runtimeTempVerification === null) {
+      const finalization = await finalizeRuntimeWorkerTemp({
+        deps,
+        lease: runtimeTempLease,
+        processGroupGone:
+          execution === null || execution.processGroup?.gone === true,
+      });
+      runtimeTempRelease = finalization.release;
+      runtimeTempVerification = finalization.verification;
+    }
     logIdentity ??= await maybeRuntimeFileIdentity(
       paths.logPath,
       "runtime host log",
@@ -590,6 +710,13 @@ export async function runHighlightRuntimeHost({
       capture,
       execution,
       teardown,
+      runtimeTemp: {
+        namespace: runtimeTempNamespace,
+        recovery: runtimeTempRecovery,
+        lease: runtimeTempLease,
+        release: runtimeTempRelease,
+        verification: runtimeTempVerification,
+      },
       failure,
       completedAt,
     });

@@ -6,6 +6,11 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  chromiumNetworkCommandEvidence,
+  chromiumNetworkIsolationPolicy,
+} from "./capture-runtime.mjs";
+
+import {
   buildRuntimeHostCommand,
   runHighlightRuntimeHost,
   sanitizeRuntimeHostEnvironment,
@@ -13,6 +18,11 @@ import {
   validateRuntimeWorkerRequest,
 } from "./runtime-host.mjs";
 import { computeScenarioDigest, readScenario } from "./scenario.mjs";
+import {
+  prepareRuntimeTempNamespace,
+  releaseRuntimeWorkerTemp,
+  reserveRuntimeWorkerTemp,
+} from "./runtime-temp.mjs";
 
 const REPOSITORY_ROOT = path.resolve(
   path.dirname(new URL(import.meta.url).pathname),
@@ -88,6 +98,9 @@ async function fixture(t) {
   );
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const artifactRoot = path.join(root, "artifacts");
+  const shortRoot = await fs.mkdtemp("/tmp/khrh-");
+  t.after(() => fs.rm(shortRoot, { recursive: true, force: true }));
+  const runtimeTempNamespaceRoot = path.join(shortRoot, "n");
   await fs.mkdir(path.join(artifactRoot, "evidence"), { recursive: true });
   const buildManifestPath = path.join(
     artifactRoot,
@@ -99,6 +112,7 @@ async function fixture(t) {
     root,
     artifactRoot,
     buildManifestPath,
+    runtimeTempNamespaceRoot,
     request: {
       contract: "kandev-highlight-runtime-host-request-v1",
       version: 1,
@@ -110,6 +124,8 @@ async function fixture(t) {
       source: "pr_head",
       runId: "host-r01",
       pullRequest: { number: 42, baseSha: "3".repeat(40) },
+      runtimeTempNamespaceRoot,
+      coordinateLockRoot: "/tmp",
     },
   };
 }
@@ -255,6 +271,17 @@ async function writeSuccessfulWorkerResult({
   const captureEvidence = captureEvidenceTransform
     ? captureEvidenceTransform(captureEvidenceBase, rawCaptureEvidence)
     : captureEvidenceBase;
+  const chromiumNetworkPolicy = chromiumNetworkIsolationPolicy();
+  const chromiumCommand = chromiumNetworkCommandEvidence(
+    {
+      command: workerRequest.tools.chromium,
+      args: [
+        `--disable-features=${chromiumNetworkPolicy.disabledFeatures.join(",")}`,
+        ...chromiumNetworkPolicy.switches,
+      ],
+    },
+    chromiumNetworkPolicy,
+  );
   const captureReceiptBase = {
     contract: "kandev-highlight-source-capture-v1",
     scenarioDigest,
@@ -277,6 +304,8 @@ async function writeSuccessfulWorkerResult({
         displayNumber: 240,
         cdpPort: 50_001,
         chromiumSandbox: workerRequest.chromiumSandbox,
+        chromiumNetworkPolicy,
+        chromiumCommand,
         artifactRoot: path.join(captureRoot, "capture"),
         profileDir: path.join(
           captureRoot,
@@ -285,9 +314,11 @@ async function writeSuccessfulWorkerResult({
           "browser-profile",
         ),
         lockPath: path.join(captureRoot, "capture", "runtime", "capture.lock"),
-        coordinateLockRoot: workerRequest.workerTempRoot,
+        coordinateLockRoot: workerRequest.runtimeTemp.coordinateLockRoot,
+        coordinateLockIdentity:
+          workerRequest.runtimeTemp.coordinateLockIdentity,
         coordinateLockPath: path.join(
-          workerRequest.workerTempRoot,
+          workerRequest.runtimeTemp.coordinateLockRoot,
           "kandev-highlight-240-50001.lock",
         ),
       },
@@ -462,6 +493,24 @@ test("request contract rejects extra keys, unknown runtimes, and injected paths 
   }
 });
 
+test("host request serializes one approved short runtime temp namespace", async (t) => {
+  const value = await fixture(t);
+  const request = {
+    ...value.request,
+    runtimeTempNamespaceRoot: "/tmp/kandev-highlight-runtime-1000",
+    coordinateLockRoot: "/tmp",
+  };
+  assert.deepEqual(validateRuntimeHostRequest(request), request);
+  assert.throws(
+    () =>
+      validateRuntimeHostRequest({
+        ...request,
+        runtimeTempNamespaceRoot: "relative/runtime-temp",
+      }),
+    /runtimeTempNamespaceRoot.*absolute/i,
+  );
+});
+
 test("child environment is an allowlist with no provider, cloud, API, or GitHub credentials", () => {
   const clean = sanitizeRuntimeHostEnvironment(
     {
@@ -521,6 +570,15 @@ test("generated worker request has an exact non-extensible contract", async (t) 
     "runtime-host",
     value.request.runId,
   );
+  const runtimeNamespace = await prepareRuntimeTempNamespace({
+    namespaceRoot: value.runtimeTempNamespaceRoot,
+  });
+  const runtimeTemp = await reserveRuntimeWorkerTemp({
+    namespace: runtimeNamespace,
+    runId: value.request.runId,
+    artifactRoot: value.artifactRoot,
+  });
+  t.after(() => releaseRuntimeWorkerTemp(runtimeTemp).catch(() => {}));
   const currentMainSource = {
     ...sourceProof(),
     source: "current_main",
@@ -537,8 +595,10 @@ test("generated worker request has an exact non-extensible contract", async (t) 
     source: "current_main",
     runId: value.request.runId,
     pullRequest: null,
+    runtimeTempNamespaceRoot: value.runtimeTempNamespaceRoot,
+    coordinateLockRoot: value.request.coordinateLockRoot,
     bundleRoot,
-    workerTempRoot: path.join(bundleRoot, "worker-tmp"),
+    runtimeTemp,
     sourceProof: currentMainSource,
     build: {
       contract: "kandev-highlight-build-provenance-v1",
@@ -582,9 +642,12 @@ test("generated worker request has an exact non-extensible contract", async (t) 
     () =>
       validateRuntimeWorkerRequest({
         ...workerRequest,
-        workerTempRoot: path.join(bundleRoot, "other-tmp"),
+        runtimeTemp: {
+          ...workerRequest.runtimeTemp,
+          workerTempRoot: path.join(bundleRoot, "other-tmp"),
+        },
       }),
-    /workerTempRoot.*fixed.*bundle/i,
+    /runtime temp lease paths|runtimeTemp.*bind/i,
   );
   assert.throws(
     () =>
@@ -719,6 +782,15 @@ test("closed host preflights then writes an immutable digest-linked post-teardow
   );
   assert.equal(result.teardown.backendPortReleased, true);
   assert.equal(result.teardown.fixtureTempRootRemoved, true);
+  assert.deepEqual(result.runtimeTemp.verification, {
+    contract: "kandev-highlight-runtime-temp-verification-v1",
+    version: 1,
+    status: "verified",
+    phase: "release",
+    code: "released",
+    reasonDigest: null,
+    preservedRoot: null,
+  });
   assert.equal(result.execution.exitCode, 0);
   assert.equal(result.execution.signal, null);
   assert.equal(
@@ -729,6 +801,7 @@ test("closed host preflights then writes an immutable digest-linked post-teardow
   assert.deepEqual(sandboxInput.sourceProof, sourceProof());
   assert.equal(sandboxInput.trustedSourceSha, SHA);
   assert.equal(sandboxInput.allowedOrigin, "http://localhost:18087");
+  assert.equal(sandboxInput.scenarioPath, value.request.scenarioPath);
   const workerRequest = JSON.parse(
     await fs.readFile(result.bundle.requestPath, "utf8"),
   );
@@ -791,6 +864,104 @@ test("closed host preflights then writes an immutable digest-linked post-teardow
     JSON.stringify(result),
     /must-not-leak|Quick start|Review API/,
   );
+});
+
+test("distinct retained runs share global coordinates but use short private worker temps", async (t) => {
+  const value = await fixture(t);
+  const workerRequests = [];
+  const run = async (request) => {
+    const deps = dependencies(value.buildManifestPath, {
+      processRunner: async ({ env, logPath }) => {
+        workerRequests.push(
+          JSON.parse(
+            await fs.readFile(env.KANDEV_HIGHLIGHT_RUNTIME_REQUEST, "utf8"),
+          ),
+        );
+        return writeSuccessfulWorkerResult({ env, logPath });
+      },
+    });
+    return runHighlightRuntimeHost({ request, dependencies: deps.value });
+  };
+
+  await run(value.request);
+  await run({ ...value.request, runId: "host-r02" });
+
+  const [first, second] = workerRequests.map(({ runtimeTemp }) => runtimeTemp);
+  assert.notEqual(first.workerTempRoot, second.workerTempRoot);
+  assert.equal(first.coordinateLockRoot, second.coordinateLockRoot);
+  assert.equal(first.coordinateLockRoot, "/tmp");
+  for (const lease of [first, second]) {
+    assert.ok(
+      Buffer.byteLength(
+        path.join(
+          lease.workerTempRoot,
+          "org.chromium.Chromium.XXXXXX",
+          "SingletonSocket",
+        ),
+      ) < 108,
+    );
+    await assert.rejects(fs.lstat(lease.workerTempRoot), { code: "ENOENT" });
+  }
+});
+
+test("runtime host preserves a tampered worker temp for forensic recovery", async (t) => {
+  const value = await fixture(t);
+  let tamperedRoot;
+  const deps = dependencies(value.buildManifestPath, {
+    processRunner: async ({ env, logPath }) => {
+      const request = JSON.parse(
+        await fs.readFile(env.KANDEV_HIGHLIGHT_RUNTIME_REQUEST, "utf8"),
+      );
+      tamperedRoot = request.runtimeTemp.workerTempRoot;
+      const replacement = `${request.runtimeTemp.leasePath}.replacement`;
+      await fs.writeFile(replacement, "tampered\n", { flag: "wx" });
+      await fs.rename(replacement, request.runtimeTemp.leasePath);
+      await fs.appendFile(logPath, "worker failed after lease tamper\n");
+      return {
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        deadlineMs: 240_000,
+        processGroup: {
+          pid: 12345,
+          termSent: false,
+          killSent: false,
+          exited: true,
+          gone: true,
+        },
+        log: {
+          limitBytes: 8 * 1024 * 1024,
+          capturedBytes: null,
+          discardedBytes: 0,
+          truncated: false,
+        },
+      };
+    },
+  });
+
+  let failure;
+  try {
+    await runHighlightRuntimeHost({
+      request: value.request,
+      dependencies: deps.value,
+    });
+  } catch (error) {
+    failure = error;
+  }
+  const result = JSON.parse(await fs.readFile(failure.resultPath, "utf8"));
+  assert.equal(result.status, "failed");
+  assert.equal(result.teardown.runtimeTempLeaseVerified, false);
+  assert.equal(result.teardown.runtimeTempRootRemoved, false);
+  assert.equal(result.runtimeTemp.release, null);
+  assert.equal(result.runtimeTemp.verification.status, "failed");
+  assert.equal(result.runtimeTemp.verification.phase, "verify");
+  assert.equal(result.runtimeTemp.verification.code, "lease-tamper");
+  assert.equal(result.runtimeTemp.verification.preservedRoot, tamperedRoot);
+  assert.match(
+    result.runtimeTemp.verification.reasonDigest,
+    /^sha256:[a-f0-9]{64}$/,
+  );
+  assert.equal((await fs.lstat(tamperedRoot)).isDirectory(), true);
 });
 
 test("runtime host rejects a self-consistent capture from another scenario run", async (t) => {
@@ -1242,6 +1413,8 @@ test("runtime host declarations expose versioned closed requests and digest-only
   );
   assert.match(declarations, /unchanged: boolean/);
   assert.match(declarations, /playwrightProcessGroupGone: boolean/);
+  assert.match(declarations, /kandev-highlight-runtime-temp-verification-v1/);
+  assert.match(declarations, /kandev-highlight-docker-source-binding-v1/);
   assert.match(declarations, /failurePath: string/);
   assert.match(declarations, /runOwnedRuntimeProcess/);
   assert.doesNotMatch(

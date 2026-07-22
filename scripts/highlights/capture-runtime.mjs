@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import fsSync, { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import net from "node:net";
@@ -15,6 +16,108 @@ const SAFE_ID = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 const SAFE_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const DEFAULT_DISPLAY_RANGE = Object.freeze([220, 399]);
 const DEFAULT_PORT_RANGE = Object.freeze([49_000, 49_999]);
+const MAX_COORDINATE_LOCK_BYTES = 4 * 1024;
+const CHROMIUM_NETWORK_POLICY = Object.freeze({
+  contract: "kandev-highlight-chromium-network-policy-v1",
+  version: 1,
+  webrtcIpHandlingPolicy: "disable_non_proxied_udp",
+  quicDisabled: true,
+  disabledFeatures: Object.freeze(["DirectSockets", "WebTransport"]),
+  switches: Object.freeze([
+    "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+    "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+    "--disable-quic",
+  ]),
+});
+
+export function chromiumNetworkIsolationPolicy() {
+  return structuredClone(CHROMIUM_NETWORK_POLICY);
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sha256(value) {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+export function chromiumNetworkCommandEvidence(
+  command,
+  policy = chromiumNetworkIsolationPolicy(),
+) {
+  if (
+    canonicalJson(policy) !== canonicalJson(chromiumNetworkIsolationPolicy())
+  ) {
+    throw new Error("Chromium network policy is not the canonical contract");
+  }
+  if (
+    !command ||
+    typeof command.command !== "string" ||
+    !path.isAbsolute(command.command) ||
+    !Array.isArray(command.args) ||
+    command.args.some((argument) => typeof argument !== "string")
+  ) {
+    throw new Error(
+      "Chromium network command must contain exact executable argv",
+    );
+  }
+  for (const required of policy.switches) {
+    if (command.args.filter((argument) => argument === required).length !== 1) {
+      throw new Error(
+        `Chromium network argv is missing exact switch ${required}`,
+      );
+    }
+  }
+  const disabledFeatureArguments = command.args.filter((argument) =>
+    argument.startsWith("--disable-features="),
+  );
+  const disabledFeatures = new Set(
+    disabledFeatureArguments.flatMap((argument) =>
+      argument.slice("--disable-features=".length).split(","),
+    ),
+  );
+  if (
+    disabledFeatureArguments.length !== 1 ||
+    policy.disabledFeatures.some((feature) => !disabledFeatures.has(feature)) ||
+    command.args.some(
+      (argument) =>
+        argument === "--enable-quic" ||
+        argument.startsWith("--enable-quic=") ||
+        (argument.startsWith("--disable-quic") &&
+          argument !== "--disable-quic") ||
+        (argument.startsWith("--enable-features=") &&
+          argument
+            .slice("--enable-features=".length)
+            .split(",")
+            .some((feature) => policy.disabledFeatures.includes(feature))) ||
+        (argument.startsWith("--webrtc-ip-handling-policy") &&
+          argument !== policy.switches[1]) ||
+        (argument.startsWith("--force-webrtc-ip-handling-policy") &&
+          argument !== policy.switches[0]),
+    )
+  ) {
+    throw new Error(
+      "Chromium network argv enables a forbidden direct transport or omits a disabled feature",
+    );
+  }
+  const args = [...command.args];
+  return {
+    contract: "kandev-highlight-chromium-network-command-v1",
+    version: 1,
+    executable: command.command,
+    args,
+    argsDigest: sha256(canonicalJson(args)),
+    policyDigest: sha256(canonicalJson(policy)),
+  };
+}
 
 export function captureCoordinateLockPath(
   coordinateLockRoot,
@@ -93,14 +196,39 @@ async function openedCoordinateLock(lockPath) {
   const opened = await openCoordinateLockHandle(lockPath);
   if (!opened) return null;
   try {
-    const [contents, stat] = await Promise.all([
-      opened.handle.readFile("utf8"),
-      opened.handle.stat(),
-    ]);
-    if (stat.dev !== opened.pathStat.dev || stat.ino !== opened.pathStat.ino) {
+    const before = await opened.handle.stat();
+    if (
+      before.dev !== opened.pathStat.dev ||
+      before.ino !== opened.pathStat.ino
+    ) {
       throw new Error(`coordinate lock changed while opening: ${lockPath}`);
     }
-    return { lock: parseCoordinateLock(contents, lockPath), stat };
+    if (before.size <= 0 || before.size > MAX_COORDINATE_LOCK_BYTES) {
+      throw new Error(`malformed coordinate lock: ${lockPath}`);
+    }
+    const contents = Buffer.alloc(before.size + 1);
+    const { bytesRead } = await opened.handle.read(
+      contents,
+      0,
+      contents.length,
+      0,
+    );
+    const after = await opened.handle.stat();
+    if (
+      bytesRead !== before.size ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size
+    ) {
+      throw new Error(`coordinate lock changed while reading: ${lockPath}`);
+    }
+    return {
+      lock: parseCoordinateLock(
+        contents.subarray(0, bytesRead).toString("utf8"),
+        lockPath,
+      ),
+      stat: before,
+    };
   } finally {
     await opened.handle.close();
   }
@@ -191,6 +319,28 @@ function requireAbsoluteCoordinateLockRoot(value) {
   return path.resolve(value);
 }
 
+function normalizeCoordinateLockIdentity(value) {
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("coordinateLockIdentity must be an inode identity object");
+  }
+  const keys = ["dev", "ino", "uid", "mode"];
+  if (
+    Object.keys(value).some((key) => !keys.includes(key)) ||
+    keys.some((key) => !Object.hasOwn(value, key)) ||
+    keys.some((key) => !Number.isSafeInteger(value[key]) || value[key] < 0) ||
+    value.ino === 0
+  ) {
+    throw new Error("coordinateLockIdentity is invalid");
+  }
+  return {
+    dev: value.dev,
+    ino: value.ino,
+    uid: value.uid,
+    mode: value.mode,
+  };
+}
+
 function assertExternalArtifactRoot(artifactRoot, repositoryRoots) {
   for (const repositoryRoot of repositoryRoots) {
     if (inside(artifactRoot, repositoryRoot)) {
@@ -243,10 +393,28 @@ async function assertCanonicalCoordinateLockDirectory(coordinateLockRoot) {
       `coordinateLockRoot cannot resolve through symlinks: ${coordinateLockRoot}`,
     );
   }
+  return {
+    dev: rootStat.dev,
+    ino: rootStat.ino,
+    uid: rootStat.uid,
+    mode: rootStat.mode & 0o7777,
+  };
 }
 
 async function assertCanonicalCoordinateLockRoot(plan) {
-  await assertCanonicalCoordinateLockDirectory(plan.coordinateLockRoot);
+  const actualIdentity = await assertCanonicalCoordinateLockDirectory(
+    plan.coordinateLockRoot,
+  );
+  if (
+    plan.coordinateLockIdentity &&
+    ["dev", "ino", "uid", "mode"].some(
+      (key) => actualIdentity[key] !== plan.coordinateLockIdentity[key],
+    )
+  ) {
+    throw new Error(
+      "coordinateLockRoot inode identity changed before reservation",
+    );
+  }
   const expected = captureCoordinateLockPath(
     plan.coordinateLockRoot,
     plan.displayNumber,
@@ -323,12 +491,28 @@ export async function allocateRuntimeCoordinates({
   displayRange,
   portRange,
   coordinateLockRoot = os.tmpdir(),
+  coordinateLockIdentity,
   isDisplayFree = isDisplayAvailable,
   isPortFree = isTcpPortAvailable,
   isCoordinateAvailable,
 } = {}) {
-  const resolvedLockRoot = requireAbsoluteCoordinateLockRoot(coordinateLockRoot);
-  await assertCanonicalCoordinateLockDirectory(resolvedLockRoot);
+  const resolvedLockRoot =
+    requireAbsoluteCoordinateLockRoot(coordinateLockRoot);
+  const expectedIdentity = normalizeCoordinateLockIdentity(
+    coordinateLockIdentity,
+  );
+  const actualIdentity =
+    await assertCanonicalCoordinateLockDirectory(resolvedLockRoot);
+  if (
+    expectedIdentity &&
+    ["dev", "ino", "uid", "mode"].some(
+      (key) => expectedIdentity[key] !== actualIdentity[key],
+    )
+  ) {
+    throw new Error(
+      "coordinateLockRoot inode identity changed before allocation",
+    );
+  }
   const coordinateAvailable =
     isCoordinateAvailable ??
     ((displayNumber, cdpPort) =>
@@ -381,6 +565,7 @@ export function planCaptureRuntime({
   displayNumber,
   cdpPort,
   coordinateLockRoot = os.tmpdir(),
+  coordinateLockIdentity,
   browserExecutable,
   chromiumSandbox = defaultChromiumSandboxPolicy(),
   xvfbExecutable = "Xvfb",
@@ -413,6 +598,9 @@ export function planCaptureRuntime({
   const resolvedRoot = path.resolve(artifactRoot);
   const resolvedCoordinateLockRoot =
     requireAbsoluteCoordinateLockRoot(coordinateLockRoot);
+  const resolvedCoordinateLockIdentity = normalizeCoordinateLockIdentity(
+    coordinateLockIdentity,
+  );
   const resolvedRepositories = repositoryRoots.map((entry) =>
     path.resolve(entry),
   );
@@ -429,6 +617,7 @@ export function planCaptureRuntime({
     displayNumber,
     cdpPort,
   );
+  const chromiumNetworkPolicy = chromiumNetworkIsolationPolicy();
   return {
     contract: "kandev-highlight-capture-runtime-v1",
     scenarioId,
@@ -444,6 +633,7 @@ export function planCaptureRuntime({
     rawMasterPath: path.join(resolvedRoot, "raw", `${scenarioId}.source.mp4`),
     lockPath: path.join(runtimeDir, "capture.lock"),
     coordinateLockRoot: resolvedCoordinateLockRoot,
+    coordinateLockIdentity: resolvedCoordinateLockIdentity,
     coordinateLockPath,
     xvfbLogPath: path.join(logsDir, "xvfb.log"),
     chromiumLogPath: path.join(logsDir, "chromium.log"),
@@ -461,6 +651,7 @@ export function planCaptureRuntime({
       touch: captureProfile.nativeMobile,
     },
     chromiumSandbox: sandboxPolicy,
+    chromiumNetworkPolicy,
     xvfb: {
       name: "xvfb",
       command: xvfbExecutable,
@@ -490,7 +681,8 @@ export function planCaptureRuntime({
         "--disable-background-networking",
         "--disable-component-update",
         "--disable-sync",
-        "--disable-features=Translate,MediaRouter",
+        `--disable-features=Translate,MediaRouter,${chromiumNetworkPolicy.disabledFeatures.join(",")}`,
+        ...chromiumNetworkPolicy.switches,
         "--force-color-profile=srgb",
         "--hide-scrollbars",
         "--kiosk",
@@ -534,17 +726,29 @@ async function acquireCoordinateLock(
     display: plan.display,
     cdpPort: plan.cdpPort,
   };
+  const contents = `${JSON.stringify(payload)}\n`;
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    let handle;
     try {
-      await fs.writeFile(
+      handle = await fs.open(
         plan.coordinateLockPath,
-        `${JSON.stringify(payload)}\n`,
-        {
-          flag: "wx",
-        },
+        fsConstants.O_CREAT |
+          fsConstants.O_EXCL |
+          fsConstants.O_WRONLY |
+          fsConstants.O_NOFOLLOW,
+        0o600,
       );
-      return payload;
+      await handle.writeFile(contents);
+      await handle.sync();
+      const stat = await handle.stat();
+      await handle.close();
+      handle = null;
+      return {
+        payload,
+        identity: { dev: stat.dev, ino: stat.ino },
+      };
     } catch (error) {
+      if (handle) await handle.close().catch(() => {});
       if (error.code !== "EEXIST") throw error;
       const reclaimed = await reclaimDeadCoordinateLock(
         plan.coordinateLockPath,
@@ -570,6 +774,31 @@ async function acquireCoordinateLock(
   );
 }
 
+async function releaseOwnedCoordinateLock(plan, reservation) {
+  const opened = await openedCoordinateLock(plan.coordinateLockPath);
+  if (!opened) {
+    throw new Error(
+      `owned coordinate lock disappeared before teardown: ${plan.coordinateLockPath}`,
+    );
+  }
+  const expected = reservation.payload;
+  if (
+    opened.stat.dev !== reservation.identity.dev ||
+    opened.stat.ino !== reservation.identity.ino ||
+    opened.lock.contract !== expected.contract ||
+    opened.lock.owner.pid !== expected.owner.pid ||
+    opened.lock.owner.startToken !== expected.owner.startToken ||
+    opened.lock.artifactRoot !== expected.artifactRoot ||
+    opened.lock.display !== expected.display ||
+    opened.lock.cdpPort !== expected.cdpPort
+  ) {
+    throw new Error(
+      `coordinate lock changed after reservation; preserving current path: ${plan.coordinateLockPath}`,
+    );
+  }
+  await unlinkSameCoordinateLock(plan.coordinateLockPath, opened.stat);
+}
+
 export async function reserveCaptureRuntime(
   plan,
   {
@@ -593,15 +822,14 @@ export async function reserveCaptureRuntime(
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
-  let coordinateReserved = false;
+  let coordinateReservation = null;
   let rootCreated = false;
   try {
-    await acquireCoordinateLock(plan, {
+    coordinateReservation = await acquireCoordinateLock(plan, {
       getProcessStartToken,
       isDisplayFree,
       isPortFree,
     });
-    coordinateReserved = true;
     try {
       await fs.mkdir(plan.artifactRoot);
       rootCreated = true;
@@ -631,7 +859,7 @@ export async function reserveCaptureRuntime(
     await fs.writeFile(plan.lockPath, `${JSON.stringify(lock, null, 2)}\n`, {
       flag: "wx",
     });
-    return lock;
+    return { ...lock, coordinateReservation };
   } catch (error) {
     const errors = [error];
     if (rootCreated) {
@@ -641,9 +869,9 @@ export async function reserveCaptureRuntime(
         errors.push(cleanupError);
       }
     }
-    if (coordinateReserved) {
+    if (coordinateReservation) {
       try {
-        await unlinkIfPresent(plan.coordinateLockPath);
+        await releaseOwnedCoordinateLock(plan, coordinateReservation);
       } catch (cleanupError) {
         errors.push(cleanupError);
       }
@@ -790,10 +1018,10 @@ async function verifyReleased(check, message) {
   await pollUntil(check, message, 8_000);
 }
 
-async function removeTransientRuntime(plan) {
+async function removeTransientRuntime(plan, coordinateReservation) {
   await fs.rm(plan.profileDir, { recursive: true, force: true });
   await unlinkIfPresent(plan.lockPath);
-  await unlinkIfPresent(plan.coordinateLockPath);
+  await releaseOwnedCoordinateLock(plan, coordinateReservation);
 }
 
 async function pathIsMissing(target) {
@@ -826,11 +1054,15 @@ export async function startCaptureRuntime(
       ),
   } = {},
 ) {
+  chromiumNetworkCommandEvidence(plan.chromium, plan.chromiumNetworkPolicy);
   if (!(await isDisplayFree(plan.displayNumber)))
     throw new Error(`X display ${plan.display} is already occupied`);
   if (!(await isPortFree(plan.cdpPort)))
     throw new Error(`CDP port ${plan.cdpPort} is already occupied`);
-  await reserveCaptureRuntime(plan, { isDisplayFree, isPortFree });
+  const reservation = await reserveCaptureRuntime(plan, {
+    isDisplayFree,
+    isPortFree,
+  });
   const handles = [];
   let stopping = null;
   const stop = async () => {
@@ -855,7 +1087,7 @@ export async function startCaptureRuntime(
         failures.push(error);
       }
       try {
-        await removeTransientRuntime(plan);
+        await removeTransientRuntime(plan, reservation.coordinateReservation);
       } catch (error) {
         failures.push(error);
       }

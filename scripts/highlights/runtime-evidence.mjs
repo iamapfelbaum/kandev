@@ -15,6 +15,8 @@ import {
   computeBuildContentDigest,
   validateRuntimeProvenance,
 } from "./runtime-provenance.mjs";
+import { validateRuntimeTempEvidence as validateBoundRuntimeTempEvidence } from "./runtime-temp.mjs";
+import { chromiumNetworkCommandEvidence } from "./capture-runtime.mjs";
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
@@ -629,6 +631,8 @@ function validateHostTeardown(value) {
       "frontendPortReleased",
       "fixtureTempRootOwned",
       "fixtureTempRootRemoved",
+      "runtimeTempLeaseVerified",
+      "runtimeTempRootRemoved",
       "capture",
     ],
     "runtime host teardown",
@@ -657,6 +661,12 @@ function validateHostTeardown(value) {
   return value;
 }
 
+function validateRuntimeTempEvidence(value) {
+  return validateBoundRuntimeTempEvidence(value, {
+    requireReleased: true,
+  }).lease;
+}
+
 function validateHostResult(value) {
   requireExactKeys(
     value,
@@ -676,6 +686,7 @@ function validateHostResult(value) {
       "capture",
       "execution",
       "teardown",
+      "runtimeTemp",
       "failure",
       "completedAt",
       "resultDigest",
@@ -701,6 +712,7 @@ function validateHostResult(value) {
   validateHostSource(value.source);
   validateHostExecution(value.execution);
   validateHostTeardown(value.teardown);
+  validateRuntimeTempEvidence(value.runtimeTemp);
   return value;
 }
 
@@ -719,6 +731,7 @@ function validateRuntimeReceipt(value) {
       "capture",
       "execution",
       "teardown",
+      "runtimeTemp",
       "log",
       "workerResult",
       "completedAt",
@@ -738,6 +751,7 @@ function validateRuntimeReceipt(value) {
       "application runtime receipt contract or digest is invalid",
     );
   }
+  validateRuntimeTempEvidence(value.runtimeTemp);
   return value;
 }
 
@@ -844,6 +858,43 @@ function validateCaptureOriginRequestBoundary(receipt, request) {
 }
 
 function validateCaptureReceiptAttestations(receipt) {
+  requireExactKeys(
+    receipt.runtime,
+    ["allocation", "teardown"],
+    "capture runtime",
+  );
+  const runtimeAllocation = receipt.runtime.allocation;
+  requireExactKeys(
+    runtimeAllocation,
+    [
+      "display",
+      "displayNumber",
+      "cdpPort",
+      "chromiumSandbox",
+      "chromiumNetworkPolicy",
+      "chromiumCommand",
+      "artifactRoot",
+      "profileDir",
+      "lockPath",
+      "coordinateLockRoot",
+      "coordinateLockIdentity",
+      "coordinateLockPath",
+    ],
+    "capture runtime allocation",
+  );
+  const networkCommand = chromiumNetworkCommandEvidence(
+    {
+      command: runtimeAllocation.chromiumCommand?.executable,
+      args: runtimeAllocation.chromiumCommand?.args,
+    },
+    runtimeAllocation.chromiumNetworkPolicy,
+  );
+  if (
+    canonicalJson(networkCommand) !==
+    canonicalJson(runtimeAllocation.chromiumCommand)
+  ) {
+    throw new Error("capture Chromium network command evidence is not exact");
+  }
   const captureBuild = validateCompactBuildProof(
     receipt.build,
     "capture receipt build",
@@ -1177,6 +1228,12 @@ export async function loadVerifiedRuntimeEvidence({
     request.scenarioPath !== expectedScenarioPath ||
     request.artifactRoot !== externalRoot ||
     request.bundleRoot !== hostRoot ||
+    request.runtimeTempNamespaceRoot !==
+      result.runtimeTemp.lease.namespaceRoot ||
+    request.runtimeTemp.runId !== runId ||
+    request.runtimeTemp.artifactRoot !== externalRoot ||
+    canonicalJson(request.runtimeTemp) !==
+      canonicalJson(result.runtimeTemp.lease) ||
     request.runId !== runId ||
     request.runtimeId !== result.runtimeId ||
     request.buildManifestPath !== expectedBuildManifest ||
@@ -1473,7 +1530,8 @@ export async function loadVerifiedRuntimeEvidence({
     receipt.capture?.rawMasterDigest !== rawRecord.identity.digest ||
     receipt.capture?.captureEvidenceDigest !== contentRecord.identity.digest ||
     canonicalJson(receipt.execution) !== canonicalJson(result.execution) ||
-    canonicalJson(receipt.teardown) !== canonicalJson(result.teardown)
+    canonicalJson(receipt.teardown) !== canonicalJson(result.teardown) ||
+    canonicalJson(receipt.runtimeTemp) !== canonicalJson(result.runtimeTemp)
   ) {
     throw new Error(
       "application runtime receipt does not bind request, source, build, capture, or teardown",

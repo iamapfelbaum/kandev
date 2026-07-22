@@ -5,7 +5,16 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import {
+  chromiumNetworkCommandEvidence,
+  chromiumNetworkIsolationPolicy,
+} from "./capture-runtime.mjs";
 import { computeScenarioDigest } from "./scenario.mjs";
+import {
+  prepareRuntimeTempNamespace,
+  releaseRuntimeWorkerTemp,
+  reserveRuntimeWorkerTemp,
+} from "./runtime-temp.mjs";
 
 const runtimeEvidence = await import("./runtime-evidence.mjs").catch(
   () => ({}),
@@ -88,6 +97,9 @@ async function evidenceFixture(
     path.join(os.tmpdir(), "highlight-runtime-evidence-"),
   );
   t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const runtimeTempParent = await fs.mkdtemp("/tmp/khre-");
+  t.after(() => fs.rm(runtimeTempParent, { recursive: true, force: true }));
+  const runtimeTempNamespaceRoot = path.join(runtimeTempParent, "n");
   const repositoryRoot = path.join(root, "repo");
   const artifactRoot = path.join(root, "artifacts");
   const scenarioId = "quick-start";
@@ -251,6 +263,14 @@ async function evidenceFixture(
     sourceSha: SOURCE_SHA,
     outputs: buildOutputs,
   };
+  const runtimeTempNamespace = await prepareRuntimeTempNamespace({
+    namespaceRoot: runtimeTempNamespaceRoot,
+  });
+  const runtimeTemp = await reserveRuntimeWorkerTemp({
+    namespace: runtimeTempNamespace,
+    runId,
+    artifactRoot,
+  });
   const workerRequest = {
     contract: "kandev-highlight-runtime-worker-request-v1",
     version: 1,
@@ -262,8 +282,10 @@ async function evidenceFixture(
     source: "pr_head",
     runId,
     pullRequest: { number: 42, baseSha: BASE_SHA },
+    runtimeTempNamespaceRoot,
+    coordinateLockRoot: runtimeTemp.coordinateLockRoot,
     bundleRoot: hostRoot,
-    workerTempRoot: path.join(hostRoot, "worker-tmp"),
+    runtimeTemp,
     sourceProof,
     build,
     tools: {
@@ -409,6 +431,43 @@ async function evidenceFixture(
         toleranceFrames: 1,
       },
     },
+    runtime: {
+      allocation: (() => {
+        const chromiumNetworkPolicy = chromiumNetworkIsolationPolicy();
+        return {
+          display: ":240.0",
+          displayNumber: 240,
+          cdpPort: 50_001,
+          chromiumSandbox: workerRequest.chromiumSandbox,
+          chromiumNetworkPolicy,
+          chromiumCommand: chromiumNetworkCommandEvidence(
+            {
+              command: workerRequest.tools.chromium,
+              args: [
+                `--disable-features=${chromiumNetworkPolicy.disabledFeatures.join(",")}`,
+                ...chromiumNetworkPolicy.switches,
+              ],
+            },
+            chromiumNetworkPolicy,
+          ),
+          artifactRoot: attemptRoot,
+          profileDir: path.join(attemptRoot, "runtime", "browser-profile"),
+          lockPath: path.join(attemptRoot, "runtime", "capture.lock"),
+          coordinateLockRoot: runtimeTemp.coordinateLockRoot,
+          coordinateLockIdentity: runtimeTemp.coordinateLockIdentity,
+          coordinateLockPath: path.join(
+            runtimeTemp.coordinateLockRoot,
+            "kandev-highlight-240-50001.lock",
+          ),
+        };
+      })(),
+      teardown: {
+        processesGone: true,
+        coordinatesReleased: true,
+        profileRemoved: true,
+        lockRemoved: true,
+      },
+    },
     rawMaster: {
       path: rawMasterPath,
       bytes: rawMaster.length,
@@ -510,6 +569,8 @@ async function evidenceFixture(
     frontendPortReleased: true,
     fixtureTempRootOwned: true,
     fixtureTempRootRemoved: true,
+    runtimeTempLeaseVerified: true,
+    runtimeTempRootRemoved: true,
     capture: {
       declared: true,
       cdpPortReleased: true,
@@ -525,6 +586,32 @@ async function evidenceFixture(
     Object.entries(hostTeardown).every(
       ([key, value]) => key === "capture" || value === true,
     ) && Object.values(hostTeardown.capture).every((value) => value === true);
+  const runtimeTempEvidence = {
+    namespace: runtimeTempNamespace,
+    recovery: { removed: [], live: [], preserved: [] },
+    lease: runtimeTemp,
+    release: {
+      contract: "kandev-highlight-runtime-temp-release-v1",
+      version: 1,
+      runId: runtimeTemp.runId,
+      workerTempRoot: runtimeTemp.workerTempRoot,
+      leasePath: runtimeTemp.leasePath,
+      leaseDigest: runtimeTemp.leaseIdentity.digest,
+      rootIdentity: runtimeTemp.rootIdentity,
+      verified: true,
+      leaseRemoved: true,
+      removed: true,
+    },
+    verification: {
+      contract: "kandev-highlight-runtime-temp-verification-v1",
+      version: 1,
+      status: "verified",
+      phase: "release",
+      code: "released",
+      reasonDigest: null,
+      preservedRoot: null,
+    },
+  };
   const runtimeReceiptBody = {
     contract: "kandev-highlight-application-runtime-v1",
     version: 1,
@@ -556,6 +643,7 @@ async function evidenceFixture(
     },
     execution,
     teardown: hostTeardown,
+    runtimeTemp: runtimeTempEvidence,
     log: logIdentity,
     workerResult: workerIdentity,
     completedAt: "2026-07-22T00:02:00.000Z",
@@ -601,6 +689,7 @@ async function evidenceFixture(
     },
     execution,
     teardown: hostTeardown,
+    runtimeTemp: runtimeTempEvidence,
     failure: succeeded
       ? null
       : {
@@ -614,6 +703,7 @@ async function evidenceFixture(
     completedAt: "2026-07-22T00:02:00.000Z",
   };
   await writeJson(resultPath, withDigest(resultBody, "resultDigest"));
+  await releaseRuntimeWorkerTemp(runtimeTemp);
 
   return {
     artifactRoot,

@@ -8,6 +8,7 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import { resolveCaptureProfile } from "./camera-compiler.mjs";
+import { chromiumNetworkIsolationPolicy } from "./capture-runtime.mjs";
 import {
   assertCleanCaptureProgress,
   assertStableCaptureBuildVerification,
@@ -40,6 +41,23 @@ const MOBILE_SCENARIO_PROFILE = Object.freeze({
   viewport: { width: 430, height: 932 },
   deviceScaleFactor: 3,
 });
+
+function chromiumNetworkPlan(executable) {
+  const policy = chromiumNetworkIsolationPolicy();
+  return {
+    policy,
+    command: {
+      name: "chromium",
+      command: executable,
+      args: [
+        `--disable-features=${policy.disabledFeatures.join(",")}`,
+        ...policy.switches,
+      ],
+      env: {},
+      logPath: "/tmp/chromium.log",
+    },
+  };
+}
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -1269,6 +1287,7 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
   const timeline = compileTimeline(scenario);
   const paths = runtime(profile, artifactRoot);
   const events = [];
+  const network = chromiumNetworkPlan("/opt/chromium");
   const plan = {
     ...paths,
     contract: "kandev-highlight-capture-runtime-v1",
@@ -1280,11 +1299,14 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     profileDir: path.join(artifactRoot, "runtime", "browser-profile"),
     lockPath: path.join(artifactRoot, "runtime", "capture.lock"),
     coordinateLockRoot: path.join(root, "worker-tmp"),
+    coordinateLockIdentity: null,
     coordinateLockPath: path.join(
       root,
       "worker-tmp",
       "kandev-highlight-261-49261.lock",
     ),
+    chromiumNetworkPolicy: network.policy,
+    chromium: network.command,
   };
   const tools = {
     ffmpeg: {
@@ -1691,6 +1713,7 @@ test("capture failure aggregates every cleanup error and persists structured tea
     },
   };
   const timeline = compileTimeline(scenario);
+  const network = chromiumNetworkPlan("/opt/chromium");
   const plan = {
     ...paths,
     contract: "kandev-highlight-capture-runtime-v1",
@@ -1701,6 +1724,9 @@ test("capture failure aggregates every cleanup error and persists structured tea
     cdpEndpoint: "http://127.0.0.1:49262",
     profileDir: path.join(artifactRoot, "runtime", "browser-profile"),
     lockPath: path.join(artifactRoot, "runtime", "capture.lock"),
+    coordinateLockIdentity: null,
+    chromiumNetworkPolicy: network.policy,
+    chromium: network.command,
   };
   let currentUrl = "about:blank";
   const page = new EventEmitter();

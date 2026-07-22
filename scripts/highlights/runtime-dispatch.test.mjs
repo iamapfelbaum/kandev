@@ -133,6 +133,35 @@ function successfulHostResult(request, fixtureValue) {
     headSha: SOURCE_SHA,
     currentMainSha: MAIN_SHA,
   };
+  const namespaceIdentity = { dev: 1, ino: 11, uid: 1000, mode: 0o700 };
+  const coordinateLockIdentity = { dev: 1, ino: 12, uid: 0, mode: 0o1777 };
+  const rootIdentity = { dev: 1, ino: 13, uid: 1000, mode: 0o700 };
+  const workerTempRoot = path.join(
+    request.runtimeTempNamespaceRoot,
+    "worker-fixture",
+  );
+  const leasePath = path.join(workerTempRoot, "runtime-temp.lease.json");
+  const lease = {
+    contract: "kandev-highlight-runtime-temp-lease-v1",
+    version: 1,
+    namespaceRoot: request.runtimeTempNamespaceRoot,
+    coordinateLockRoot: request.coordinateLockRoot,
+    workerTempRoot,
+    leasePath,
+    runId: request.runId,
+    artifactRoot: request.artifactRoot,
+    owner: { pid: 42_424, startToken: "123456" },
+    namespaceIdentity,
+    coordinateLockIdentity,
+    rootIdentity,
+    leaseIdentity: {
+      path: leasePath,
+      dev: 1,
+      ino: 14,
+      bytes: 512,
+      digest: digest("runtime-temp-lease"),
+    },
+  };
   const body = {
     contract: "kandev-highlight-runtime-host-result-v1",
     version: 1,
@@ -253,6 +282,8 @@ function successfulHostResult(request, fixtureValue) {
       frontendPortReleased: true,
       fixtureTempRootOwned: true,
       fixtureTempRootRemoved: true,
+      runtimeTempLeaseVerified: true,
+      runtimeTempRootRemoved: true,
       capture: {
         declared: true,
         cdpPortReleased: true,
@@ -261,6 +292,39 @@ function successfulHostResult(request, fixtureValue) {
         recorderGone: true,
         profileRemoved: true,
         locksRemoved: true,
+      },
+    },
+    runtimeTemp: {
+      namespace: {
+        contract: "kandev-highlight-runtime-temp-namespace-v1",
+        version: 1,
+        namespaceRoot: request.runtimeTempNamespaceRoot,
+        coordinateLockRoot: lease.coordinateLockRoot,
+        namespaceIdentity,
+        coordinateLockIdentity,
+      },
+      recovery: { removed: [], live: [], preserved: [] },
+      lease,
+      release: {
+        contract: "kandev-highlight-runtime-temp-release-v1",
+        version: 1,
+        runId: lease.runId,
+        workerTempRoot: lease.workerTempRoot,
+        leasePath: lease.leasePath,
+        leaseDigest: lease.leaseIdentity.digest,
+        rootIdentity: lease.rootIdentity,
+        verified: true,
+        leaseRemoved: true,
+        removed: true,
+      },
+      verification: {
+        contract: "kandev-highlight-runtime-temp-verification-v1",
+        version: 1,
+        status: "verified",
+        phase: "release",
+        code: "released",
+        reasonDigest: null,
+        preservedRoot: null,
       },
     },
     failure: null,
@@ -401,6 +465,54 @@ test("trusted dispatch accepts truthful host log truncation at the frozen bound"
   assert.equal(result.contract, "kandev-highlight-runtime-command-v1");
 });
 
+test("trusted dispatch rejects unbound runtime temp identities and recovery paths", async (t) => {
+  for (const { label, mutate, expected } of [
+    {
+      label: "namespace identity",
+      mutate: (result) => {
+        result.runtimeTemp.namespace.namespaceIdentity = null;
+      },
+      expected: /runtime temp.*identity|namespace identity/i,
+    },
+    {
+      label: "escaped recovery path",
+      mutate: (result) => {
+        result.runtimeTemp.recovery.preserved = ["/tmp/outside-worker-root"];
+      },
+      expected: /runtime temp.*recovery|worker.*namespace/i,
+    },
+  ]) {
+    await t.test(label, async (subtest) => {
+      const value = await fixture(subtest);
+      const deps = dependencies([], value);
+      const runRuntimeHost = deps.runRuntimeHost;
+      deps.runRuntimeHost = async (options) => {
+        const result = await runRuntimeHost(options);
+        mutate(result);
+        const body = structuredClone(result);
+        delete body.resultDigest;
+        result.resultDigest = digest(canonicalJson(body));
+        return result;
+      };
+
+      await assert.rejects(
+        dispatch()({
+          command: "capture",
+          scenarioPath: value.scenarioPath,
+          artifactRoot: value.artifactRoot,
+          source: "pr_head",
+          runId: "run-001",
+          prNumber: 42,
+          prBaseSha: BASE_SHA,
+          repoRoot: value.repoRoot,
+          dependencies: deps,
+        }),
+        expected,
+      );
+    });
+  }
+});
+
 test("trusted run validates delivery before build and orders host capture then render QA stage", async (t) => {
   const value = await fixture(t);
   const events = [];
@@ -483,6 +595,12 @@ test("trusted dry-run emits an exact runtime plan without writes, builds, spawns
     prBaseSha: BASE_SHA,
     repoRoot: value.repoRoot,
     dryRun: true,
+    env: {
+      KANDEV_HIGHLIGHT_RUNTIME_TEMP_ROOT: path.join(
+        value.root,
+        "custom-worker-temp",
+      ),
+    },
     dependencies: {
       verifySourceGate: forbidden,
       resolvePrMetadata: forbidden,
@@ -506,6 +624,11 @@ test("trusted dry-run emits an exact runtime plan without writes, builds, spawns
   assert.equal(plan.contract, "kandev-highlight-runtime-dry-run-v1");
   assert.equal(plan.zeroWrites, true);
   assert.equal(plan.runtime.runtimeId, "kandev-isolated-e2e");
+  assert.equal(
+    plan.host.runtimeTempNamespaceRoot,
+    path.join(value.root, "custom-worker-temp"),
+  );
+  assert.equal(plan.host.coordinateLockRoot, "/tmp");
   assert.equal(
     plan.paths.build,
     path.join(value.artifactRoot, "runtime-builds", "run-001"),

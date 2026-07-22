@@ -18,6 +18,8 @@ export interface HighlightRuntimeHostRequest {
   source: HighlightSourceMode;
   runId: string;
   pullRequest: HighlightRuntimePullRequest | null;
+  runtimeTempNamespaceRoot: string;
+  coordinateLockRoot: "/tmp";
 }
 
 export interface HighlightRuntimeSourceProof {
@@ -68,13 +70,96 @@ export interface HighlightRuntimeWorkerRequest {
   source: HighlightSourceMode;
   runId: string;
   pullRequest: HighlightRuntimePullRequest | null;
+  runtimeTempNamespaceRoot: string;
+  coordinateLockRoot: "/tmp";
   bundleRoot: string;
-  workerTempRoot: string;
+  runtimeTemp: HighlightRuntimeTempLease;
   sourceProof: HighlightRuntimeSourceProof;
   build: HighlightRuntimeBuildIdentity;
   tools: HighlightRuntimeToolPaths;
   chromiumSandbox: HighlightChromiumSandboxPolicy;
   ports: { offset: number; backend: number };
+}
+
+export interface HighlightRuntimePathIdentity {
+  dev: number;
+  ino: number;
+  uid: number;
+  mode: number;
+}
+
+export interface HighlightRuntimeTempLease {
+  contract: "kandev-highlight-runtime-temp-lease-v1";
+  version: 1;
+  namespaceRoot: string;
+  coordinateLockRoot: string;
+  workerTempRoot: string;
+  leasePath: string;
+  runId: string;
+  artifactRoot: string;
+  owner: { pid: number; startToken: string };
+  namespaceIdentity: HighlightRuntimePathIdentity;
+  coordinateLockIdentity: HighlightRuntimePathIdentity;
+  rootIdentity: HighlightRuntimePathIdentity;
+  leaseIdentity: HighlightFileIdentity & { dev: number; ino: number };
+}
+
+export interface HighlightRuntimeTempVerificationSuccess {
+  contract: "kandev-highlight-runtime-temp-verification-v1";
+  version: 1;
+  status: "verified";
+  phase: "release";
+  code: "released";
+  reasonDigest: null;
+  preservedRoot: null;
+}
+
+export interface HighlightRuntimeTempVerificationFailure {
+  contract: "kandev-highlight-runtime-temp-verification-v1";
+  version: 1;
+  status: "failed";
+  phase: "verify" | "process-group" | "release";
+  code:
+    | "cleanup-tamper"
+    | "lease-tamper"
+    | "namespace-tamper"
+    | "owner-mismatch"
+    | "process-group-live"
+    | "release-failed"
+    | "retained-entries"
+    | "verification-failed";
+  reasonDigest: HighlightSha256;
+  preservedRoot: string;
+}
+
+export type HighlightRuntimeTempVerification =
+  | HighlightRuntimeTempVerificationSuccess
+  | HighlightRuntimeTempVerificationFailure;
+
+export interface HighlightRuntimeTempEvidence {
+  namespace: {
+    contract: "kandev-highlight-runtime-temp-namespace-v1";
+    version: 1;
+    namespaceRoot: string;
+    coordinateLockRoot: string;
+    namespaceIdentity: HighlightRuntimePathIdentity;
+    coordinateLockIdentity: HighlightRuntimePathIdentity;
+  };
+  recovery: { removed: string[]; live: string[]; preserved: string[] };
+  lease: HighlightRuntimeTempLease | null;
+  release: {
+    contract: "kandev-highlight-runtime-temp-release-v1";
+    version: 1;
+    runId: string;
+    workerTempRoot: string;
+    leasePath: string;
+    leaseDigest: HighlightSha256;
+    rootIdentity: HighlightRuntimePathIdentity;
+    verified: true;
+    leaseRemoved: true;
+    removed: true;
+  } | null;
+  verification: HighlightRuntimeTempVerification | null;
 }
 
 export interface HighlightChromiumSandboxPolicy {
@@ -88,13 +173,51 @@ export interface HighlightChromiumSandboxPolicy {
   authorization: HighlightDisabledSandboxAuthorization | null;
 }
 
-export interface HighlightDisabledSandboxAuthorization {
+export interface HighlightTrustedMainDisabledSandboxAuthorization {
   contract: "kandev-highlight-disabled-sandbox-authorization-v1";
   sourceMode: "current_main";
   sourceSha: string;
   allowedOrigin: string;
   guardContract: "kandev-highlight-origin-isolation-v1";
 }
+
+export interface HighlightDockerSourceBinding {
+  contract: "kandev-highlight-docker-source-binding-v1";
+  version: 1;
+  mode: "exact-boundary" | "scenario-child";
+  selectedSha: string;
+  boundarySourceSha: string;
+  originMainSha: string;
+  parentSha: string | null;
+  scenarioPath: string | null;
+}
+
+export interface HighlightDockerBoundaryAuthorization {
+  contract: "kandev-highlight-docker-boundary-authorization-v1";
+  requestDigest: HighlightSha256;
+  containerId: string;
+  imageId: HighlightSha256;
+  boundarySourceSha: string;
+  originMainSha: string;
+  appArmorProfile: "docker-default";
+  networkMode: "none";
+  authorizationPath: "/kandev-boundary/authorization.json";
+  readOnlyMount: true;
+}
+
+export interface HighlightDockerDisabledSandboxAuthorization {
+  contract: "kandev-highlight-disabled-sandbox-authorization-v2";
+  sourceMode: "pr_head";
+  sourceSha: string;
+  allowedOrigin: string;
+  guardContract: "kandev-highlight-origin-isolation-v1";
+  sourceBinding: HighlightDockerSourceBinding;
+  outerBoundary: HighlightDockerBoundaryAuthorization;
+}
+
+export type HighlightDisabledSandboxAuthorization =
+  | HighlightTrustedMainDisabledSandboxAuthorization
+  | HighlightDockerDisabledSandboxAuthorization;
 
 export interface HighlightApplicationRuntimeProof {
   contract: "kandev-highlight-application-runtime-pre-teardown-v1";
@@ -235,6 +358,8 @@ export interface HighlightRuntimeTeardownEvidence {
   frontendPortReleased: boolean;
   fixtureTempRootOwned: boolean;
   fixtureTempRootRemoved: boolean;
+  runtimeTempLeaseVerified: boolean;
+  runtimeTempRootRemoved: boolean;
   capture: HighlightCaptureTeardownEvidence | null;
 }
 
@@ -287,6 +412,7 @@ export interface HighlightRuntimeHostResult {
   capture: HighlightRuntimeCaptureIdentity | null;
   execution: HighlightRuntimeExecution | null;
   teardown: HighlightRuntimeTeardownEvidence | null;
+  runtimeTemp: HighlightRuntimeTempEvidence;
   failure: HighlightRuntimeFailure | null;
   completedAt: string;
   resultDigest: HighlightSha256;

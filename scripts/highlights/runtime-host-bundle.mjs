@@ -13,6 +13,10 @@ import {
   validateRuntimeWorkerRequest,
   validateRuntimeWorkerResult,
 } from "./runtime-host-contracts.mjs";
+import {
+  chromiumNetworkCommandEvidence,
+  chromiumNetworkIsolationPolicy,
+} from "./capture-runtime.mjs";
 
 const MAX_CAPTURE_CONTENT_EVIDENCE_BYTES = 512 * 1024;
 
@@ -428,17 +432,27 @@ export async function verifyRuntimeCaptureTeardown(
       "displayNumber",
       "cdpPort",
       "chromiumSandbox",
+      "chromiumNetworkPolicy",
+      "chromiumCommand",
       "artifactRoot",
       "profileDir",
       "lockPath",
       "coordinateLockRoot",
+      "coordinateLockIdentity",
       "coordinateLockPath",
     ],
     "capture runtime allocation",
   );
   const expected = expectedRuntimeCapturePaths(workerRequest, scenarioId);
+  const chromiumCommand = chromiumNetworkCommandEvidence(
+    {
+      command: runtime.allocation.chromiumCommand?.executable,
+      args: runtime.allocation.chromiumCommand?.args,
+    },
+    runtime.allocation.chromiumNetworkPolicy,
+  );
   const expectedCoordinateLockPath = path.join(
-    workerRequest.workerTempRoot,
+    workerRequest.runtimeTemp.coordinateLockRoot,
     `kandev-highlight-${runtime.allocation.displayNumber}-${runtime.allocation.cdpPort}.lock`,
   );
   if (
@@ -449,10 +463,18 @@ export async function verifyRuntimeCaptureTeardown(
     runtime.allocation.cdpPort > 65_535 ||
     canonicalJson(runtime.allocation.chromiumSandbox) !==
       canonicalJson(workerRequest.chromiumSandbox) ||
+    canonicalJson(runtime.allocation.chromiumNetworkPolicy) !==
+      canonicalJson(chromiumNetworkIsolationPolicy()) ||
+    canonicalJson(runtime.allocation.chromiumCommand) !==
+      canonicalJson(chromiumCommand) ||
+    chromiumCommand.executable !== workerRequest.tools.chromium ||
     runtime.allocation.artifactRoot !== expected.captureRoot ||
     runtime.allocation.profileDir !== expected.captureProfileDir ||
     runtime.allocation.lockPath !== expected.captureLockPath ||
-    runtime.allocation.coordinateLockRoot !== workerRequest.workerTempRoot ||
+    runtime.allocation.coordinateLockRoot !==
+      workerRequest.runtimeTemp.coordinateLockRoot ||
+    canonicalJson(runtime.allocation.coordinateLockIdentity) !==
+      canonicalJson(workerRequest.runtimeTemp.coordinateLockIdentity) ||
     runtime.allocation.coordinateLockPath !== expectedCoordinateLockPath
   ) {
     throw new Error(
@@ -520,7 +542,7 @@ export async function verifyRuntimeCaptureTeardown(
   if (!processes.has("xvfb") || !processes.has("chromium")) {
     throw new Error("capture runtime teardown omitted Xvfb or Chromium");
   }
-  await requireCanonicalPath(workerRequest.workerTempRoot, {
+  await requireCanonicalPath(workerRequest.runtimeTemp.coordinateLockRoot, {
     kind: "directory",
     label: "host-owned worker temp root",
   });
@@ -571,6 +593,7 @@ export function buildRuntimeApplicationReceipt({
   build,
   execution,
   teardown,
+  runtimeTemp,
   completedAt,
 }) {
   const body = {
@@ -604,6 +627,7 @@ export function buildRuntimeApplicationReceipt({
     },
     execution,
     teardown,
+    runtimeTemp,
     log: logIdentity,
     workerResult: workerIdentity,
     completedAt,
@@ -658,7 +682,6 @@ export async function reserveRuntimeHostBundle(request) {
     bundleRoot,
     homeRoot: path.join(bundleRoot, "runner-home"),
     fixtureRoot: path.join(bundleRoot, "fixture-root"),
-    workerTempRoot: path.join(bundleRoot, "worker-tmp"),
     requestPath: path.join(bundleRoot, "request.json"),
     workerResultPath: path.join(bundleRoot, "worker-result.json"),
     logPath: path.join(bundleRoot, "playwright.log"),
@@ -668,14 +691,9 @@ export async function reserveRuntimeHostBundle(request) {
 }
 
 export async function prepareRuntimeHostBundle(paths) {
-  await Promise.all([
-    fs.mkdir(paths.homeRoot),
-    fs.mkdir(paths.fixtureRoot),
-    fs.mkdir(paths.workerTempRoot),
-  ]);
+  await Promise.all([fs.mkdir(paths.homeRoot), fs.mkdir(paths.fixtureRoot)]);
   for (const [root, label] of [
     [paths.fixtureRoot, "host-owned fixture root"],
-    [paths.workerTempRoot, "host-owned worker temp root"],
   ]) {
     const identity = await requireCanonicalPath(root, {
       kind: "directory",
@@ -716,6 +734,7 @@ export function buildRuntimeHostResult({
   capture,
   execution,
   teardown,
+  runtimeTemp,
   failure,
   completedAt,
 }) {
@@ -742,6 +761,7 @@ export function buildRuntimeHostResult({
     capture,
     execution,
     teardown,
+    runtimeTemp,
     failure,
     completedAt,
   };
