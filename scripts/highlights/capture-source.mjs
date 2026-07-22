@@ -828,8 +828,29 @@ export async function connectCaptureBrowser({ chromiumApi, endpoint } = {}) {
     page,
     cdp,
     async close() {
+      let chromiumCloseError;
+      try {
+        await cdp.send("Browser.close");
+      } catch (error) {
+        chromiumCloseError = error;
+      }
       await cdp.detach().catch(() => {});
-      await browser.close();
+      let playwrightCloseError;
+      try {
+        await browser.close();
+      } catch (error) {
+        const disconnected =
+          typeof browser.isConnected === "function" &&
+          !browser.isConnected();
+        if (!disconnected) playwrightCloseError = error;
+      }
+      if (chromiumCloseError) {
+        throw new Error(
+          `Chromium Browser.close failed: ${chromiumCloseError.message}`,
+          { cause: chromiumCloseError },
+        );
+      }
+      if (playwrightCloseError) throw playwrightCloseError;
     },
   };
 }

@@ -18,6 +18,7 @@ import {
   chooseReadyCaptureEncoder,
   closeCaptureBrowserWithIsolation,
   collectCaptureReceipt,
+  connectCaptureBrowser,
   configureCaptureTarget,
   createTrustedCaptureBuildVerifier,
   createTrustedInputAdapters,
@@ -259,6 +260,86 @@ test("resolves Chromium from native ESM or Playwright CommonJS default interop",
     () => playwrightChromiumFromModule({ default: {} }),
     /does not export chromium/,
   );
+});
+
+test("remote browser teardown asks Chromium to exit before Playwright disconnects", async () => {
+  const events = [];
+  let connected = true;
+  const page = {};
+  const cdp = {
+    async send(method) {
+      events.push(`send:${method}`);
+      assert.equal(method, "Browser.close");
+      connected = false;
+    },
+    async detach() {
+      events.push("detach");
+      throw new Error("Target page, context or browser has been closed");
+    },
+  };
+  const context = {
+    pages: () => [page],
+    newCDPSession: async () => cdp,
+  };
+  const browser = {
+    contexts: () => [context],
+    isConnected: () => connected,
+    async close() {
+      events.push("playwright:close");
+      throw new Error("Browser has been closed");
+    },
+  };
+  const connection = await connectCaptureBrowser({
+    chromiumApi: { connectOverCDP: async () => browser },
+    endpoint: "http://127.0.0.1:49261",
+  });
+
+  await connection.close();
+
+  assert.deepEqual(events, [
+    "send:Browser.close",
+    "detach",
+    "playwright:close",
+  ]);
+});
+
+test("remote browser teardown surfaces a rejected Chromium close command", async () => {
+  const events = [];
+  const page = {};
+  const cdp = {
+    async send(method) {
+      events.push(`send:${method}`);
+      throw new Error("close command denied");
+    },
+    async detach() {
+      events.push("detach");
+    },
+  };
+  const context = {
+    pages: () => [page],
+    newCDPSession: async () => cdp,
+  };
+  const browser = {
+    contexts: () => [context],
+    isConnected: () => true,
+    async close() {
+      events.push("playwright:close");
+    },
+  };
+  const connection = await connectCaptureBrowser({
+    chromiumApi: { connectOverCDP: async () => browser },
+    endpoint: "http://127.0.0.1:49261",
+  });
+
+  await assert.rejects(
+    connection.close(),
+    /Chromium Browser\.close failed: close command denied/,
+  );
+  assert.deepEqual(events, [
+    "send:Browser.close",
+    "detach",
+    "playwright:close",
+  ]);
 });
 
 test("encoder readiness plan amortizes cold startup while proving sustained full-source throughput", () => {
