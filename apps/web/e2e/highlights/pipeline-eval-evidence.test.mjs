@@ -61,6 +61,17 @@ function technicalFixture(root = EVAL_ROOT) {
         reportPath: "qa/report.json",
         reportDigest: DIGEST,
       },
+      provenance: {
+        runtime: {
+          scanner: {
+            coverage: {
+              visibleDomText: true,
+              browserConsole: true,
+              runtimeLogs: false,
+            },
+          },
+        },
+      },
       assets: {
         desktop: {
           webm: asset("webm", "vp9"),
@@ -188,7 +199,11 @@ test("determinism normalization excludes volatile host data but retains semantic
     },
     camera: {
       plan: { initialZoom: 1, pointerTrack: [{ tMs: 612, x: 0.3, y: 0.4 }] },
-      track: { keyframes: [{ tMs: 0, zoom: 1, x: 0.5, y: 0.5 }] },
+      track: {
+        keyframes: [{ tMs: 0, zoom: 1, x: 0.5, y: 0.5 }],
+        focusTrack: [{ tMs: 0, x: 0.5, y: 0.5, zoom: 1 }],
+        pointerTrack: [{ tMs: 680.318, x: 0.3, y: 0.4 }],
+      },
       recordDigest: DIGEST,
       path: "/run-1/camera.json",
     },
@@ -212,6 +227,7 @@ test("determinism normalization excludes volatile host data but retains semantic
   second.camera.path = "/run-2/camera.json";
   second.camera.recordDigest = `sha256:${"d".repeat(64)}`;
   second.camera.plan.pointerTrack[0].tMs = 627;
+  second.camera.track.pointerTrack[0].tMs = 689.133;
   second.pointer.browserEpochMs = 111_111;
   second.pointer.pid = 999;
   second.frameTiming.absoluteMediaStartMs = 77_777;
@@ -228,6 +244,7 @@ test("determinism normalization excludes volatile host data but retains semantic
   assert.equal(normalized.timeline.events[0].startMs, 500);
   assert.deepEqual(normalized.seed.invariants, { columns: ["todo", "done"] });
   assert.equal(Object.hasOwn(normalized.camera.plan, "pointerTrack"), false);
+  assert.equal(Object.hasOwn(normalized.camera.track, "pointerTrack"), false);
   assert.equal(normalized.camera.track.keyframes[0].tMs, 0);
   assert.equal(normalized.camera.track.keyframes[0].zoom, 1);
   assert.equal(normalized.pointer.samples[0].storyTMs, 600);
@@ -237,12 +254,19 @@ test("determinism normalization excludes volatile host data but retains semantic
   assert.equal(JSON.stringify(normalized).includes("99999"), false);
 });
 
-test("determinism assertion reports semantic drift and ignores projected frame identity", () => {
+test("determinism assertion retains camera intent but ignores projected pointer identity", () => {
   const evidence = {
     scenario: { id: QUICK_START_ID, digest: DIGEST },
     timeline: { totalDurationMs: 3_000, events: [] },
     seed: { seedId: "seed", seedDigest: DIGEST, invariants: {} },
-    camera: { plan: { initialZoom: 1 }, track: { keyframes: [{ tMs: 0, zoom: 1 }] } },
+    camera: {
+      plan: { initialZoom: 1 },
+      track: {
+        keyframes: [{ tMs: 0, zoom: 1 }],
+        focusTrack: [{ tMs: 0, x: 0.5, y: 0.5, zoom: 1 }],
+        pointerTrack: [{ tMs: 680.318, x: 0.3, y: 0.4 }],
+      },
+    },
     pointer: { samples: [] },
     frameTiming: { fps: 25, storyDurationMs: 3_000, relativeStartFrame: 0 },
     selectedFrames: [{ storyTimeMs: 200, sha256: HEX_DIGEST }],
@@ -253,6 +277,18 @@ test("determinism assertion reports semantic drift and ignores projected frame i
   assert.throws(
     () => assertDeterministicRuns(first, cameraMismatch),
     /camera\.track\.keyframes\[0\]\.zoom/i,
+  );
+  const focusMismatch = structuredClone(first);
+  focusMismatch.camera.track.focusTrack[0].x = 0.6;
+  assert.throws(
+    () => assertDeterministicRuns(first, focusMismatch),
+    /camera\.track\.focusTrack\[0\]\.x/i,
+  );
+  const pointerJitter = structuredClone(evidence);
+  pointerJitter.camera.track.pointerTrack[0].tMs = 689.133;
+  assert.equal(
+    assertDeterministicRuns(first, normalizeDeterminismEvidence(pointerJitter)).passed,
+    true,
   );
   const frameIdentityDrift = structuredClone(evidence);
   frameIdentityDrift.selectedFrames[0].sha256 = "d".repeat(64);
@@ -449,6 +485,36 @@ test("technical review assertion requires review gate, browser media proofs, has
       () => assertTechnicalReview(invalid),
       /review|browser|contact.?sheet|bytes|sha|raw|log/i,
     );
+  }
+});
+
+test("technical review allows boolean scanner coverage but rejects raw payload values", async (t) => {
+  assert.doesNotThrow(() => assertTechnicalReview(technicalFixture()));
+  for (const item of [
+    {
+      name: "visible DOM text",
+      key: "visibleDomText",
+      payload: "secret visible DOM",
+    },
+    {
+      name: "browser console",
+      key: "browserConsole",
+      payload: ["secret console output"],
+    },
+    {
+      name: "runtime logs",
+      key: "runtimeLogs",
+      payload: { stdout: "secret runtime output" },
+    },
+  ]) {
+    await t.test(item.name, () => {
+      const fixture = technicalFixture();
+      fixture.review.provenance.runtime.scanner.coverage[item.key] = item.payload;
+      assert.throws(
+        () => assertTechnicalReview(fixture),
+        new RegExp(`${item.key}.*forbidden raw`, "i"),
+      );
+    });
   }
 });
 

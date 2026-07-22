@@ -97,7 +97,9 @@ function normalizeRenderedArtifacts(artifacts = []) {
 
 export function normalizeDeterminismEvidence(evidence = {}) {
   const cameraPlan = structuredClone(evidence.camera?.plan ?? {});
+  const cameraTrack = structuredClone(evidence.camera?.track ?? {});
   delete cameraPlan.pointerTrack;
+  delete cameraTrack.pointerTrack;
   return {
     scenario: stableObject(evidence.scenario),
     timeline: stableObject(evidence.timeline),
@@ -108,7 +110,7 @@ export function normalizeDeterminismEvidence(evidence = {}) {
     },
     camera: {
       plan: stableObject(cameraPlan),
-      track: stableObject(evidence.camera?.track),
+      track: stableObject(cameraTrack),
     },
     pointer: stableObject(evidence.pointer),
     frameTiming: normalizeFrameTiming(evidence.frameTiming),
@@ -175,13 +177,14 @@ export function assertDeterministicRuns(first, second) {
 function assertNoRawReviewPayload(value, pointer = "review") {
   if (!value || typeof value !== "object") return;
   for (const [key, child] of Object.entries(value)) {
-    if (
+    const payloadName =
       /^(?:visibleDomText|browserConsole|runtimeLogs|rawDomText|stdout|stderr|logContents|rawLogs?)$/i.test(
         key,
-      )
-    ) {
+      );
+    if (payloadName && typeof child !== "boolean") {
       throw new Error(`${pointer}.${key} embeds forbidden raw DOM or log payload`);
     }
+    if (payloadName) continue;
     assertNoRawReviewPayload(child, `${pointer}.${key}`);
   }
 }
