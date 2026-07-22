@@ -450,6 +450,32 @@ test("timeline compiler is deterministic and keeps cursor and camera events inde
   assert.equal(first.totalDurationMs, first.events.at(-1).endMs);
 });
 
+test("wait timeout bounds failures without reserving a storyboard hold", async () => {
+  const { compileTimeline, renderStoryboard, validateScenario } = await import(scenarioModule);
+  const scenario = validScenario();
+  scenario.story.openingSettleMs = 400;
+  scenario.story.actions = [
+    { kind: "waitForVisible", target: { testId: "ready" }, timeoutMs: 5_000 },
+    { kind: "waitForState", target: { testId: "save" }, state: "enabled", timeoutMs: 5_000 },
+  ];
+  scenario.story.endingSettleMs = 400;
+
+  assert.deepEqual(validateScenario(scenario), { ok: true, errors: [] });
+  const timeline = compileTimeline(scenario);
+  const waits = timeline.events.filter((event) => event.kind.startsWith("waitFor"));
+  assert.deepEqual(waits.map(({ startMs, endMs, actionDurationMs, timeoutBoundMs }) => ({
+    startMs,
+    endMs,
+    actionDurationMs,
+    timeoutBoundMs,
+  })), [
+    { startMs: 400, endMs: 400, actionDurationMs: 0, timeoutBoundMs: 5_000 },
+    { startMs: 400, endMs: 400, actionDurationMs: 0, timeoutBoundMs: 5_000 },
+  ]);
+  assert.equal(timeline.totalDurationMs, 800);
+  assert.match(renderStoryboard(timeline), /timeout bound 5000ms; adds no hold/i);
+});
+
 test("storyboard renders machine JSON and human Markdown", async () => {
   const { compileTimeline, renderStoryboard } = await import(scenarioModule);
   const timeline = compileTimeline(validScenario());

@@ -166,7 +166,7 @@ export function compileTimeline(scenario, options = {}) {
   assertValidScenario(scenario, options);
   const events = [];
   let cursorMs = 0;
-  const append = ({ kind, durationMs, sourcePointer, intent, movesCursor = false, controlsCamera = false, settleMs = 0, cursorDurationMs = 0, activationDurationMs = 0, approachDurationMs = 0 }) => {
+  const append = ({ kind, durationMs, sourcePointer, intent, movesCursor = false, controlsCamera = false, settleMs = 0, cursorDurationMs = 0, activationDurationMs = 0, approachDurationMs = 0, timeoutBoundMs = null }) => {
     const actionDurationMs = durationMs;
     const totalDurationMs = actionDurationMs + settleMs;
     const event = {
@@ -183,6 +183,7 @@ export function compileTimeline(scenario, options = {}) {
       cursorDurationMs,
       activationDurationMs,
       approachDurationMs,
+      timeoutBoundMs,
       intent,
     };
     events.push(event);
@@ -208,6 +209,7 @@ export function compileTimeline(scenario, options = {}) {
       cursorDurationMs: timing.cursorDurationMs,
       activationDurationMs: timing.activationDurationMs,
       approachDurationMs: timing.approachDurationMs,
+      timeoutBoundMs: timing.timeoutBoundMs ?? null,
     });
   });
   append({
@@ -573,7 +575,10 @@ function actionTiming(action) {
     case "hover": return cursorTiming(action.durationMs ?? 250);
     case "moveCursor": return cursorTiming(action.durationMs ?? 350);
     case "waitForVisible":
-    case "waitForState": return simpleTiming(action.timeoutMs ?? 2000);
+    case "waitForState": return {
+      ...simpleTiming(0),
+      timeoutBoundMs: action.timeoutMs ?? 2000,
+    };
     case "drag": {
       const approachDurationMs = action.approachDurationMs ?? 350;
       const dragDurationMs = action.durationMs ?? 600;
@@ -622,8 +627,8 @@ function describeAction(action) {
     case "press": return `Press ${action.key} on ${target}`;
     case "hover": return `Hover ${target}`;
     case "moveCursor": return `Move cursor to ${target}`;
-    case "waitForVisible": return `Wait for ${target} to be visible`;
-    case "waitForState": return `Wait for ${target} to become ${action.state}`;
+    case "waitForVisible": return `Assert ${target} is visible (timeout bound ${action.timeoutMs ?? 2000}ms; adds no hold)`;
+    case "waitForState": return `Assert ${target} is ${action.state} (timeout bound ${action.timeoutMs ?? 2000}ms; adds no hold)`;
     case "drag": return `Drag ${describeTarget(action.from)} to ${describeTarget(action.to)}`;
     case "pause": return "Pause on current product state";
     case "cameraFocus": return `Focus camera on ${target} without changing zoom`;

@@ -18,8 +18,11 @@ intent or runtime source; never patch delivery bytes or provenance after QA.
 
 - `planned duration ... exceeds 15000ms`: remove dead work through deterministic
   state/waits or split story. Do not speed-ramp.
-- timeout: verify seed invariant and wait for visible/state payoff. Increase
-  bounded timeout only when product has legitimate deterministic latency.
+- wait timeout: verify seed invariant and target state. `timeoutMs` is only a
+  failure bound and adds no storyboard hold.
+- `waitForVisible`/`waitForState` deterministic timing overrun: make seeded
+  state resolve immediately. Use explicit `pause` or `settleMs` when viewers
+  should see a hold; do not inflate assertion timeout.
 - opening/ending settle failure: use at least 400ms and ensure UI, camera, and
   cursor are motionless for full interval.
 - trusted pointer cadence failure: reduce capture load or use measured recorder

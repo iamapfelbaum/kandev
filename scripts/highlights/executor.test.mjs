@@ -461,7 +461,10 @@ function timedScenario() {
     setup: { route: "workspace.board", primitives: [{ primitiveId: "prepare", input: { fixed: true } }] },
     story: {
       openingSettleMs: 400,
-      actions: [{ kind: "waitForVisible", target: { testId: "ready" }, timeoutMs: 1_000 }],
+      actions: [
+        { kind: "waitForVisible", target: { testId: "ready" }, timeoutMs: 5_000 },
+        { kind: "waitForState", target: { testId: "panel" }, state: "attached", timeoutMs: 5_000 },
+      ],
       endingSettleMs: 400,
     },
   };
@@ -490,13 +493,13 @@ test("prepare boundary completes seed, route, setup, and cursor resync before re
   assert.equal(page.log.some((entry) => entry.startsWith("wait:")), false);
 });
 
-test("prepared execution pads early waits to timeline and includes settled bookends", async () => {
+test("prepared execution allows a quick wait assertion without padding its timeout bound", async () => {
   const scenario = timedScenario();
   const order = [];
   let clock = 0;
   const page = fakePage();
   page.waitForTimeout = async (ms) => { order.push(["sleep", ms]); clock += ms; };
-  page.locator.waitFor = async () => { order.push(["visible"]); };
+  page.locator.waitFor = async (options) => { order.push([options.state, options.timeout]); clock += 10; };
   const prepared = await prepareScenario({
     scenario,
     page,
@@ -513,20 +516,25 @@ test("prepared execution pads early waits to timeline and includes settled booke
   });
 
   assert.equal(order[0][0], "record-start");
-  assert.deepEqual(order.filter(([kind]) => kind === "sleep").map(([, ms]) => ms), [400, 1_000, 400]);
+  assert.deepEqual(order.filter(([kind]) => kind === "sleep").map(([, ms]) => ms), [400, 380]);
+  assert.deepEqual(order.find(([kind]) => kind === "visible"), ["visible", 5_000]);
+  assert.deepEqual(order.find(([kind]) => kind === "attached"), ["attached", 5_000]);
   assert.equal(order.at(-1)[0], "record-end");
-  assert.equal(result.storyDurationMs, 1_800);
+  assert.equal(result.storyDurationMs, 800);
   assert.equal(result.steps[0].plannedStartMs, 400);
-  assert.equal(result.steps[0].plannedEndMs, 1_400);
-  assert.equal(result.steps[0].endedAtMs, 1_400);
+  assert.equal(result.steps[0].plannedEndMs, 400);
+  assert.equal(result.steps[0].endedAtMs, 410);
+  assert.equal(result.steps[1].plannedStartMs, 400);
+  assert.equal(result.steps[1].plannedEndMs, 400);
+  assert.equal(result.steps[1].endedAtMs, 420);
 });
 
-test("prepared execution rejects action that overruns bounded timeline slot", async () => {
+test("prepared execution reports a nondeterministic wait overrun as a bound, not a hold", async () => {
   const scenario = timedScenario();
   let clock = 0;
   const page = fakePage();
   page.waitForTimeout = async (ms) => { clock += ms; };
-  page.locator.waitFor = async () => { clock += 1_100; };
+  page.locator.waitFor = async () => { clock += 120; };
   const prepared = await prepareScenario({
     scenario,
     page,
@@ -541,6 +549,6 @@ test("prepared execution rejects action that overruns bounded timeline slot", as
       now: () => clock,
       timingToleranceMs: 32,
     }),
-    /step 0.*\/story\/actions\/0.*overran.*100ms/i,
+    /step 0.*\/story\/actions\/0.*waitForVisible.*120ms.*timeoutMs.*5000.*bound.*pause|settle/is,
   );
 });

@@ -5,6 +5,7 @@ const SUPPORTED_STATE_METHODS = Object.freeze({
   unchecked: ["isChecked", false],
   editable: ["isEditable", true],
 });
+const WAIT_ASSERTION_KINDS = new Set(["waitForVisible", "waitForState"]);
 
 function defaultNow() {
   return performance.now();
@@ -405,6 +406,15 @@ function wrapStepError(cause, index, pointer, action) {
   return error;
 }
 
+function assertDeterministicWaitResolution(action, resolutionMs, timingToleranceMs) {
+  if (!WAIT_ASSERTION_KINDS.has(action.kind) || resolutionMs <= timingToleranceMs) return;
+  const timeoutMs = action.timeoutMs ?? 2_000;
+  throw new Error(
+    `${action.kind} assertion resolved in ${Math.round(resolutionMs)}ms, exceeding deterministic timing tolerance ${timingToleranceMs}ms; `
+      + `timeoutMs=${timeoutMs} is a failure bound, not a storyboard hold. Seed the state for immediate resolution; use pause or settleMs for an intended hold`,
+  );
+}
+
 function normalizedCursorEvidence(cursor, storyEpochMs) {
   if (!Array.isArray(cursor?.movements)) return [];
   return cursor.movements.map((movement) => ({
@@ -507,6 +517,9 @@ export async function executePreparedScenario({
         trustedActivation,
         trustedGesture,
       });
+      if (WAIT_ASSERTION_KINDS.has(action.kind)) {
+        assertDeterministicWaitResolution(action, elapsed() - startedAtMs, timingToleranceMs);
+      }
       if (action.settleMs) await page.waitForTimeout(action.settleMs);
       if (planned) await waitUntil(planned.endMs, `step ${index} (${pointer})`);
       const step = {

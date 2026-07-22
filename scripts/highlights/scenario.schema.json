@@ -289,7 +289,12 @@
       "properties": {
         "kind": { "const": "waitForVisible" },
         "target": { "$ref": "#/$defs/target" },
-        "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 10000 },
+        "timeoutMs": {
+          "description": "Failure bound for this zero-duration assertion; never reserved as storyboard hold time.",
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 10000
+        },
         "label": { "$ref": "#/$defs/label" },
         "settleMs": { "$ref": "#/$defs/settleMs" }
       }
@@ -302,7 +307,12 @@
         "kind": { "const": "waitForState" },
         "target": { "$ref": "#/$defs/target" },
         "state": { "enum": ["attached", "detached", "visible", "hidden", "enabled", "disabled", "checked", "unchecked"] },
-        "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 10000 },
+        "timeoutMs": {
+          "description": "Failure bound for this zero-duration assertion; never reserved as storyboard hold time.",
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 10000
+        },
         "label": { "$ref": "#/$defs/label" },
         "settleMs": { "$ref": "#/$defs/settleMs" }
       }

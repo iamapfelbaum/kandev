@@ -90,8 +90,8 @@ product setup.
 | `press` | Press key on semantic target | `target`, `key` |
 | `hover` | Smooth trusted pointer travel and hover | `target`, `durationMs` |
 | `moveCursor` | Move pointer without activation | `target`, `durationMs`, `easing` |
-| `waitForVisible` | Wait for visible target | `target`, `timeoutMs` |
-| `waitForState` | Wait for attached/detached/visible/hidden/enabled/disabled/checked/unchecked | `target`, `state`, `timeoutMs` |
+| `waitForVisible` | Zero-duration assertion that target is visible | `target`, failure-bound `timeoutMs` |
+| `waitForState` | Zero-duration assertion of attached/detached/visible/hidden/enabled/disabled/checked/unchecked | `target`, `state`, failure-bound `timeoutMs` |
 | `drag` | Smooth approach and real drag between targets | `from`, `to`, `approachDurationMs`, `durationMs` |
 | `pause` | Readable source hold | `durationMs` |
 | `cameraFocus` | Pan to semantic target at current depth | `target`, `durationMs` |
@@ -100,8 +100,11 @@ product setup.
 | `cameraReturn` | Return to centered 1x identity | `durationMs` |
 | `extension` | Allowlisted narrow primitive | `primitiveId`, JSON `input` |
 
-Prefer waits on visible/state conditions over guessed pauses. Use pause only for
-viewer readability. Every pointer journey uses dense trusted input samples; a
+Wait actions reserve `0ms` in storyboard. `timeoutMs` only caps assertion
+failure; it never becomes recorded hold time. Seed state so waits resolve within
+timing tolerance. Slow resolution fails as nondeterministic with action JSON
+pointer. Use `pause` for viewer readability or `settleMs` for an intentional
+post-action hold. Every pointer journey uses dense trusted input samples; a
 click, hover, type focus, or drag cannot teleport directly to its target.
 
 ## Profiles
