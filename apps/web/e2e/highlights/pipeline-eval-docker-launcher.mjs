@@ -169,6 +169,57 @@ function validateContainerExit(exited, exitCode, request) {
   }
 }
 
+async function readInnerResultIfPresent(state) {
+  try {
+    return await state.deps.readJson(path.join(state.evalRoot, "boundary-result.json"));
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function validateInnerResult(state, exitCode) {
+  const inner = state.inner;
+  if (!inner) return;
+  const expectedStatus = exitCode === 0 ? "passed" : "failed";
+  if (
+    inner.contract !== "kandev-highlight-docker-boundary-inner-result-v1" ||
+    inner.status !== expectedStatus ||
+    inner.requestDigest !== state.plan.request.requestDigest ||
+    inner.containerId !== state.containerId
+  ) {
+    throw new Error("Docker eval worker produced an invalid request-bound result checkpoint");
+  }
+  if (inner.networkGate !== null) {
+    inner.networkGate = validateRuntimeNetworkGateEvidence(inner.networkGate);
+  }
+  if (exitCode === 0 && !inner.networkGate) {
+    throw new Error("Docker eval worker passed without its runtime network gate checkpoint");
+  }
+}
+
+function failedWorkerError(state, exitCode) {
+  const detail = state.inner?.failure?.message;
+  const error = new Error(
+    `Docker eval worker exited ${exitCode}${typeof detail === "string" && detail ? `: ${detail}` : ""}`,
+  );
+  if (typeof state.inner?.failure?.phase === "string") {
+    error.phase = state.inner.failure.phase;
+  }
+  const containerFailurePath = state.inner?.failure?.failurePath;
+  if (
+    typeof containerFailurePath === "string" &&
+    path.isAbsolute(containerFailurePath) &&
+    isInside("/kandev/eval", containerFailurePath)
+  ) {
+    error.failurePath = path.join(
+      state.evalRoot,
+      path.relative("/kandev/eval", containerFailurePath),
+    );
+  }
+  return error;
+}
+
 async function waitForContainerResult(state) {
   const waited = await state.deps.runCommand(
     dockerCommand(
@@ -193,15 +244,11 @@ async function waitForContainerResult(state) {
     state.plan.request,
   );
   state.exit = { code: exitCode, oomKilled: false };
-  if (exitCode !== 0) throw new Error(`Docker eval worker exited ${exitCode}`);
-  state.inner = await state.deps.readJson(path.join(state.evalRoot, "boundary-result.json"));
-  if (
-    state.inner?.status !== "passed" ||
-    state.inner.requestDigest !== state.plan.request.requestDigest
-  ) {
-    throw new Error("Docker eval worker did not produce request-bound passing result");
-  }
-  state.inner.networkGate = validateRuntimeNetworkGateEvidence(state.inner.networkGate);
+  state.inner = await readInnerResultIfPresent(state);
+  validateInnerResult(state, exitCode);
+  if (exitCode !== 0) throw failedWorkerError(state, exitCode);
+  if (!state.inner)
+    throw new Error("Docker eval worker did not produce a passing result checkpoint");
 }
 
 async function removeContainer(state) {

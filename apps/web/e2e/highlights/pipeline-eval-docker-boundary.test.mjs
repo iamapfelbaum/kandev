@@ -351,7 +351,6 @@ test("inner boundary validates host proof and mounted source before any eval com
   );
   assert.equal(calls, 1, "missing proof must fail before eval starts");
 });
-
 test("host lifecycle records create, inspect, exit, removal, and unchanged source", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "highlight-docker-boundary-test-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
@@ -405,8 +404,10 @@ test("host lifecycle records create, inspect, exit, removal, and unchanged sourc
       capturePathIdentity: async (rootPath) =>
         plan.mounts.find((record) => record.source === rootPath).identity,
       readJson: async () => ({
+        contract: "kandev-highlight-docker-boundary-inner-result-v1",
         status: "passed",
         requestDigest: plan.request.requestDigest,
+        containerId: "6".repeat(64),
         networkGate: networkGateEvidence("kandev-highlight-pipeline-eval-abc123"),
         result: { status: "passed" },
       }),
@@ -448,7 +449,6 @@ test("host lifecycle records create, inspect, exit, removal, and unchanged sourc
     "worker poison\n",
   );
 });
-
 test("Docker create plan isolates one nonroot worker and exposes only declared mounts", () => {
   const plan = buildDockerCreatePlan(fixtureInput());
   assert.equal(plan.command, "docker");

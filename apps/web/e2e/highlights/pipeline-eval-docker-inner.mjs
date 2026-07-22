@@ -152,6 +152,54 @@ async function validateInnerBoundary(requestPath, deps) {
   return { request, authorization };
 }
 
+async function executeBoundaryEvaluation({
+  deps,
+  request,
+  authorization,
+  environment,
+  runEvaluation,
+}) {
+  const gate = { calls: 0, evidence: null };
+  let result = null;
+  let failure = null;
+  try {
+    result = await runEvaluation({
+      sourceRoot: request.inner.sourceRoot,
+      landingRoot: request.inner.landingRoot,
+      evalParent: request.inner.evalParent,
+      captureDeadlineMs: request.inner.captureDeadlineMs,
+      inheritedEnv: environment,
+      securityEnvironment: environment,
+      prNumber: request.inner.prNumber,
+      securityBoundary: authorization,
+      beforeCapture: async (context) => {
+        gate.calls += 1;
+        if (gate.calls !== 1) {
+          throw new Error("Docker runtime network gate may run exactly once");
+        }
+        gate.evidence = await runRuntimeNetworkGate(context, deps);
+        return gate.evidence;
+      },
+    });
+    if (gate.calls !== 1 || !gate.evidence) {
+      throw new Error("Docker evaluation reached completion without its runtime network gate");
+    }
+  } catch (error) {
+    failure = error;
+  }
+  return { result, failure, networkGate: gate.evidence };
+}
+
+function failureEvidence(failure) {
+  if (!failure) return null;
+  return {
+    message: failure instanceof Error ? failure.message : String(failure),
+    phase: failure?.phase ?? null,
+    evalRoot: failure?.evalRoot ?? null,
+    failurePath: failure?.failurePath ?? null,
+  };
+}
+
 export async function runInsideDockerBoundary({ requestPath, dependencies = {} } = {}) {
   const deps = innerDependencies(dependencies);
   const { request, authorization } = await validateInnerBoundary(requestPath, deps);
@@ -159,37 +207,23 @@ export async function runInsideDockerBoundary({ requestPath, dependencies = {} }
     deps.runEvaluation ??
     (await import("./pipeline-eval-orchestrator.mjs")).runFreshAgentPipelineEvaluation;
   const environment = insideEnvironment(request.environment);
-  let networkGate = null;
-  let networkGateCalls = 0;
-  const result = await runEvaluation({
-    sourceRoot: request.inner.sourceRoot,
-    landingRoot: request.inner.landingRoot,
-    evalParent: request.inner.evalParent,
-    captureDeadlineMs: request.inner.captureDeadlineMs,
-    inheritedEnv: environment,
-    securityEnvironment: environment,
-    prNumber: request.inner.prNumber,
-    securityBoundary: authorization,
-    beforeCapture: async (context) => {
-      networkGateCalls += 1;
-      if (networkGateCalls !== 1) {
-        throw new Error("Docker runtime network gate may run exactly once");
-      }
-      networkGate = await runRuntimeNetworkGate(context, deps);
-      return networkGate;
-    },
+  const { result, failure, networkGate } = await executeBoundaryEvaluation({
+    deps,
+    request,
+    authorization,
+    environment,
+    runEvaluation,
   });
-  if (networkGateCalls !== 1 || !networkGate) {
-    throw new Error("Docker evaluation reached completion without its runtime network gate");
-  }
   const record = {
     contract: "kandev-highlight-docker-boundary-inner-result-v1",
-    status: "passed",
+    status: failure ? "failed" : "passed",
     requestDigest: request.requestDigest,
     containerId: authorization.containerId,
     networkGate,
     result,
+    failure: failureEvidence(failure),
   };
   await deps.writeJson("/kandev/eval/boundary-result.json", record);
+  if (failure) throw failure;
   return result;
 }
