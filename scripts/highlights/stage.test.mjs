@@ -29,12 +29,30 @@ test("reads a content-addressed external stage and verifies source, capture, QA,
   );
 });
 
+test("staged provenance seed identity must match the declarative scenario", async () => {
+  const fixture = await createStage({ seedId: "kandev.different-workspace" });
+  const { readStageManifest } = await import("./stage.mjs");
+  await assert.rejects(
+    readStageManifest(fixture.manifestPath, { repoRoot: fixture.repoRoot }),
+    /seed.*scenario|scenario.*seed/i,
+  );
+});
+
 test("rejects non-accepted QA even when the stage digest is internally consistent", async () => {
   const fixture = await createStage({ qaStatus: "pending" });
   const { readStageManifest } = await import("./stage.mjs");
   await assert.rejects(
     readStageManifest(fixture.manifestPath, { repoRoot: fixture.repoRoot }),
     /accepted QA|QA.*accepted/i,
+  );
+});
+
+test("manifest acceptance cannot override a rejected staged QA report", async () => {
+  const fixture = await createStage({ qaStatus: "accepted", reportStatus: "rejected" });
+  const { readStageManifest } = await import("./stage.mjs");
+  await assert.rejects(
+    readStageManifest(fixture.manifestPath, { repoRoot: fixture.repoRoot }),
+    /QA report.*accepted|accepted.*QA report/i,
   );
 });
 
@@ -57,6 +75,34 @@ test("stage sources must be regular files and cannot escape through symlinks", a
   await assert.rejects(
     readStageManifest(fixture.manifestPath, { repoRoot: fixture.repoRoot }),
     /scenario.*regular file|regular file.*scenario/i,
+  );
+});
+
+test("external stage path is rejected when its real path resolves inside the repository", async () => {
+  const fixture = await createStage();
+  const inRepoParent = path.join(fixture.repoRoot, "hidden-stage");
+  const inRepoStage = path.join(inRepoParent, path.basename(fixture.stageDir));
+  await fs.mkdir(inRepoParent, { recursive: true });
+  await fs.rename(fixture.stageDir, inRepoStage);
+  await fs.symlink(inRepoStage, fixture.stageDir, "dir");
+
+  const { readStageManifest } = await import("./stage.mjs");
+  await assert.rejects(
+    readStageManifest(fixture.manifestPath, { repoRoot: fixture.repoRoot }),
+    /outside the repository|external stage/i,
+  );
+});
+
+test("stage files cannot escape through a symlinked parent directory", async () => {
+  const fixture = await createStage();
+  const inRepoRaw = path.join(fixture.repoRoot, "escaped-raw");
+  await fs.rename(path.join(fixture.stageDir, "raw"), inRepoRaw);
+  await fs.symlink(inRepoRaw, path.join(fixture.stageDir, "raw"), "dir");
+
+  const { readStageManifest } = await import("./stage.mjs");
+  await assert.rejects(
+    readStageManifest(fixture.manifestPath, { repoRoot: fixture.repoRoot }),
+    /inside stage directory|symlink/i,
   );
 });
 
@@ -122,6 +168,25 @@ test("failed validation leaves no partial destination", async () => {
   assert.equal((await fs.readdir(fixture.highlightsDir)).filter((name) => name.startsWith(".promote-")).length, 0);
 });
 
+test("promotion refuses an existing per-Highlight lock before changing the repository", async () => {
+  const fixture = await createStage();
+  const lockPath = path.join(fixture.highlightsDir, ".promote-stage-demo.lock");
+  await fs.mkdir(lockPath);
+  const { promoteStagedHighlight } = await import("./stage.mjs");
+
+  await assert.rejects(
+    promoteStagedHighlight({
+      manifestPath: fixture.manifestPath,
+      repoRoot: fixture.repoRoot,
+      highlightsDir: fixture.highlightsDir,
+      probe: probeFixture,
+    }),
+    /promotion.*progress|lock/i,
+  );
+  await assert.rejects(fs.access(path.join(fixture.highlightsDir, "stage-demo")));
+  assert.deepEqual(await fs.readdir(lockPath), []);
+});
+
 test("adds a new immutable revision without changing prior revision bytes", async () => {
   const first = await createStage({ revision: "r1" });
   const { promoteStagedHighlight } = await import("./stage.mjs");
@@ -160,7 +225,7 @@ test("CLI promote dry-run verifies an external stage without touching the reposi
   await assert.rejects(fs.access(path.join(fixture.highlightsDir, "stage-demo")));
 });
 
-async function createStage({ revision = "r1", qaStatus = "accepted", existing, payloadSuffix = "", desktopWidth = 1920, desktopHeight = 1200 } = {}) {
+async function createStage({ revision = "r1", qaStatus = "accepted", reportStatus = qaStatus, seedId = "kandev.empty-workspace", existing, payloadSuffix = "", desktopWidth = 1920, desktopHeight = 1200 } = {}) {
   let base;
   let repoRoot;
   let highlightsDir;
@@ -182,7 +247,7 @@ async function createStage({ revision = "r1", qaStatus = "accepted", existing, p
   const files = {
     "scenario.json": await fs.readFile(path.resolve("scripts/highlights/examples/quick-start.scenario.json")),
     "raw/capture.webm": Buffer.from(`raw-capture${payloadSuffix}`),
-    "qa/report.json": Buffer.from(`${JSON.stringify({ status: qaStatus, checks: ["codec", "containment"] })}\n`),
+    "qa/report.json": Buffer.from(`${JSON.stringify({ status: reportStatus, checks: ["codec", "containment"] })}\n`),
     "deliveries/desktop.webm": Buffer.from(`desktop-webm${payloadSuffix}`),
     "deliveries/desktop.mp4": Buffer.from(`desktop-mp4${payloadSuffix}`),
     "deliveries/desktop.webp": Buffer.from(`desktop-webp${payloadSuffix}`),
@@ -234,7 +299,7 @@ async function createStage({ revision = "r1", qaStatus = "accepted", existing, p
       captureMode: "pr_head",
       sourceSha: "0123456789abcdef0123456789abcdef01234567",
       capturedAt: "2026-07-22T10:00:00.000Z",
-      seedId: "kandev.empty-workspace",
+      seedId,
       seedDigest: `sha256:${"1".repeat(64)}`,
       toolVersion: "highlights/1",
       prNumber: 42,

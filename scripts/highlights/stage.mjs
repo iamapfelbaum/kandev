@@ -32,31 +32,49 @@ export async function readStageManifest(manifestPath, {
 } = {}) {
   const absoluteManifest = path.resolve(manifestPath);
   const stageDir = path.dirname(absoluteManifest);
-  assertExternalStage(stageDir, repoRoot);
+  const stageRealDir = await assertExternalStage(stageDir, repoRoot);
+  const manifestRealPath = await resolveStageRegularFile(
+    stageDir,
+    stageRealDir,
+    path.basename(absoluteManifest),
+    "stage manifest",
+  );
   let manifest;
   try {
-    manifest = JSON.parse(await fs.readFile(absoluteManifest, "utf8"));
+    manifest = JSON.parse(await fs.readFile(manifestRealPath, "utf8"));
   } catch (error) {
     throw new Error(`cannot read stage manifest ${absoluteManifest}: ${error.message}`);
   }
   validateManifestShape(manifest);
   const computedStageDigest = computeStageManifestDigest(manifest);
   if (manifest.stageDigest !== computedStageDigest) throw new Error("stage manifest digest does not match manifest content");
-  if (path.basename(stageDir) !== manifest.stageDigest.slice("sha256:".length)) {
+  if (path.basename(stageRealDir) !== manifest.stageDigest.slice("sha256:".length)) {
     throw new Error("stage directory must be named by its stage digest");
   }
   if (manifest.qa.status !== "accepted") throw new Error("stage promotion requires accepted QA");
 
-  const scenarioPath = resolveStageFile(stageDir, manifest.scenario.path, "scenario");
-  await assertRegularFile(scenarioPath, "scenario");
+  const scenarioPath = await resolveStageRegularFile(stageDir, stageRealDir, manifest.scenario.path, "scenario");
   const scenario = await readScenario(scenarioPath, { allowedExtensionIds });
   if (computeScenarioDigest(scenario, { allowedExtensionIds }) !== manifest.scenario.digest) {
     throw new Error("scenario source digest does not match staged scenario");
   }
-  const capturePath = resolveStageFile(stageDir, manifest.capture.path, "capture");
+  if (scenario.seed.recipe !== manifest.provenance.seedId) {
+    throw new Error("staged provenance seed identity does not match declarative scenario seed");
+  }
+  const capturePath = await resolveStageRegularFile(stageDir, stageRealDir, manifest.capture.path, "capture");
   if (`sha256:${await hashFile(capturePath)}` !== manifest.capture.digest) throw new Error("capture digest does not match staged raw master");
-  const reportPath = resolveStageFile(stageDir, manifest.qa.reportPath, "QA report");
-  if (`sha256:${await hashFile(reportPath)}` !== manifest.qa.reportDigest) throw new Error("QA report digest does not match staged report");
+  const reportPath = await resolveStageRegularFile(stageDir, stageRealDir, manifest.qa.reportPath, "QA report");
+  const reportBytes = await fs.readFile(reportPath);
+  if (`sha256:${createHash("sha256").update(reportBytes).digest("hex")}` !== manifest.qa.reportDigest) throw new Error("QA report digest does not match staged report");
+  let qaReport;
+  try {
+    qaReport = JSON.parse(reportBytes);
+  } catch (error) {
+    throw new Error(`staged QA report is invalid JSON: ${error.message}`);
+  }
+  if (!isObject(qaReport) || qaReport.passed === false || (qaReport.status !== "accepted" && qaReport.passed !== true)) {
+    throw new Error("staged QA report must record accepted QA");
+  }
 
   const assets = {};
   const seenPaths = new Set();
@@ -65,11 +83,10 @@ export async function readStageManifest(manifestPath, {
     assets[form] = {};
     for (const kind of ASSET_KEYS) {
       const record = manifest.assets[form][kind];
-      const filePath = resolveStageFile(stageDir, record.path, `${form} ${kind}`);
+      const filePath = await resolveStageRegularFile(stageDir, stageRealDir, record.path, `${form} ${kind}`);
       if (seenPaths.has(filePath)) throw new Error(`stage asset path is reused: ${record.path}`);
       seenPaths.add(filePath);
       const stat = await fs.lstat(filePath);
-      if (!stat.isFile()) throw new Error(`${form} ${kind} must be a regular file`);
       if (stat.size !== record.bytes || await hashFile(filePath) !== record.sha256) {
         throw new Error(`${form} ${kind} hash/bytes do not match stage manifest`);
       }
@@ -91,6 +108,22 @@ export async function promoteStagedHighlight({
   const staged = await readStageManifest(manifestPath, { repoRoot, allowedExtensionIds });
   const { manifest } = staged;
   await fs.mkdir(highlightsDir, { recursive: true });
+  const lockPath = path.join(highlightsDir, `.promote-${manifest.highlight.id}.lock`);
+  try {
+    await fs.mkdir(lockPath);
+  } catch (error) {
+    if (error.code === "EEXIST") throw new Error(`Highlight promotion already in progress for ${manifest.highlight.id}; lock exists at ${lockPath}`);
+    throw error;
+  }
+  try {
+    return await promoteVerifiedStage({ staged, repoRoot, highlightsDir, allowedExtensionIds, probe, now });
+  } finally {
+    await fs.rmdir(lockPath).catch(() => {});
+  }
+}
+
+async function promoteVerifiedStage({ staged, repoRoot, highlightsDir, allowedExtensionIds, probe, now }) {
+  const { manifest } = staged;
   const destination = path.join(highlightsDir, manifest.highlight.id);
   const destinationStat = await fs.lstat(destination).catch(() => null);
   if (destinationStat && !destinationStat.isDirectory()) throw new Error(`Highlight destination collision: ${destination}`);
@@ -355,12 +388,15 @@ function fileRecord(relativePath, bytes) {
   };
 }
 
-function assertExternalStage(stageDir, repoRoot) {
-  const root = path.resolve(repoRoot);
-  const relative = path.relative(root, path.resolve(stageDir));
-  if (!relative.startsWith("..") || path.isAbsolute(relative)) {
+async function assertExternalStage(stageDir, repoRoot) {
+  const [root, stage] = await Promise.all([
+    fs.realpath(path.resolve(repoRoot)),
+    fs.realpath(path.resolve(stageDir)),
+  ]);
+  if (isInside(root, stage)) {
     throw new Error("stage directory must stay outside the repository");
   }
+  return stage;
 }
 
 function resolveStageFile(stageDir, relativePath, label) {
@@ -369,6 +405,22 @@ function resolveStageFile(stageDir, relativePath, label) {
   const relative = path.relative(stageDir, filePath);
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`${label} must stay inside stage directory`);
   return filePath;
+}
+
+async function resolveStageRegularFile(stageDir, stageRealDir, relativePath, label) {
+  const filePath = resolveStageFile(stageDir, relativePath, label);
+  const stat = await fs.lstat(filePath).catch(() => null);
+  if (!stat?.isFile()) throw new Error(`${label} must be a regular file inside stage directory`);
+  const realPath = await fs.realpath(filePath);
+  if (!isInside(stageRealDir, realPath) || realPath === stageRealDir) {
+    throw new Error(`${label} must stay inside stage directory; symlinked parent directories are not allowed`);
+  }
+  return realPath;
+}
+
+function isInside(root, target) {
+  const relative = path.relative(root, target);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
 }
 
 function assertSafeRelative(value, label) {
@@ -402,11 +454,6 @@ async function hashFile(filePath) {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(filePath)) hash.update(chunk);
   return hash.digest("hex");
-}
-
-async function assertRegularFile(filePath, label) {
-  const stat = await fs.lstat(filePath).catch(() => null);
-  if (!stat?.isFile()) throw new Error(`${label} must be a regular file inside stage directory`);
 }
 
 async function writeJson(filePath, value) {

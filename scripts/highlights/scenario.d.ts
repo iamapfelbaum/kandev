@@ -1,6 +1,6 @@
 export type ScenarioProfile =
-  | { kind: "desktop"; viewport: Viewport; deviceScaleFactor: number }
-  | { kind: "native-mobile"; viewport: Viewport; deviceScaleFactor: number };
+  | { kind: "desktop"; viewport: { width: 1920; height: 1200 }; deviceScaleFactor: 2 }
+  | { kind: "native-mobile"; viewport: { width: 430; height: 932 }; deviceScaleFactor: 3 };
 
 export interface Viewport {
   width: number;

@@ -70,6 +70,8 @@ test("checked-in JSON Schema, declarations, and example describe schema v1", asy
   assert.equal(schema.properties.schemaVersion.const, 1);
   assert.match(declarations, /export type ScenarioAction/);
   assert.match(declarations, /kind: "native-mobile"/);
+  assert.match(declarations, /kind: "desktop"; viewport: \{ width: 1920; height: 1200 \}; deviceScaleFactor: 2/);
+  assert.match(declarations, /kind: "native-mobile"; viewport: \{ width: 430; height: 932 \}; deviceScaleFactor: 3/);
   assert.deepEqual(validateScenario(example), { ok: true, errors: [] });
 });
 
