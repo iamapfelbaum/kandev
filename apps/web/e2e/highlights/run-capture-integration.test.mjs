@@ -10,6 +10,7 @@ import {
   buildIntegrationCommand,
   preflightCaptureIntegration,
   resolveIntegrationArtifactRoot,
+  selectIntegrationPortOffset,
 } from "./run-capture-integration.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -80,6 +81,20 @@ test("integration command reuses the active package manager when bare pnpm is un
   });
 });
 
+test("integration selects a proven-free deterministic isolated backend port", async () => {
+  const seen = [];
+  const selected = await selectIntegrationPortOffset({
+    preferredOffset: 7,
+    isPortFree: async (port) => {
+      seen.push(port);
+      return port === 18_088;
+    },
+  });
+
+  assert.deepEqual(selected, { offset: 8, backendPort: 18_088 });
+  assert.deepEqual(seen, [18_087, 18_088]);
+});
+
 test("artifact allocation is external, unique, and refuses repository paths", async (t) => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "highlight-integration-root-test-"));
   t.after(() => fs.rm(temp, { recursive: true, force: true }));
@@ -103,6 +118,106 @@ test("artifact allocation is external, unique, and refuses repository paths", as
         repositoryRoots: [REPO_ROOT],
       }),
     /outside repository/,
+  );
+});
+
+test("artifact allocation rejects a parent symlink that resolves inside a repository", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "highlight-integration-symlink-test-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const repositoryRoot = path.join(root, "repository");
+  const externalRoot = path.join(root, "external");
+  const linkedParent = path.join(externalRoot, "linked-artifacts");
+  await fs.mkdir(repositoryRoot);
+  await fs.mkdir(externalRoot);
+  await fs.symlink(repositoryRoot, linkedParent, "dir");
+
+  await assert.rejects(
+    () =>
+      resolveIntegrationArtifactRoot({
+        parent: linkedParent,
+        repositoryRoots: [repositoryRoot],
+      }),
+    /outside repository.*symlink|after symlink resolution/i,
+  );
+});
+
+test("integration rebuilds clean checkout and attests exact backend, agent, and web tree hashes", async (t) => {
+  const { buildCaptureCheckout, verifyCaptureBuildProvenance } =
+    await import("./run-capture-integration.mjs");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "highlight-build-proof-test-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const repoRoot = path.join(root, "repo");
+  const webRoot = path.join(repoRoot, "apps", "web");
+  const backendDir = path.join(repoRoot, "apps", "backend", "bin");
+  const webDist = path.join(webRoot, "dist");
+  const artifactRoot = path.join(root, "artifacts");
+  await Promise.all([
+    fs.mkdir(backendDir, { recursive: true }),
+    fs.mkdir(path.join(webDist, "assets"), { recursive: true }),
+    fs.mkdir(artifactRoot),
+  ]);
+  await Promise.all([
+    fs.writeFile(path.join(backendDir, "kandev"), "backend-current-sha"),
+    fs.writeFile(path.join(backendDir, "mock-agent"), "agent-current-sha"),
+    fs.writeFile(path.join(webDist, "index.html"), "<main>current sha</main>"),
+    fs.writeFile(path.join(webDist, "assets", "app.js"), "current-sha-js"),
+  ]);
+  const source = {
+    contract: "kandev-highlight-source-v1",
+    source: "pr_head",
+    selectedSha: "1".repeat(40),
+    headSha: "1".repeat(40),
+    currentMainSha: "2".repeat(40),
+    clean: true,
+    status: "",
+  };
+  const commands = [];
+  let gateCalls = 0;
+  const result = await buildCaptureCheckout({
+    repoRoot,
+    webRoot,
+    artifactRoot,
+    verifySource: async () => {
+      gateCalls += 1;
+      return source;
+    },
+    runCommand: async (command) => commands.push(command),
+    packageManager: { command: "/usr/bin/node", args: ["/opt/pnpm.js"] },
+    now: () => new Date("2026-07-22T12:00:00.000Z"),
+  });
+
+  assert.equal(gateCalls, 2, "source gate runs before and after build");
+  assert.equal(commands.length, 2);
+  assert.deepEqual(commands[0], {
+    command: "make",
+    args: ["-C", "apps/backend", "build"],
+    cwd: repoRoot,
+  });
+  assert.deepEqual(commands[1], {
+    command: "/usr/bin/node",
+    args: ["/opt/pnpm.js", "--filter", "@kandev/web", "build"],
+    cwd: path.join(repoRoot, "apps"),
+  });
+  assert.equal(result.manifest.source.selectedSha, source.selectedSha);
+  assert.match(result.manifest.manifestDigest, /^sha256:[a-f0-9]{64}$/);
+  assert.match(result.manifest.outputs.backend.digest, /^sha256:[a-f0-9]{64}$/);
+  assert.match(result.manifest.outputs.mockAgent.digest, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(result.manifest.outputs.webDist.fileCount, 2);
+  assert.match(result.manifest.outputs.webDist.digest, /^sha256:[a-f0-9]{64}$/);
+  assert.deepEqual(
+    await verifyCaptureBuildProvenance(result.manifestPath, {
+      expectedSourceSha: source.selectedSha,
+    }),
+    result.manifest,
+  );
+
+  await fs.writeFile(path.join(webDist, "index.html"), "tampered");
+  await assert.rejects(
+    () =>
+      verifyCaptureBuildProvenance(result.manifestPath, {
+        expectedSourceSha: source.selectedSha,
+      }),
+    /web dist.*digest|build output.*changed/i,
   );
 });
 

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import { resolveCaptureProfile } from "./camera-compiler.mjs";
@@ -14,9 +16,11 @@ import {
   collectCaptureReceipt,
   configureCaptureTarget,
   createTrustedInputAdapters,
+  measureTargetGlyph,
   parseCaptureProgress,
   playwrightChromiumFromModule,
   selectCaptureEncoder,
+  startFfmpegRecorder,
   writeCaptureEvidence,
 } from "./capture-source.mjs";
 import { compileTimeline, computeScenarioDigest } from "./scenario.mjs";
@@ -32,6 +36,23 @@ const MOBILE_SCENARIO_PROFILE = Object.freeze({
   viewport: { width: 430, height: 932 },
   deviceScaleFactor: 3,
 });
+
+function buildProvenance(source) {
+  return {
+    contract: "kandev-highlight-build-provenance-v1",
+    manifestDigest: `sha256:${"d".repeat(64)}`,
+    source,
+    outputs: {
+      backend: { digest: `sha256:${"e".repeat(64)}`, bytes: 101 },
+      mockAgent: { digest: `sha256:${"f".repeat(64)}`, bytes: 102 },
+      webDist: {
+        digest: `sha256:${"0".repeat(64)}`,
+        bytes: 103,
+        fileCount: 4,
+      },
+    },
+  };
+}
 
 function runtime(profile, root = "/external/highlight-run") {
   return {
@@ -141,11 +162,35 @@ test("encoder readiness plan proves sustained full-source throughput before stor
   });
   const joined = plan.args.join(" ");
 
-  assert.match(joined, /color=c=black:s=3840x2400:r=25/);
+  assert.match(joined, /testsrc2=.*3840x2400.*25/);
+  assert.doesNotMatch(joined, /color=c=black/);
   assert.match(joined, /-frames:v 25/);
   assert.match(joined, /-qp 0/);
   assert.equal(plan.sourceDurationMs, 1_000);
   assert.equal(plan.maximumElapsedMs, 1_500);
+});
+
+test("raw frame count aligns with recorder lead plus planned story within one frame", async () => {
+  const { assertCaptureFrameAlignment } = await import("./capture-source.mjs");
+  const aligned = assertCaptureFrameAlignment({
+    frameCount: 63,
+    fps: 25,
+    storyStartOffsetMs: 80,
+    storyDurationMs: 2_440,
+  });
+
+  assert.equal(aligned.expectedFrameCount, 63);
+  assert.equal(aligned.frameDelta, 0);
+  assert.throws(
+    () =>
+      assertCaptureFrameAlignment({
+        frameCount: 71,
+        fps: 25,
+        storyStartOffsetMs: 80,
+        storyDurationMs: 2_440,
+      }),
+    /frame alignment.*expected 63.*got 71/i,
+  );
 });
 
 test("prefers advertised hardware encoder and falls back portably", () => {
@@ -293,6 +338,7 @@ test("configures exact desktop and native-mobile CDP metrics without crop", asyn
 test("native-mobile passive choreography is overlay-only and activation uses CDP touch", async () => {
   const calls = [];
   const overlay = [];
+  const order = [];
   const cdp = {
     async send(method, params) {
       calls.push([method, params]);
@@ -307,6 +353,20 @@ test("native-mobile passive choreography is overlay-only and activation uses CDP
     page,
     cdp,
     inputKind: "native-mobile",
+    trustedEventBarrier: {
+      async arm(expected) {
+        order.push(`arm:${expected.eventTypes.join("|")}`);
+        return async () => {
+          order.push("observed");
+          return {
+            sequence: order.length,
+            eventType: expected.eventTypes[0],
+            ...expected,
+            isTrusted: true,
+          };
+        };
+      },
+    },
   });
 
   await adapters.trustedCursor({
@@ -336,13 +396,20 @@ test("native-mobile passive choreography is overlay-only and activation uses CDP
   ]);
   assert.equal(
     overlay.length,
-    3,
-    "travel, touch-down, and touch-up each update visible overlay",
+    1,
+    "only passive finger choreography mutates overlay directly",
   );
   assert.deepEqual(
     overlay.map((entry) => entry.kind),
-    ["cursor", "touch", "cursor"],
+    ["cursor"],
   );
+  assert.deepEqual(order, [
+    "arm:touchstart",
+    "observed",
+    "arm:touchend",
+    "observed",
+  ]);
+  assert.equal(adapters.ledger.length, 2);
 });
 
 test("native-mobile drag gesture emits trusted touch start, move, and end", async () => {
@@ -357,6 +424,16 @@ test("native-mobile drag gesture emits trusted touch start, move, and end", asyn
     page,
     cdp,
     inputKind: "native-mobile",
+    trustedEventBarrier: {
+      async arm(expected) {
+        return async () => ({
+          sequence: calls.length,
+          eventType: expected.eventTypes[0],
+          ...expected,
+          isTrusted: true,
+        });
+      },
+    },
   });
 
   await adapters.trustedGesture.start({ x: 10, y: 20 });
@@ -385,6 +462,16 @@ test("desktop activation remains trusted CDP mouse input", async () => {
     page,
     cdp,
     inputKind: "desktop",
+    trustedEventBarrier: {
+      async arm(expected) {
+        return async () => ({
+          sequence: calls.length,
+          eventType: expected.eventTypes[0],
+          ...expected,
+          isTrusted: true,
+        });
+      },
+    },
   });
 
   await adapters.trustedActivation({
@@ -418,6 +505,215 @@ test("desktop activation remains trusted CDP mouse input", async () => {
       },
     ],
   ]);
+  assert.equal(adapters.ledger.length, 2);
+});
+
+test("overlay applies trusted browser events atomically and records an exact ledger", async (t) => {
+  const { overlayBootstrap } = await import("./capture-source.mjs");
+  const listeners = new Map();
+  const overlay = {
+    style: {},
+    setAttribute() {},
+  };
+  const documentFixture = {
+    getElementById: () => overlay,
+    createElement: () => overlay,
+    documentElement: { append() {} },
+    addEventListener(type, listener) {
+      listeners.set(type, listener);
+    },
+  };
+  const previousDocument = globalThis.document;
+  globalThis.document = documentFixture;
+  t.after(() => {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+    delete globalThis.__kandevHighlightOverlay;
+    delete globalThis.__kandevHighlightInputLedger;
+    delete globalThis.__kandevHighlightInputListenersInstalled;
+  });
+
+  overlayBootstrap();
+  listeners.get("pointermove")({
+    isTrusted: true,
+    pointerType: "mouse",
+    clientX: 31,
+    clientY: 47,
+    buttons: 0,
+    type: "pointermove",
+  });
+  listeners.get("touchstart")({
+    isTrusted: true,
+    touches: [{ clientX: 80, clientY: 90 }],
+    changedTouches: [],
+    type: "touchstart",
+  });
+  listeners.get("pointermove")({
+    isTrusted: false,
+    pointerType: "mouse",
+    clientX: 999,
+    clientY: 999,
+    buttons: 0,
+    type: "pointermove",
+  });
+
+  assert.deepEqual(
+    globalThis.__kandevHighlightInputLedger.map(
+      ({ sequence, eventType, x, y, inputKind }) => ({
+        sequence,
+        eventType,
+        x,
+        y,
+        inputKind,
+      }),
+    ),
+    [
+      {
+        sequence: 1,
+        eventType: "pointermove",
+        x: 31,
+        y: 47,
+        inputKind: "desktop",
+      },
+      {
+        sequence: 2,
+        eventType: "touchstart",
+        x: 80,
+        y: 90,
+        inputKind: "native-mobile",
+      },
+    ],
+  );
+  assert.equal(overlay.style.left, "80px");
+  assert.equal(overlay.style.top, "90px");
+});
+
+test("target glyph measurement unions every visible icon and text rect clipped to target", async (t) => {
+  const previousDocument = globalThis.document;
+  const previousNodeFilter = globalThis.NodeFilter;
+  const textNodes = [{ textContent: "Create" }, { textContent: " task" }];
+  let selectedText;
+  globalThis.NodeFilter = { SHOW_TEXT: 4 };
+  globalThis.document = {
+    createTreeWalker() {
+      let index = -1;
+      return {
+        currentNode: null,
+        nextNode() {
+          index += 1;
+          this.currentNode = textNodes[index];
+          return index < textNodes.length;
+        },
+      };
+    },
+    createRange() {
+      return {
+        selectNodeContents(node) {
+          selectedText = node;
+        },
+        getClientRects() {
+          return selectedText === textNodes[0]
+            ? [
+                {
+                  x: 40,
+                  y: 20,
+                  left: 40,
+                  top: 20,
+                  right: 88,
+                  bottom: 38,
+                  width: 48,
+                  height: 18,
+                },
+              ]
+            : [
+                {
+                  x: 88,
+                  y: 20,
+                  left: 88,
+                  top: 20,
+                  right: 128,
+                  bottom: 38,
+                  width: 40,
+                  height: 18,
+                },
+              ];
+        },
+      };
+    },
+  };
+  t.after(() => {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+    if (previousNodeFilter === undefined) delete globalThis.NodeFilter;
+    else globalThis.NodeFilter = previousNodeFilter;
+  });
+  const icon = {
+    checkVisibility: () => true,
+    getBoundingClientRect: () => ({
+      x: 18,
+      y: 18,
+      left: 18,
+      top: 18,
+      right: 34,
+      bottom: 34,
+      width: 16,
+      height: 16,
+    }),
+  };
+  const root = {
+    matches: () => false,
+    querySelectorAll: () => [icon],
+    checkVisibility: () => true,
+    getBoundingClientRect: () => ({
+      x: 10,
+      y: 10,
+      left: 10,
+      top: 10,
+      right: 130,
+      bottom: 50,
+      width: 120,
+      height: 40,
+    }),
+  };
+  const measured = await measureTargetGlyph({
+    evaluate: async (callback) => callback(root),
+  });
+
+  assert.deepEqual(measured, { x: 18, y: 18, width: 110, height: 20 });
+});
+
+test("origin-bound navigation defaults to frontend and rejects cross-origin routes", async () => {
+  const { bindCaptureNavigation } = await import("./capture-source.mjs");
+  let current = "about:blank";
+  const calls = [];
+  const page = {
+    url: () => current,
+    async goto(url, options) {
+      calls.push([url, options]);
+      current = `${url}/`;
+    },
+  };
+  const noRoute = bindCaptureNavigation({
+    page,
+    frontendUrl: "http://127.0.0.1:18080",
+  });
+  await noRoute.navigateDefault();
+  assert.deepEqual(calls, [
+    ["http://127.0.0.1:18080", { waitUntil: "domcontentloaded" }],
+  ]);
+  assert.equal(noRoute.evidence().finalOrigin, "http://127.0.0.1:18080");
+
+  const routed = bindCaptureNavigation({
+    page,
+    frontendUrl: "http://127.0.0.1:18080",
+    navigateRoute: async () => {
+      current = "https://attacker.invalid/phish";
+    },
+  });
+  await assert.rejects(
+    () => routed.navigateRoute("workspace.board", { page }),
+    /allowed frontend origin/i,
+  );
 });
 
 test("receipt records exact command, tool identities, source geometry, epochs, hashes, and frames", async (t) => {
@@ -513,6 +809,57 @@ test("capture evidence uses immutable creation and refuses overwrite", async (t)
   );
 });
 
+test("recorder startup failure SIGKILL is awaited and cleanup failure aggregates", async (t) => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "highlight-recorder-start-test-"),
+  );
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const child = new EventEmitter();
+  child.pid = 7_551;
+  child.exitCode = null;
+  child.signalCode = null;
+  child.stdin = new PassThrough();
+  child.stderr = new PassThrough();
+  child.kill = (signal) => signals.push(signal);
+  const signals = [];
+  const waits = [];
+  const command = {
+    command: "/fixture/ffmpeg",
+    args: [],
+    output: path.join(root, "raw.mp4"),
+    progressPath: path.join(root, "progress"),
+    logPath: path.join(root, "ffmpeg.log"),
+  };
+
+  await assert.rejects(
+    () =>
+      startFfmpegRecorder({
+        command,
+        spawnProcess: () => {
+          queueMicrotask(() => child.emit("spawn"));
+          return child;
+        },
+        waitForProgress: async () => {
+          throw new Error("first frame proof failed");
+        },
+        waitForChildExit: async (_child, timeoutMs) => {
+          waits.push(timeoutMs);
+          return false;
+        },
+      }),
+    (error) => {
+      assert.equal(error instanceof AggregateError, true);
+      assert.deepEqual(
+        error.errors.map((entry) => entry.message),
+        ["first frame proof failed", "ffmpeg process 7551 survived SIGKILL"],
+      );
+      return true;
+    },
+  );
+  assert.deepEqual(signals, ["SIGKILL"]);
+  assert.deepEqual(waits, [2_000]);
+});
+
 test("captureScenario owns preparation, recording, execution, teardown, and immutable manifest", async (t) => {
   const root = await fs.mkdtemp(
     path.join(os.tmpdir(), "highlight-driver-test-"),
@@ -591,10 +938,30 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
       taskCount: 1,
     },
   };
+  const sourceProof = {
+    contract: "kandev-highlight-source-v1",
+    source: "pr_head",
+    selectedSha: "1".repeat(40),
+    headSha: "1".repeat(40),
+    currentMainSha: "2".repeat(40),
+    clean: true,
+    status: "",
+  };
+  const buildProof = buildProvenance(sourceProof);
+  let currentUrl = "about:blank";
+  const page = {
+    url: () => currentUrl,
+    async goto(url) {
+      currentUrl = url;
+      events.push(`goto:${url}`);
+    },
+  };
 
   const result = await captureScenario({
     scenario,
     timeline,
+    source: sourceProof,
+    buildProvenance: buildProof,
     sourceDigest: `sha256:${"a".repeat(64)}`,
     frontendUrl: "http://127.0.0.1:18080",
     artifactRoot,
@@ -604,6 +971,7 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     cdpPort: 49_261,
     navigateRoute: async (route) => {
       events.push(`route:${route}`);
+      currentUrl = "http://127.0.0.1:18080/board";
     },
     seedRegistry: {
       "kandev.highlight.quick-start": async () => seedProof,
@@ -632,7 +1000,7 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
       connectCaptureBrowser: async () => ({
         browser: {},
         context: {},
-        page: {},
+        page,
         cdp: {},
         async close() {
           events.push("browser:close");
@@ -697,6 +1065,25 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     path.join(paths.evidenceDir, "capture.json"),
   );
   assert.equal(result.receipt.scenarioDigest, computeScenarioDigest(scenario));
+  assert.deepEqual(result.receipt.source, sourceProof);
+  assert.deepEqual(result.receipt.build, {
+    contract: buildProof.contract,
+    manifestDigest: buildProof.manifestDigest,
+    sourceSha: sourceProof.selectedSha,
+    outputs: buildProof.outputs,
+  });
+  assert.deepEqual(result.receipt.navigation, {
+    configuredUrl: "http://127.0.0.1:18080",
+    allowedOrigin: "http://127.0.0.1:18080",
+    finalUrl: "http://127.0.0.1:18080/board",
+    finalOrigin: "http://127.0.0.1:18080",
+  });
+  assert.deepEqual(result.receipt.trustedInputLedger, []);
+  assert.deepEqual(result.receipt.capture.frameAlignment, {
+    expectedFrameCount: 31,
+    frameDelta: -1,
+    toleranceFrames: 1,
+  });
   assert.equal(result.receipt.storyStartOffsetMs, 240);
   assert.equal(result.receipt.runtime.teardown.processesGone, true);
   assert.equal(result.receipt.runtime.teardown.coordinatesReleased, true);
@@ -709,6 +1096,168 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
   assert.deepEqual(
     JSON.parse(await fs.readFile(result.captureManifestPath, "utf8")),
     result.receipt,
+  );
+});
+
+test("capture failure aggregates every cleanup error and persists structured teardown evidence", async (t) => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "highlight-cleanup-test-"),
+  );
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const artifactRoot = path.join(root, "capture-failure");
+  const profile = resolveCaptureProfile(DESKTOP_SCENARIO_PROFILE);
+  const paths = runtime(profile, artifactRoot);
+  const scenario = {
+    schemaVersion: 1,
+    id: "cleanup-failure",
+    title: "Cleanup failure",
+    profile: DESKTOP_SCENARIO_PROFILE,
+    seed: { recipe: "cleanup.seed", parameters: {} },
+    setup: { route: "workspace.board", primitives: [] },
+    story: {
+      openingSettleMs: 400,
+      actions: [{ kind: "pause", durationMs: 100 }],
+      endingSettleMs: 400,
+    },
+  };
+  const timeline = compileTimeline(scenario);
+  const plan = {
+    ...paths,
+    contract: "kandev-highlight-capture-runtime-v1",
+    scenarioId: scenario.id,
+    runId: "cleanup-r01",
+    displayNumber: 262,
+    cdpPort: 49_262,
+    cdpEndpoint: "http://127.0.0.1:49262",
+    profileDir: path.join(artifactRoot, "runtime", "browser-profile"),
+    lockPath: path.join(artifactRoot, "runtime", "capture.lock"),
+  };
+  let currentUrl = "about:blank";
+  const page = {
+    url: () => currentUrl,
+    async goto(url) {
+      currentUrl = url;
+    },
+  };
+  const cleanupOrder = [];
+  const cleanupSource = {
+    contract: "kandev-highlight-source-v1",
+    source: "pr_head",
+    selectedSha: "1".repeat(40),
+    headSha: "1".repeat(40),
+    clean: true,
+    status: "",
+  };
+
+  await assert.rejects(
+    () =>
+      captureScenario({
+        scenario,
+        timeline,
+        source: cleanupSource,
+        buildProvenance: buildProvenance(cleanupSource),
+        sourceDigest: `sha256:${"a".repeat(64)}`,
+        frontendUrl: "http://127.0.0.1:18080",
+        artifactRoot,
+        repositoryRoots: [path.join(root, "repo")],
+        runId: "cleanup-r01",
+        displayNumber: 262,
+        cdpPort: 49_262,
+        navigateRoute: async () => {
+          currentUrl = "http://127.0.0.1:18080/board";
+        },
+        seedRegistry: {
+          "cleanup.seed": async () => ({
+            seedId: "cleanup.seed",
+            seedDigest: `sha256:${"b".repeat(64)}`,
+            invariants: {},
+          }),
+        },
+        dependencies: {
+          resolveCaptureTools: async () => ({
+            ffmpeg: { executable: "/usr/bin/ffmpeg" },
+            chromium: { executable: "/opt/chromium" },
+            xvfb: { executable: "/usr/bin/Xvfb" },
+          }),
+          chooseReadyCaptureEncoder: async () => ({
+            encoder: { name: "libx264", source: "portable-fallback" },
+            attempts: [],
+          }),
+          planCaptureRuntime: () => plan,
+          startCaptureRuntime: async () => {
+            await Promise.all([
+              fs.mkdir(path.dirname(paths.rawMasterPath), { recursive: true }),
+              fs.mkdir(paths.evidenceDir, { recursive: true }),
+              fs.mkdir(path.dirname(paths.progressPath), { recursive: true }),
+            ]);
+            return {
+              async stop() {
+                cleanupOrder.push("runtime");
+                throw new Error("runtime cleanup failed");
+              },
+            };
+          },
+          connectCaptureBrowser: async () => ({
+            page,
+            context: {},
+            cdp: {},
+            async close() {
+              cleanupOrder.push("browser");
+              throw new Error("browser cleanup failed");
+            },
+          }),
+          configureCaptureTarget: async () => {},
+          installCaptureOverlay: async () => {},
+          createCaptureCursor: () => ({ movements: [], resyncs: [] }),
+          prepareScenario: async ({ seedRegistry, navigateRoute }) => {
+            await seedRegistry[scenario.seed.recipe]({});
+            await navigateRoute(scenario.setup.route, { page });
+            return { contract: "prepared" };
+          },
+          startFfmpegRecorder: async () => ({
+            captureEpochMs: 1_000,
+            async stop() {
+              cleanupOrder.push("recorder");
+              throw new Error("recorder cleanup failed");
+            },
+          }),
+          executePreparedScenario: async () => {
+            throw new Error("story execution failed");
+          },
+        },
+      }),
+    (error) => {
+      assert.equal(error instanceof AggregateError, true);
+      assert.match(error.message, /execute.*cleanup/i);
+      assert.deepEqual(
+        error.errors.map((entry) => entry.message),
+        [
+          "story execution failed",
+          "recorder cleanup failed",
+          "browser cleanup failed",
+          "runtime cleanup failed",
+        ],
+      );
+      return true;
+    },
+  );
+
+  assert.deepEqual(cleanupOrder, ["recorder", "browser", "runtime"]);
+  const failure = JSON.parse(
+    await fs.readFile(
+      path.join(paths.evidenceDir, "capture.failure.json"),
+      "utf8",
+    ),
+  );
+  assert.equal(failure.phase, "execute");
+  assert.equal(failure.teardown.complete, false);
+  assert.deepEqual(
+    failure.teardown.components.map(({ component, ok }) => ({ component, ok })),
+    [
+      { component: "recorder", ok: false },
+      { component: "browser", ok: false },
+      { component: "runtime", ok: false },
+    ],
   );
 });
 
@@ -729,6 +1278,14 @@ test("captureScenario rejects non-exact digests and missing allowlisted navigati
   const common = {
     scenario,
     timeline: compileTimeline(scenario),
+    source: {
+      contract: "kandev-highlight-source-v1",
+      source: "pr_head",
+      selectedSha: "1".repeat(40),
+      headSha: "1".repeat(40),
+      clean: true,
+      status: "",
+    },
     frontendUrl: "http://127.0.0.1:18080",
     artifactRoot: "/external/navigation-gate",
     runId: "r01",
@@ -740,6 +1297,7 @@ test("captureScenario rejects non-exact digests and missing allowlisted navigati
       },
     },
   };
+  common.buildProvenance = buildProvenance(common.source);
 
   await assert.rejects(
     () => captureScenario({ ...common, sourceDigest: "sha256:not-exact" }),
@@ -749,5 +1307,40 @@ test("captureScenario rejects non-exact digests and missing allowlisted navigati
     () =>
       captureScenario({ ...common, sourceDigest: `sha256:${"c".repeat(64)}` }),
     /requires an allowlisted navigateRoute adapter/,
+  );
+  await assert.rejects(
+    () =>
+      captureScenario({
+        ...common,
+        source: undefined,
+        navigateRoute: async () => {},
+        sourceDigest: `sha256:${"c".repeat(64)}`,
+      }),
+    /clean kandev-highlight-source-v1 source gate proof/i,
+  );
+  await assert.rejects(
+    () =>
+      captureScenario({
+        ...common,
+        navigateRoute: async () => {},
+        sourceDigest: `sha256:${"c".repeat(64)}`,
+        buildProvenance: {
+          contract: "kandev-highlight-build-provenance-v1",
+          manifestDigest: `sha256:${"d".repeat(64)}`,
+          source: { selectedSha: "9".repeat(40) },
+          outputs: {},
+        },
+      }),
+    /build provenance.*exact selected source SHA/i,
+  );
+  await assert.rejects(
+    () =>
+      captureScenario({
+        ...common,
+        buildProvenance: undefined,
+        navigateRoute: async () => {},
+        sourceDigest: `sha256:${"c".repeat(64)}`,
+      }),
+    /needs exact build provenance/i,
   );
 });

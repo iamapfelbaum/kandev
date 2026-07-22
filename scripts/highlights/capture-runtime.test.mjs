@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import {
   allocateRuntimeCoordinates,
   planCaptureRuntime,
   reserveCaptureRuntime,
+  spawnManagedProcess,
   startCaptureRuntime,
 } from "./capture-runtime.mjs";
 
@@ -179,6 +182,143 @@ test("allocates first display and port pair proven free", async () => {
   ]);
 });
 
+test("allocation skips a live coordinate lock and retries another pair", async () => {
+  const seen = [];
+  const coordinates = await allocateRuntimeCoordinates({
+    displayRange: [250, 251],
+    portRange: [49_250, 49_251],
+    isDisplayFree: async () => true,
+    isPortFree: async () => true,
+    isCoordinateAvailable: async (displayNumber, port) => {
+      seen.push([displayNumber, port]);
+      return port === 49_251;
+    },
+  });
+
+  assert.deepEqual(coordinates, { displayNumber: 250, cdpPort: 49_251 });
+  assert.deepEqual(seen, [
+    [250, 49_250],
+    [250, 49_251],
+  ]);
+});
+
+test("reservation reclaims only a proven-dead PID/start-token coordinate lock", async (t) => {
+  const paths = await fixture();
+  t.after(() => fs.rm(paths.root, { recursive: true, force: true }));
+  const plan = planCaptureRuntime(runtimeOptions(paths));
+  t.after(() => fs.unlink(plan.coordinateLockPath).catch(() => {}));
+  await fs.writeFile(
+    plan.coordinateLockPath,
+    `${JSON.stringify({
+      contract: "kandev-highlight-coordinate-lock-v1",
+      owner: { pid: 999_999, startToken: "dead-start-token" },
+      artifactRoot: "/external/abandoned-run",
+    })}\n`,
+    { flag: "wx" },
+  );
+
+  await reserveCaptureRuntime(plan, {
+    processStartToken: async (pid) =>
+      pid === process.pid ? "current-start-token" : null,
+    isDisplayFree: async () => true,
+    isPortFree: async () => true,
+  });
+
+  const recovered = JSON.parse(
+    await fs.readFile(plan.coordinateLockPath, "utf8"),
+  );
+  assert.equal(recovered.contract, "kandev-highlight-coordinate-lock-v1");
+  assert.equal(recovered.owner.pid, process.pid);
+  assert.match(recovered.owner.startToken, /current-start-token/);
+});
+
+test("reservation never unlinks malformed or live coordinate locks", async (t) => {
+  const paths = await fixture();
+  t.after(() => fs.rm(paths.root, { recursive: true, force: true }));
+  const malformedPlan = planCaptureRuntime(runtimeOptions(paths));
+  t.after(() => fs.unlink(malformedPlan.coordinateLockPath).catch(() => {}));
+  await fs.writeFile(malformedPlan.coordinateLockPath, "not-json\n", {
+    flag: "wx",
+  });
+  await assert.rejects(
+    () =>
+      reserveCaptureRuntime(malformedPlan, {
+        processStartToken: async () => "current-start-token",
+        isDisplayFree: async () => true,
+        isPortFree: async () => true,
+      }),
+    /malformed coordinate lock/i,
+  );
+  assert.equal(
+    await fs.readFile(malformedPlan.coordinateLockPath, "utf8"),
+    "not-json\n",
+  );
+
+  await fs.unlink(malformedPlan.coordinateLockPath);
+  await fs.writeFile(
+    malformedPlan.coordinateLockPath,
+    `${JSON.stringify({
+      contract: "kandev-highlight-coordinate-lock-v1",
+      owner: { pid: process.pid, startToken: "live-token" },
+      artifactRoot: "/external/live-run",
+    })}\n`,
+    { flag: "wx" },
+  );
+  await assert.rejects(
+    () =>
+      reserveCaptureRuntime(malformedPlan, {
+        processStartToken: async () => "live-token",
+        isDisplayFree: async () => true,
+        isPortFree: async () => true,
+      }),
+    /live coordinate lock/i,
+  );
+  assert.match(
+    await fs.readFile(malformedPlan.coordinateLockPath, "utf8"),
+    /live-token/,
+  );
+});
+
+test("managed process waits for SIGKILL exit and rejects a surviving child", async (t) => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "highlight-process-test-"),
+  );
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.pid = 7_331;
+  child.exitCode = null;
+  child.signalCode = null;
+  const signals = [];
+  const waits = [];
+  const handlePromise = spawnManagedProcess(
+    {
+      name: "fixture",
+      command: "/fixture/process",
+      args: [],
+      env: {},
+      logPath: path.join(root, "fixture.log"),
+    },
+    {
+      spawnProcess: () => {
+        queueMicrotask(() => child.emit("spawn"));
+        return child;
+      },
+      killProcess: (_pid, signal) => signals.push(signal),
+      waitForChildExit: async (_child, timeoutMs) => {
+        waits.push(timeoutMs);
+        return false;
+      },
+    },
+  );
+  const handle = await handlePromise;
+
+  await assert.rejects(() => handle.stop(), /survived SIGKILL/i);
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+  assert.deepEqual(waits, [5_000, 2_000]);
+});
+
 test("reservation is atomic and preserves durable raw/log/evidence directories", async (t) => {
   const paths = await fixture();
   t.after(() => fs.rm(paths.root, { recursive: true, force: true }));
@@ -305,4 +445,43 @@ test("startup failure tears down partial runtime without deleting recoverable ar
   await assert.rejects(fs.stat(plan.profileDir), { code: "ENOENT" });
   await assert.rejects(fs.stat(plan.lockPath), { code: "ENOENT" });
   assert.equal((await fs.stat(plan.logsDir)).isDirectory(), true);
+});
+
+test("startup failure aggregates teardown failure instead of hiding it", async (t) => {
+  const paths = await fixture();
+  t.after(() => fs.rm(paths.root, { recursive: true, force: true }));
+  const plan = planCaptureRuntime(
+    runtimeOptions(paths, { displayNumber: 263, cdpPort: 49_263 }),
+  );
+
+  await assert.rejects(
+    () =>
+      startCaptureRuntime(plan, {
+        spawnManaged: async (spec) => ({
+          name: spec.name,
+          pid: 301,
+          async stop() {
+            throw new Error(`${spec.name} teardown failed`);
+          },
+          isRunning() {
+            return true;
+          },
+        }),
+        isDisplayFree: async () => true,
+        isPortFree: async () => true,
+        waitForDisplay: async () => {},
+        waitForCdp: async () => {
+          throw new Error("CDP readiness failed");
+        },
+        verifyDisplayReleased: async () => {},
+        verifyPortReleased: async () => {},
+      }),
+    (error) => {
+      assert.equal(error instanceof AggregateError, true);
+      assert.match(error.message, /startup.*teardown/i);
+      assert.equal(error.errors[0].message, "CDP readiness failed");
+      assert.match(error.errors[1].message, /capture runtime teardown failed/i);
+      return true;
+    },
+  );
 });

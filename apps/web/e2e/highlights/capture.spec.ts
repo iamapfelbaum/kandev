@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { expect, test } from "../fixtures/test-base";
 import { createHighlightRegistries } from "./registry";
+import { verifyCaptureBuildProvenance } from "./run-capture-integration.mjs";
 
 import { captureScenario } from "../../../../scripts/highlights/capture-source.mjs";
 import { compileTimeline, readScenario } from "../../../../scripts/highlights/scenario.mjs";
@@ -80,9 +81,18 @@ test("captures deterministic declarative quick-start source master", async ({
         "run `pnpm e2e:highlight-capture` instead of invoking this spec directly.",
     );
   }
+  const buildProofPath = process.env.KANDEV_HIGHLIGHT_BUILD_PROOF;
+  if (!buildProofPath || !path.isAbsolute(buildProofPath)) {
+    throw new Error(
+      "KANDEV_HIGHLIGHT_BUILD_PROOF must point to the externally attested current-checkout build manifest.",
+    );
+  }
   const scenario = await readScenario(SCENARIO_PATH);
   const timeline = compileTimeline(scenario);
   const source = await verifySourceGate({ repoRoot: REPOSITORY_ROOT, source: "pr_head" });
+  const buildProof = await verifyCaptureBuildProvenance(buildProofPath, {
+    expectedSourceSha: source.selectedSha,
+  });
   const runId = `e2e-${process.pid}-${testInfo.workerIndex}`;
   const artifactRoot = path.join(artifactParent, runId);
   const registries = createHighlightRegistries({ apiClient, seedData, backend });
@@ -90,7 +100,9 @@ test("captures deterministic declarative quick-start source master", async ({
   const result = await captureScenario({
     scenario,
     timeline,
+    source,
     sourceDigest: sourceDigest(source),
+    buildProvenance: buildProof,
     frontendUrl: backend.frontendUrl,
     artifactRoot,
     repositoryRoots: [REPOSITORY_ROOT],
@@ -137,6 +149,12 @@ test("captures deterministic declarative quick-start source master", async ({
     height: 2400,
     r_frame_rate: "25/1",
   });
+  expect(videoStreams[0].avg_frame_rate).toBe("25/1");
+  expect(Number(videoStreams[0].nb_frames)).toBe(manifest.capture.frameCount);
+  expect(
+    Math.abs(Number(videoStreams[0].duration) * 25 - manifest.capture.frameCount),
+  ).toBeLessThanOrEqual(1);
+  expect(Math.abs(manifest.capture.frameAlignment.frameDelta)).toBeLessThanOrEqual(1);
   expect(audioStreams).toHaveLength(0);
   expect(proof.frames).toHaveLength(3);
   expect(proof.frames.every((frame) => frame.bytes > 0 && frame.digest.startsWith("sha256:"))).toBe(
@@ -144,6 +162,26 @@ test("captures deterministic declarative quick-start source master", async ({
   );
   await expect(fs.access(proof.proofPath)).resolves.toBeUndefined();
   expect(manifest.seed.seedId).toBe("kandev.highlight.quick-start");
+  expect(manifest.source).toMatchObject({
+    contract: "kandev-highlight-source-v1",
+    selectedSha: source.selectedSha,
+    clean: true,
+  });
+  expect(manifest.build).toMatchObject({
+    contract: "kandev-highlight-build-provenance-v1",
+    manifestDigest: buildProof.manifestDigest,
+    sourceSha: source.selectedSha,
+    outputs: {
+      backend: { digest: buildProof.outputs.backend.digest },
+      mockAgent: { digest: buildProof.outputs.mockAgent.digest },
+      webDist: { digest: buildProof.outputs.webDist.digest },
+    },
+  });
+  expect(manifest.navigation).toMatchObject({
+    configuredUrl: backend.frontendUrl,
+    allowedOrigin: new URL(backend.frontendUrl).origin,
+    finalOrigin: new URL(backend.frontendUrl).origin,
+  });
   expect(manifest.seed.invariants.taskId).toMatch(/\S+/);
   expect(manifest.seed.invariants.taskCount).toBe(1);
   expect(manifest.execution.steps).toHaveLength(scenario.story.actions.length);

@@ -8,6 +8,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { resolveCaptureProfile } from "./camera-compiler.mjs";
 import { createCursorController } from "./cursor.mjs";
+import {
+  bindCaptureNavigation,
+  createTrustedInputAdapters,
+  installCaptureOverlay,
+  measurePointerGlyph,
+  measureTargetGlyph,
+} from "./capture-browser.mjs";
 import { executePreparedScenario, prepareScenario } from "./executor.mjs";
 import {
   allocateRuntimeCoordinates,
@@ -16,11 +23,20 @@ import {
 } from "./capture-runtime.mjs";
 import { compileTimeline, computeScenarioDigest } from "./scenario.mjs";
 
+export {
+  bindCaptureNavigation,
+  createTrustedInputAdapters,
+  installCaptureOverlay,
+  measurePointerGlyph,
+  measureTargetGlyph,
+  overlayBootstrap,
+} from "./capture-browser.mjs";
+
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = path.resolve(MODULE_DIR, "../..");
 const WEB_ROOT = path.join(REPOSITORY_ROOT, "apps", "web");
-const OVERLAY_ID = "kandev-highlight-pointer-overlay";
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
+const SOURCE_SHA_PATTERN = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 
 export function playwrightChromiumFromModule(playwrightModule) {
   const chromium =
@@ -141,7 +157,7 @@ export function buildEncoderProbePlan({
       "-f",
       "lavfi",
       "-i",
-      `color=c=black:s=${profile.sourceWidth}x${profile.sourceHeight}:r=${profile.fps}`,
+      `testsrc2=size=${profile.sourceWidth}x${profile.sourceHeight}:rate=${profile.fps}`,
       "-frames:v",
       String(frameCount),
       "-an",
@@ -251,6 +267,41 @@ export function assertCleanCaptureProgress(
   return progress;
 }
 
+export function assertCaptureFrameAlignment({
+  frameCount,
+  fps,
+  storyStartOffsetMs,
+  storyDurationMs,
+  toleranceFrames = 1,
+} = {}) {
+  for (const [label, value] of Object.entries({
+    frameCount,
+    fps,
+    storyStartOffsetMs,
+    storyDurationMs,
+    toleranceFrames,
+  })) {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`capture frame alignment needs non-negative ${label}`);
+    }
+  }
+  if (!Number.isInteger(frameCount) || !Number.isInteger(toleranceFrames)) {
+    throw new Error(
+      "capture frame alignment frameCount and toleranceFrames must be integers",
+    );
+  }
+  const expectedFrameCount = Math.round(
+    ((storyStartOffsetMs + storyDurationMs) * fps) / 1_000,
+  );
+  const frameDelta = frameCount - expectedFrameCount;
+  if (Math.abs(frameDelta) > toleranceFrames) {
+    throw new Error(
+      `capture frame alignment failed: expected ${expectedFrameCount} frames (±${toleranceFrames}), got ${frameCount}`,
+    );
+  }
+  return { expectedFrameCount, frameDelta, toleranceFrames };
+}
+
 export async function configureCaptureTarget({ page, cdp, profile } = {}) {
   if (!page || !cdp)
     throw new Error("capture target needs Playwright page and CDP session");
@@ -293,235 +344,6 @@ export async function configureCaptureTarget({ page, cdp, profile } = {}) {
     sourceHeight: viewport.innerHeight * viewport.devicePixelRatio,
     nativeMobile: profile.nativeMobile,
   };
-}
-
-function overlayBootstrap() {
-  const id = "kandev-highlight-pointer-overlay";
-  const ensure = () => {
-    let overlay = document.getElementById(id);
-    if (!overlay) {
-      overlay = document.createElement("div");
-      overlay.id = id;
-      overlay.setAttribute("aria-hidden", "true");
-      Object.assign(overlay.style, {
-        position: "fixed",
-        zIndex: "2147483647",
-        width: "20px",
-        height: "20px",
-        left: "0",
-        top: "0",
-        border: "2px solid rgba(255,255,255,.96)",
-        borderRadius: "9999px",
-        background: "rgba(20,20,24,.78)",
-        boxShadow: "0 1px 4px rgba(0,0,0,.45)",
-        pointerEvents: "none",
-        transform: "translate(-50%,-50%)",
-        opacity: "0",
-        transition:
-          "width 80ms linear,height 80ms linear,background 80ms linear",
-      });
-      document.documentElement.append(overlay);
-    }
-    return overlay;
-  };
-  globalThis.__kandevHighlightOverlay = (state) => {
-    const overlay = ensure();
-    overlay.style.left = `${state.x}px`;
-    overlay.style.top = `${state.y}px`;
-    overlay.style.opacity = state.visible === false ? "0" : "1";
-    const touching = state.kind === "touch";
-    overlay.style.width = touching ? "32px" : "20px";
-    overlay.style.height = touching ? "32px" : "20px";
-    overlay.style.background = touching
-      ? "rgba(69,126,255,.35)"
-      : "rgba(20,20,24,.78)";
-  };
-  if (document.documentElement) ensure();
-  else document.addEventListener("DOMContentLoaded", ensure, { once: true });
-}
-
-export async function installCaptureOverlay({ context, page } = {}) {
-  if (typeof context?.addInitScript === "function")
-    await context.addInitScript(overlayBootstrap);
-  if (typeof page?.evaluate !== "function")
-    throw new Error("capture overlay needs a Playwright page");
-  await page.evaluate(overlayBootstrap);
-}
-
-async function updateOverlay(page, state) {
-  await page.evaluate((next) => {
-    if (typeof globalThis.__kandevHighlightOverlay !== "function") {
-      throw new Error("Highlight pointer overlay is not installed");
-    }
-    globalThis.__kandevHighlightOverlay(next);
-  }, state);
-}
-
-function touchPoint(x, y) {
-  return { x, y, radiusX: 8, radiusY: 8, force: 1, id: 1 };
-}
-
-function mouseButtons(button) {
-  return button === "right" ? 2 : button === "middle" ? 4 : 1;
-}
-
-export function createTrustedInputAdapters({ page, cdp, inputKind } = {}) {
-  if (!page || !cdp)
-    throw new Error("trusted input needs page and CDP session");
-  if (!new Set(["desktop", "native-mobile"]).has(inputKind))
-    throw new Error("inputKind must be desktop or native-mobile");
-  const trustedCursor = async ({ x, y }) => {
-    if (inputKind === "desktop") {
-      await cdp.send("Input.dispatchMouseEvent", {
-        type: "mouseMoved",
-        x,
-        y,
-        button: "none",
-        buttons: 0,
-      });
-    }
-    await updateOverlay(page, { kind: "cursor", x, y, visible: true });
-  };
-  const trustedActivation = async ({
-    x,
-    y,
-    button = "left",
-    clickCount = 1,
-  }) => {
-    if (inputKind === "native-mobile") {
-      await cdp.send("Input.dispatchTouchEvent", {
-        type: "touchStart",
-        touchPoints: [touchPoint(x, y)],
-      });
-      await updateOverlay(page, { kind: "touch", x, y, visible: true });
-      if (typeof page.waitForTimeout === "function")
-        await page.waitForTimeout(48);
-      await cdp.send("Input.dispatchTouchEvent", {
-        type: "touchEnd",
-        touchPoints: [],
-      });
-      await updateOverlay(page, { kind: "cursor", x, y, visible: true });
-      return;
-    }
-    const buttons = mouseButtons(button);
-    await cdp.send("Input.dispatchMouseEvent", {
-      type: "mousePressed",
-      x,
-      y,
-      button,
-      buttons,
-      clickCount,
-    });
-    await cdp.send("Input.dispatchMouseEvent", {
-      type: "mouseReleased",
-      x,
-      y,
-      button,
-      buttons: 0,
-      clickCount,
-    });
-  };
-  const trustedGesture = {
-    async start({ x, y }) {
-      if (inputKind === "native-mobile") {
-        await cdp.send("Input.dispatchTouchEvent", {
-          type: "touchStart",
-          touchPoints: [touchPoint(x, y)],
-        });
-      } else {
-        await cdp.send("Input.dispatchMouseEvent", {
-          type: "mousePressed",
-          x,
-          y,
-          button: "left",
-          buttons: 1,
-          clickCount: 1,
-        });
-      }
-      await updateOverlay(page, {
-        kind: inputKind === "native-mobile" ? "touch" : "cursor",
-        x,
-        y,
-        visible: true,
-      });
-    },
-    async move({ x, y }) {
-      if (inputKind === "native-mobile") {
-        await cdp.send("Input.dispatchTouchEvent", {
-          type: "touchMove",
-          touchPoints: [touchPoint(x, y)],
-        });
-      } else {
-        await cdp.send("Input.dispatchMouseEvent", {
-          type: "mouseMoved",
-          x,
-          y,
-          button: "left",
-          buttons: 1,
-        });
-      }
-      await updateOverlay(page, {
-        kind: inputKind === "native-mobile" ? "touch" : "cursor",
-        x,
-        y,
-        visible: true,
-      });
-    },
-    async end({ x, y }) {
-      if (inputKind === "native-mobile") {
-        await cdp.send("Input.dispatchTouchEvent", {
-          type: "touchEnd",
-          touchPoints: [],
-        });
-      } else {
-        await cdp.send("Input.dispatchMouseEvent", {
-          type: "mouseReleased",
-          x,
-          y,
-          button: "left",
-          buttons: 0,
-          clickCount: 1,
-        });
-      }
-      await updateOverlay(page, { kind: "cursor", x, y, visible: true });
-    },
-  };
-  return { trustedCursor, trustedActivation, trustedGesture };
-}
-
-export async function measurePointerGlyph(page) {
-  return page.evaluate((id) => {
-    const rect = document.getElementById(id)?.getBoundingClientRect();
-    return rect
-      ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-      : null;
-  }, OVERLAY_ID);
-}
-
-export async function measureTargetGlyph(locator) {
-  return locator.evaluate((element) => {
-    const preferred = element.matches(
-      "[data-highlight-glyph],svg,img,[role=img]",
-    )
-      ? element
-      : element.querySelector("[data-highlight-glyph],svg,img,[role=img]");
-    if (preferred) {
-      const rect = preferred.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0)
-        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
-    }
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-    while (walker.nextNode()) {
-      if (!walker.currentNode.textContent?.trim()) continue;
-      const range = document.createRange();
-      range.selectNodeContents(walker.currentNode);
-      const rect = range.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0)
-        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
-    }
-    const rect = element.getBoundingClientRect();
-    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
-  });
 }
 
 export function createCaptureCursor({ page, profile, adapters, now } = {}) {
@@ -704,10 +526,30 @@ function childExited(child, timeoutMs) {
   if (child.exitCode !== null || child.signalCode !== null)
     return Promise.resolve(true);
   return new Promise((resolve) => {
-    const timeout = setTimeout(() => resolve(false), timeoutMs);
-    child.once("close", () => {
+    const onClose = () => {
       clearTimeout(timeout);
       resolve(true);
+    };
+    const timeout = setTimeout(() => {
+      child.off("close", onClose);
+      resolve(false);
+    }, timeoutMs);
+    child.once("close", onClose);
+  });
+}
+
+async function requestRecorderQuit(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise((resolve, reject) => {
+    const onError = (error) => {
+      child.stdin.off("error", onError);
+      if (error.code === "EPIPE") resolve();
+      else reject(error);
+    };
+    child.stdin.once("error", onError);
+    child.stdin.end("q\n", () => {
+      child.stdin.off("error", onError);
+      resolve();
     });
   });
 }
@@ -736,6 +578,9 @@ async function waitForRecorderProgress(child, progressPath) {
 export async function startFfmpegRecorder({
   command,
   now = () => performance.now(),
+  spawnProcess = spawn,
+  waitForProgress = waitForRecorderProgress,
+  waitForChildExit = childExited,
 } = {}) {
   for (const destination of [
     command.output,
@@ -750,24 +595,28 @@ export async function startFfmpegRecorder({
     }
   }
   const log = fsSync.createWriteStream(command.logPath, { flags: "ax" });
-  const child = spawn(command.command, command.args, {
+  const child = spawnProcess(command.command, command.args, {
     stdio: ["pipe", "ignore", "pipe"],
   });
   child.stderr.pipe(log, { end: false });
   try {
     await childSpawned(child, "ffmpeg x11 capture");
     const captureEpochMs = now();
-    await waitForRecorderProgress(child, command.progressPath);
+    await waitForProgress(child, command.progressPath);
     let stopping = null;
     const stop = async () => {
       if (stopping) return stopping;
       stopping = (async () => {
         if (child.exitCode === null && child.signalCode === null) {
-          child.stdin.write("q\n");
-          child.stdin.end();
-          if (!(await childExited(child, 8_000))) {
+          await requestRecorderQuit(child);
+          if (!(await waitForChildExit(child, 8_000))) {
             child.kill("SIGINT");
-            if (!(await childExited(child, 3_000))) child.kill("SIGKILL");
+            if (!(await waitForChildExit(child, 3_000))) {
+              child.kill("SIGKILL");
+              if (!(await waitForChildExit(child, 2_000))) {
+                throw new Error(`ffmpeg process ${child.pid} survived SIGKILL`);
+              }
+            }
           }
         }
         log.end();
@@ -785,9 +634,22 @@ export async function startFfmpegRecorder({
     };
     return { captureEpochMs, pid: child.pid, stop };
   } catch (error) {
-    if (child.exitCode === null && child.signalCode === null)
+    let cleanupError;
+    if (child.exitCode === null && child.signalCode === null) {
       child.kill("SIGKILL");
+      if (!(await waitForChildExit(child, 2_000))) {
+        cleanupError = new Error(
+          `ffmpeg process ${child.pid} survived SIGKILL`,
+        );
+      }
+    }
     log.end();
+    if (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "ffmpeg recorder startup and cleanup failed",
+      );
+    }
     throw error;
   }
 }
@@ -828,6 +690,11 @@ export async function collectCaptureReceipt({
   seed,
   execution,
   runtime,
+  source,
+  navigation,
+  trustedInputLedger = [],
+  frameAlignment,
+  build,
 } = {}) {
   const stat = await fs.stat(rawMasterPath);
   const storyStartOffsetMs = storyEpochMs - captureEpochMs;
@@ -835,6 +702,9 @@ export async function collectCaptureReceipt({
     contract: "kandev-highlight-source-capture-v1",
     scenarioDigest,
     sourceDigest,
+    source: source ? structuredClone(source) : null,
+    build: build ? structuredClone(build) : null,
+    navigation: navigation ? structuredClone(navigation) : null,
     captureEpochMs,
     storyEpochMs,
     storyStartOffsetMs,
@@ -856,6 +726,7 @@ export async function collectCaptureReceipt({
       pixelFormat: command.master?.pixelFormat ?? null,
       profile: command.master?.profile ?? null,
       encoderReadiness: structuredClone(encoderReadiness),
+      frameAlignment: frameAlignment ? structuredClone(frameAlignment) : null,
     },
     rawMaster: {
       path: path.resolve(rawMasterPath),
@@ -866,6 +737,7 @@ export async function collectCaptureReceipt({
     tools: structuredClone(tools),
     seed: seed ? structuredClone(seed) : null,
     execution: execution ? structuredClone(execution) : null,
+    trustedInputLedger: structuredClone(trustedInputLedger),
     runtime: runtime ? structuredClone(runtime) : null,
   };
 }
@@ -921,6 +793,68 @@ function validateSeedProof(proof, recipe) {
   return structuredClone(proof);
 }
 
+function validateSourceProof(proof) {
+  if (
+    !proof ||
+    proof.contract !== "kandev-highlight-source-v1" ||
+    proof.clean !== true ||
+    proof.status !== "" ||
+    !SOURCE_SHA_PATTERN.test(proof.selectedSha ?? "")
+  ) {
+    throw new Error(
+      "captureScenario needs a clean kandev-highlight-source-v1 source gate proof with exact selectedSha",
+    );
+  }
+  if (proof.headSha && !SOURCE_SHA_PATTERN.test(proof.headSha)) {
+    throw new Error("captureScenario source gate proof has invalid headSha");
+  }
+  return structuredClone(proof);
+}
+
+function compactBuildProvenance(proof, sourceProof) {
+  if (proof === undefined) {
+    throw new Error(
+      "captureScenario needs exact build provenance for the current source checkout",
+    );
+  }
+  if (
+    proof?.contract !== "kandev-highlight-build-provenance-v1" ||
+    !DIGEST_PATTERN.test(proof.manifestDigest ?? "") ||
+    proof.source?.selectedSha !== sourceProof.selectedSha
+  ) {
+    throw new Error(
+      "capture build provenance must bind exact selected source SHA",
+    );
+  }
+  const outputs = {};
+  for (const key of ["backend", "mockAgent", "webDist"]) {
+    const output = proof.outputs?.[key];
+    if (
+      !output ||
+      !DIGEST_PATTERN.test(output.digest ?? "") ||
+      !Number.isInteger(output.bytes) ||
+      output.bytes <= 0 ||
+      (key === "webDist" &&
+        (!Number.isInteger(output.fileCount) || output.fileCount <= 0))
+    ) {
+      throw new Error(
+        `capture build provenance has invalid ${key} output identity`,
+      );
+    }
+    outputs[key] = {
+      digest: output.digest,
+      bytes: output.bytes,
+      ...(key === "webDist" ? { fileCount: output.fileCount } : {}),
+    };
+  }
+  return {
+    contract: proof.contract,
+    manifestDigest: proof.manifestDigest,
+    sourceSha: proof.source.selectedSha,
+    outputs,
+  };
+}
+
 function evidenceSeedRegistry(seedRegistry, recipe, onProof) {
   const seed =
     Object.hasOwn(seedRegistry, recipe) &&
@@ -938,7 +872,7 @@ function evidenceSeedRegistry(seedRegistry, recipe, onProof) {
   };
 }
 
-async function writeFailureEvidence(plan, phase, error) {
+async function writeFailureEvidence(plan, phase, error, teardown) {
   if (!plan?.evidenceDir) return;
   const destination = path.join(plan.evidenceDir, "capture.failure.json");
   const evidence = {
@@ -946,9 +880,34 @@ async function writeFailureEvidence(plan, phase, error) {
     phase,
     error: error instanceof Error ? error.message : String(error),
     stack: error instanceof Error ? error.stack : undefined,
-    runtime: runtimeEvidence(plan, null),
+    teardown: teardown ? structuredClone(teardown) : null,
+    runtime: runtimeEvidence(plan, teardown ?? null),
   };
-  await writeCaptureEvidence(destination, evidence).catch(() => {});
+  await writeCaptureEvidence(destination, evidence);
+}
+
+async function cleanupCaptureResources({
+  recorder,
+  browserConnection,
+  liveRuntime,
+} = {}) {
+  const components = [];
+  const errors = [];
+  for (const [component, cleanup] of [
+    ["recorder", recorder?.stop?.bind(recorder)],
+    ["browser", browserConnection?.close?.bind(browserConnection)],
+    ["runtime", liveRuntime?.stop?.bind(liveRuntime)],
+  ]) {
+    if (typeof cleanup !== "function") continue;
+    try {
+      const result = await cleanup();
+      components.push({ component, ok: true, result: result ?? null });
+    } catch (error) {
+      components.push({ component, ok: false, error: error.message });
+      errors.push(error);
+    }
+  }
+  return { complete: errors.length === 0, components, errors };
 }
 
 const DEFAULT_DEPENDENCIES = Object.freeze({
@@ -968,7 +927,9 @@ const DEFAULT_DEPENDENCIES = Object.freeze({
 export async function captureScenario({
   scenario,
   timeline: suppliedTimeline,
+  source,
   sourceDigest,
+  buildProvenance,
   frontendUrl,
   artifactRoot,
   repositoryRoots = [REPOSITORY_ROOT],
@@ -994,6 +955,8 @@ export async function captureScenario({
       "captureScenario needs exact sourceDigest as sha256 plus 64 lowercase hex characters",
     );
   }
+  const sourceProof = validateSourceProof(source);
+  const buildProof = compactBuildProvenance(buildProvenance, sourceProof);
   if (!/^https?:\/\//.test(frontendUrl ?? ""))
     throw new Error("captureScenario needs frontendUrl");
   if (scenario.setup?.route && typeof navigateRoute !== "function") {
@@ -1046,7 +1009,9 @@ export async function captureScenario({
   let browserConnection;
   let recorder;
   let recorderEvidence;
+  let captureEpochMs;
   let seedProof;
+  let navigationEvidence;
   try {
     liveRuntime = await deps.startCaptureRuntime(plan);
     phase = "browser";
@@ -1059,6 +1024,12 @@ export async function captureScenario({
     await deps.installCaptureOverlay({ context, page });
     if (typeof preparePage === "function")
       await preparePage({ page, context, cdp, profile, plan });
+    const navigation = bindCaptureNavigation({
+      page,
+      frontendUrl,
+      navigateRoute,
+    });
+    if (!scenario.setup?.route) await navigation.navigateDefault();
     const adapters = createTrustedInputAdapters({
       page,
       cdp,
@@ -1079,7 +1050,9 @@ export async function captureScenario({
       cursor,
       seedRegistry: captureSeedRegistry,
       primitiveRegistry,
-      navigateRoute,
+      navigateRoute: scenario.setup?.route
+        ? navigation.navigateRoute
+        : undefined,
       initialCursor,
       measureTargetGlyph,
       onCameraDirective,
@@ -1093,6 +1066,7 @@ export async function captureScenario({
         `seed recipe '${scenario.seed.recipe}' completed without exact seed evidence`,
       );
     }
+    navigationEvidence = navigation.evidence();
     await deps.configureCaptureTarget({ page, cdp, profile });
     const command = buildFfmpegCapturePlan({
       runtime: plan,
@@ -1101,7 +1075,9 @@ export async function captureScenario({
       ffmpegExecutable: tools.ffmpeg.executable,
     });
     phase = "record";
+    adapters.ledger.length = 0;
     recorder = await deps.startFfmpegRecorder({ command, now });
+    captureEpochMs = recorder.captureEpochMs;
     phase = "execute";
     const execution = await deps.executePreparedScenario({
       prepared,
@@ -1110,6 +1086,7 @@ export async function captureScenario({
     });
     phase = "recorder-teardown";
     recorderEvidence = await recorder.stop();
+    recorder = null;
     const progress = parseCaptureProgress(
       await fs.readFile(command.progressPath, "utf8"),
     );
@@ -1118,6 +1095,12 @@ export async function captureScenario({
       Math.floor((timeline.totalDurationMs * profile.fps) / 1_000) - 1,
     );
     assertCleanCaptureProgress(progress, { expectedMinimumFrames });
+    const frameAlignment = assertCaptureFrameAlignment({
+      frameCount: progress.frameCount,
+      fps: profile.fps,
+      storyStartOffsetMs: execution.storyEpochMs - captureEpochMs,
+      storyDurationMs: execution.storyDurationMs,
+    });
     phase = "browser-teardown";
     await browserConnection.close();
     browserConnection = null;
@@ -1134,7 +1117,8 @@ export async function captureScenario({
     const receipt = await collectCaptureReceipt({
       scenarioDigest,
       sourceDigest,
-      captureEpochMs: recorder.captureEpochMs,
+      source: sourceProof,
+      captureEpochMs,
       storyEpochMs: execution.storyEpochMs,
       storyDurationMs: execution.storyDurationMs,
       command,
@@ -1149,6 +1133,10 @@ export async function captureScenario({
         ...teardownEvidence,
         recorder: recorderEvidence,
       }),
+      navigation: navigationEvidence,
+      trustedInputLedger: adapters.ledger,
+      frameAlignment,
+      build: buildProof,
     });
     const captureManifestPath = path.join(plan.evidenceDir, "capture.json");
     await writeCaptureEvidence(captureManifestPath, receipt);
@@ -1161,13 +1149,40 @@ export async function captureScenario({
       timeline,
     };
   } catch (error) {
-    await recorder?.stop?.().catch(() => {});
-    await browserConnection?.close?.().catch(() => {});
-    await liveRuntime?.stop?.().catch(() => {});
-    await writeFailureEvidence(plan, phase, error);
+    const cleanup = await cleanupCaptureResources({
+      recorder,
+      browserConnection,
+      liveRuntime,
+    });
+    const evidenceTeardown = {
+      complete: cleanup.complete,
+      components: cleanup.components,
+    };
+    let evidenceError;
+    try {
+      await writeFailureEvidence(plan, phase, error, evidenceTeardown);
+    } catch (failureEvidenceError) {
+      evidenceError = new Error(
+        `cannot persist capture failure evidence: ${failureEvidenceError.message}`,
+        { cause: failureEvidenceError },
+      );
+    }
+    const errors = [
+      error,
+      ...cleanup.errors,
+      ...(evidenceError ? [evidenceError] : []),
+    ];
+    if (errors.length > 1) {
+      throw new AggregateError(
+        errors,
+        `Highlight capture failed during ${phase}; cleanup also failed`,
+      );
+    }
     throw new Error(
       `Highlight capture failed during ${phase}: ${error.message}`,
-      { cause: error },
+      {
+        cause: error,
+      },
     );
   }
 }

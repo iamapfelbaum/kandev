@@ -12,6 +12,114 @@ const SAFE_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const DEFAULT_DISPLAY_RANGE = Object.freeze([220, 399]);
 const DEFAULT_PORT_RANGE = Object.freeze([49_000, 49_999]);
 
+function captureCoordinateLockPath(displayNumber, cdpPort) {
+  return path.join(
+    os.tmpdir(),
+    `kandev-highlight-${displayNumber}-${cdpPort}.lock`,
+  );
+}
+
+export async function processStartToken(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  try {
+    const stat = await fs.readFile(`/proc/${pid}/stat`, "utf8");
+    const close = stat.lastIndexOf(")");
+    const fields = stat
+      .slice(close + 2)
+      .trim()
+      .split(/\s+/);
+    const token = fields[19];
+    return /^\d+$/.test(token ?? "") ? token : null;
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ESRCH") return null;
+    throw error;
+  }
+}
+
+async function openedCoordinateLock(lockPath) {
+  let handle;
+  try {
+    handle = await fs.open(lockPath, "r");
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    const [contents, stat] = await Promise.all([
+      handle.readFile("utf8"),
+      handle.stat(),
+    ]);
+    let lock;
+    try {
+      lock = JSON.parse(contents);
+    } catch {
+      throw new Error(`malformed coordinate lock: ${lockPath}`);
+    }
+    if (
+      lock?.contract !== "kandev-highlight-coordinate-lock-v1" ||
+      !Number.isInteger(lock.owner?.pid) ||
+      lock.owner.pid <= 0 ||
+      typeof lock.owner?.startToken !== "string" ||
+      lock.owner.startToken === "" ||
+      typeof lock.artifactRoot !== "string"
+    ) {
+      throw new Error(`malformed coordinate lock: ${lockPath}`);
+    }
+    return { lock, stat };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function unlinkSameCoordinateLock(lockPath, expectedStat) {
+  let current;
+  try {
+    current = await fs.lstat(lockPath);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  if (current.dev !== expectedStat.dev || current.ino !== expectedStat.ino) {
+    throw new Error(
+      `coordinate lock changed while checking stale owner: ${lockPath}`,
+    );
+  }
+  await fs.unlink(lockPath);
+}
+
+async function reclaimDeadCoordinateLock(
+  lockPath,
+  {
+    displayNumber,
+    cdpPort,
+    getProcessStartToken = processStartToken,
+    isDisplayFree = isDisplayAvailable,
+    isPortFree = isTcpPortAvailable,
+  },
+) {
+  const opened = await openedCoordinateLock(lockPath);
+  if (!opened) return true;
+  const currentToken = await getProcessStartToken(opened.lock.owner.pid);
+  if (currentToken === opened.lock.owner.startToken) return false;
+  if (!(await isDisplayFree(displayNumber)) || !(await isPortFree(cdpPort))) {
+    return false;
+  }
+  await unlinkSameCoordinateLock(lockPath, opened.stat);
+  return true;
+}
+
+async function defaultCoordinateAvailable(displayNumber, cdpPort) {
+  try {
+    return await reclaimDeadCoordinateLock(
+      captureCoordinateLockPath(displayNumber, cdpPort),
+      { displayNumber, cdpPort },
+    );
+  } catch (error) {
+    if (/malformed coordinate lock/.test(error.message)) return false;
+    throw error;
+  }
+}
+
 function integerInRange(value, minimum, maximum, label) {
   if (!Number.isInteger(value) || value < minimum || value > maximum) {
     throw new Error(`${label} must be an integer ${minimum}-${maximum}`);
@@ -137,6 +245,7 @@ export async function allocateRuntimeCoordinates({
   portRange,
   isDisplayFree = isDisplayAvailable,
   isPortFree = isTcpPortAvailable,
+  isCoordinateAvailable = defaultCoordinateAvailable,
 } = {}) {
   const [displayStart, displayEnd] = normalizeRange(
     displayRange,
@@ -152,25 +261,25 @@ export async function allocateRuntimeCoordinates({
     1_024,
     65_535,
   );
-  let displayNumber = null;
-  for (let candidate = displayStart; candidate <= displayEnd; candidate += 1) {
-    if (await isDisplayFree(candidate)) {
-      displayNumber = candidate;
-      break;
+  let sawFreeDisplay = false;
+  for (
+    let displayNumber = displayStart;
+    displayNumber <= displayEnd;
+    displayNumber += 1
+  ) {
+    if (!(await isDisplayFree(displayNumber))) continue;
+    sawFreeDisplay = true;
+    for (let cdpPort = portStart; cdpPort <= portEnd; cdpPort += 1) {
+      if (!(await isPortFree(cdpPort))) continue;
+      if (!(await isCoordinateAvailable(displayNumber, cdpPort))) continue;
+      return { displayNumber, cdpPort };
     }
   }
-  if (displayNumber === null)
+  if (!sawFreeDisplay)
     throw new Error(`no free X display in ${displayStart}-${displayEnd}`);
-  let cdpPort = null;
-  for (let candidate = portStart; candidate <= portEnd; candidate += 1) {
-    if (await isPortFree(candidate)) {
-      cdpPort = candidate;
-      break;
-    }
-  }
-  if (cdpPort === null)
-    throw new Error(`no free CDP port in ${portStart}-${portEnd}`);
-  return { displayNumber, cdpPort };
+  throw new Error(
+    `no free CDP/coordinate pair in displays ${displayStart}-${displayEnd} and ports ${portStart}-${portEnd}`,
+  );
 }
 
 export function planCaptureRuntime({
@@ -220,10 +329,7 @@ export function planCaptureRuntime({
   const logsDir = path.join(resolvedRoot, "logs");
   const display = `:${displayNumber}.0`;
   const sourceGeometry = `${captureProfile.sourceWidth}x${captureProfile.sourceHeight}`;
-  const coordinateLockPath = path.join(
-    os.tmpdir(),
-    `kandev-highlight-${displayNumber}-${cdpPort}.lock`,
-  );
+  const coordinateLockPath = captureCoordinateLockPath(displayNumber, cdpPort);
   return {
     contract: "kandev-highlight-capture-runtime-v1",
     scenarioId,
@@ -305,7 +411,71 @@ async function unlinkIfPresent(filePath) {
   }
 }
 
-export async function reserveCaptureRuntime(plan) {
+async function acquireCoordinateLock(
+  plan,
+  {
+    getProcessStartToken = processStartToken,
+    isDisplayFree = isDisplayAvailable,
+    isPortFree = isTcpPortAvailable,
+  } = {},
+) {
+  const startToken = await getProcessStartToken(process.pid);
+  if (typeof startToken !== "string" || startToken === "") {
+    throw new Error(
+      `cannot prove capture owner start token for PID ${process.pid}`,
+    );
+  }
+  const payload = {
+    contract: "kandev-highlight-coordinate-lock-v1",
+    owner: { pid: process.pid, startToken },
+    artifactRoot: plan.artifactRoot,
+    display: plan.display,
+    cdpPort: plan.cdpPort,
+  };
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await fs.writeFile(
+        plan.coordinateLockPath,
+        `${JSON.stringify(payload)}\n`,
+        {
+          flag: "wx",
+        },
+      );
+      return payload;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      const reclaimed = await reclaimDeadCoordinateLock(
+        plan.coordinateLockPath,
+        {
+          displayNumber: plan.displayNumber,
+          cdpPort: plan.cdpPort,
+          getProcessStartToken,
+          isDisplayFree,
+          isPortFree,
+        },
+      );
+      if (!reclaimed) {
+        const busy = new Error(
+          `live coordinate lock occupies ${plan.display}/${plan.cdpPort}`,
+        );
+        busy.code = "KANDEV_CAPTURE_COORDINATE_BUSY";
+        throw busy;
+      }
+    }
+  }
+  throw new Error(
+    `coordinate lock remained contended after retry: ${plan.coordinateLockPath}`,
+  );
+}
+
+export async function reserveCaptureRuntime(
+  plan,
+  {
+    processStartToken: getProcessStartToken = processStartToken,
+    isDisplayFree = isDisplayAvailable,
+    isPortFree = isTcpPortAvailable,
+  } = {},
+) {
   if (plan?.contract !== "kandev-highlight-capture-runtime-v1")
     throw new Error("invalid capture runtime plan");
   await fs.mkdir(path.dirname(plan.artifactRoot), { recursive: true });
@@ -321,11 +491,11 @@ export async function reserveCaptureRuntime(plan) {
   let coordinateReserved = false;
   let rootCreated = false;
   try {
-    await fs.writeFile(
-      plan.coordinateLockPath,
-      `${JSON.stringify({ pid: process.pid, artifactRoot: plan.artifactRoot })}\n`,
-      { flag: "wx" },
-    );
+    await acquireCoordinateLock(plan, {
+      getProcessStartToken,
+      isDisplayFree,
+      isPortFree,
+    });
     coordinateReserved = true;
     try {
       await fs.mkdir(plan.artifactRoot);
@@ -358,12 +528,27 @@ export async function reserveCaptureRuntime(plan) {
     });
     return lock;
   } catch (error) {
-    if (rootCreated)
-      await fs
-        .rm(plan.artifactRoot, { recursive: true, force: true })
-        .catch(() => {});
-    if (coordinateReserved)
-      await unlinkIfPresent(plan.coordinateLockPath).catch(() => {});
+    const errors = [error];
+    if (rootCreated) {
+      try {
+        await fs.rm(plan.artifactRoot, { recursive: true, force: true });
+      } catch (cleanupError) {
+        errors.push(cleanupError);
+      }
+    }
+    if (coordinateReserved) {
+      try {
+        await unlinkIfPresent(plan.coordinateLockPath);
+      } catch (cleanupError) {
+        errors.push(cleanupError);
+      }
+    }
+    if (errors.length > 1) {
+      throw new AggregateError(
+        errors,
+        "capture runtime reservation and cleanup failed",
+      );
+    }
     throw error;
   }
 }
@@ -397,9 +582,16 @@ function waitForExit(child, timeoutMs) {
   });
 }
 
-export async function spawnManagedProcess(spec) {
+export async function spawnManagedProcess(
+  spec,
+  {
+    spawnProcess = spawn,
+    killProcess = process.kill,
+    waitForChildExit = waitForExit,
+  } = {},
+) {
   const log = fsSync.createWriteStream(spec.logPath, { flags: "ax" });
-  const child = spawn(spec.command, spec.args, {
+  const child = spawnProcess(spec.command, spec.args, {
     env: { ...process.env, ...spec.env },
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
@@ -422,24 +614,33 @@ export async function spawnManagedProcess(spec) {
     async stop() {
       if (stopped) return;
       stopped = true;
-      if (child.pid && child.exitCode === null && child.signalCode === null) {
-        try {
-          process.kill(-child.pid, "SIGTERM");
-        } catch (error) {
-          if (error.code !== "ESRCH") throw error;
-        }
-        if (!(await waitForExit(child, 5_000))) {
+      try {
+        if (child.pid && child.exitCode === null && child.signalCode === null) {
           try {
-            process.kill(-child.pid, "SIGKILL");
+            killProcess(-child.pid, "SIGTERM");
           } catch (error) {
             if (error.code !== "ESRCH") throw error;
           }
-          await waitForExit(child, 2_000);
+          if (!(await waitForChildExit(child, 5_000))) {
+            try {
+              killProcess(-child.pid, "SIGKILL");
+            } catch (error) {
+              if (error.code !== "ESRCH") throw error;
+            }
+            if (!(await waitForChildExit(child, 2_000))) {
+              throw new Error(
+                `${spec.name} process ${child.pid} survived SIGKILL`,
+              );
+            }
+          }
         }
-      }
-      log.end();
-      if (child.exitCode === null && child.signalCode === null) {
-        throw new Error(`${spec.name} process ${child.pid} survived teardown`);
+        if (child.exitCode === null && child.signalCode === null) {
+          throw new Error(
+            `${spec.name} process ${child.pid} survived teardown`,
+          );
+        }
+      } finally {
+        log.end();
       }
     },
   };
@@ -524,7 +725,7 @@ export async function startCaptureRuntime(
     throw new Error(`X display ${plan.display} is already occupied`);
   if (!(await isPortFree(plan.cdpPort)))
     throw new Error(`CDP port ${plan.cdpPort} is already occupied`);
-  await reserveCaptureRuntime(plan);
+  await reserveCaptureRuntime(plan, { isDisplayFree, isPortFree });
   const handles = [];
   let stopping = null;
   const stop = async () => {
@@ -606,7 +807,10 @@ export async function startCaptureRuntime(
     try {
       await stop();
     } catch (teardownError) {
-      error.teardownError = teardownError;
+      throw new AggregateError(
+        [error, teardownError],
+        "capture runtime startup and teardown failed",
+      );
     }
     throw error;
   }
