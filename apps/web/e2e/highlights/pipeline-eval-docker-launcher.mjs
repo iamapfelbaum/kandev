@@ -90,12 +90,18 @@ function dockerCommand(args, phase, deadlineMs) {
 }
 
 function createExecutionState(input, deps) {
+  if (!path.isAbsolute(input.evidenceRoot ?? "")) {
+    throw new Error("Docker host evidence root must be absolute and outside worker mounts");
+  }
+  if (input.plan.mounts.some((value) => isInside(value.source, input.evidenceRoot))) {
+    throw new Error("Docker host evidence root cannot be inside a worker-visible mount");
+  }
   return {
     ...input,
     deps,
     requestPath: path.join(input.proofRoot, "request.json"),
     authorizationPath: path.join(input.proofRoot, "authorization.json"),
-    receiptPath: path.join(input.evalRoot, "outer-boundary.receipt.json"),
+    receiptPath: path.join(input.evidenceRoot, "outer-boundary.receipt.json"),
     containerId: null,
     authorization: null,
     inner: null,
@@ -306,8 +312,8 @@ function resolveExecutionDependencies(overrides = {}) {
 async function persistContainerLogs(state) {
   const stdout = state.logs.stdout ?? "";
   const stderr = state.logs.stderr ?? "";
-  const stdoutPath = path.join(state.evalRoot, "outer-container.stdout.log");
-  const stderrPath = path.join(state.evalRoot, "outer-container.stderr.log");
+  const stdoutPath = path.join(state.evidenceRoot, "outer-container.stdout.log");
+  const stderrPath = path.join(state.evidenceRoot, "outer-container.stderr.log");
   await Promise.all([
     state.deps.writeText(stdoutPath, stdout),
     state.deps.writeText(stderrPath, stderr),
@@ -423,10 +429,14 @@ export async function runFreshAgentPipelineEvaluationInDocker({
   const inputContainerRoot = await fs.mkdtemp(
     path.join(canonicalParent, "kandev-highlight-docker-input-"),
   );
+  const evidenceRoot = await fs.mkdtemp(
+    path.join(canonicalParent, "kandev-highlight-docker-evidence-"),
+  );
   await Promise.all([
     fs.chmod(evalRoot, 0o700),
     fs.chmod(proofRoot, 0o700),
     fs.chmod(inputContainerRoot, 0o700),
+    fs.chmod(evidenceRoot, 0o700),
   ]);
   try {
     const [prepared, image, daemonSecurity, toolchain] = await Promise.all([
@@ -462,6 +472,7 @@ export async function runFreshAgentPipelineEvaluationInDocker({
       plan,
       proofRoot,
       evalRoot,
+      evidenceRoot,
       sourceBefore: prepared.sourceProof,
       landingBefore: prepared.landingProof,
       upstreamSourceRoot: prepared.upstreamSourceRoot,
@@ -474,6 +485,7 @@ export async function runFreshAgentPipelineEvaluationInDocker({
       contract: "kandev-highlight-docker-boundary-launcher-result-v1",
       status: "passed",
       evalRoot,
+      evidenceRoot,
       receiptPath: receipt.receiptPath,
       receiptDigest: receipt.receiptDigest,
       upstream: receipt.upstream,

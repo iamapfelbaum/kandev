@@ -274,8 +274,11 @@ test("host lifecycle records create, inspect, exit, removal, and unchanged sourc
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const proofRoot = path.join(root, "proof");
   const evalRoot = path.join(root, "eval");
+  const evidenceRoot = path.join(root, "host-evidence");
   await fs.mkdir(proofRoot);
   await fs.mkdir(evalRoot);
+  await fs.mkdir(evidenceRoot);
+  await fs.writeFile(path.join(evalRoot, "outer-boundary.receipt.json"), "worker poison\n");
   const plan = buildDockerCreatePlan({
     ...fixtureInput(),
     evalRoot,
@@ -304,6 +307,7 @@ test("host lifecycle records create, inspect, exit, removal, and unchanged sourc
     plan,
     proofRoot,
     evalRoot,
+    evidenceRoot,
     sourceBefore: plan.request.source,
     landingBefore: plan.request.landing,
     dependencies: {
@@ -339,13 +343,21 @@ test("host lifecycle records create, inspect, exit, removal, and unchanged sourc
   assert.equal(receipt.network.mode, "none");
   assert.equal(receipt.exit.code, 0);
   assert.equal(
-    await fs.readFile(path.join(evalRoot, "outer-container.stdout.log"), "utf8"),
+    await fs.readFile(path.join(evidenceRoot, "outer-container.stdout.log"), "utf8"),
     "inside passed\n",
   );
-  assert.equal(await fs.readFile(path.join(evalRoot, "outer-container.stderr.log"), "utf8"), "");
+  assert.equal(
+    await fs.readFile(path.join(evidenceRoot, "outer-container.stderr.log"), "utf8"),
+    "",
+  );
   assert.equal(receipt.logs.stdout.bytes, 14);
   assert.match(receipt.logs.stdout.sha256, /^sha256:[a-f0-9]{64}$/);
   assert.equal(receipt.logs.stderr.bytes, 0);
+  assert.equal(receipt.receiptPath, path.join(evidenceRoot, "outer-boundary.receipt.json"));
+  assert.equal(
+    await fs.readFile(path.join(evalRoot, "outer-boundary.receipt.json"), "utf8"),
+    "worker poison\n",
+  );
 });
 
 test("Docker create plan isolates one nonroot worker and exposes only declared mounts", () => {
