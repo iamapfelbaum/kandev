@@ -15,6 +15,18 @@ const SOURCE_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
 const LANDING_SHA = "c".repeat(40);
 const SEED_DIGEST = `sha256:${"d".repeat(64)}`;
+const SENSITIVE_DATA = Object.freeze({
+  contract: "kandev-highlight-sensitive-scan-v1",
+  passed: true,
+  coverage: {
+    metadata: true,
+    visibleDomText: true,
+    browserConsole: true,
+    runtimeLogs: true,
+    renderedPixelOcr: false,
+  },
+  findings: [],
+});
 
 function sourceGateProof() {
   return {
@@ -92,6 +104,12 @@ function canonicalJson(value) {
       .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
       .join(",")}}`;
   return JSON.stringify(value);
+}
+
+function recordDigest(record) {
+  const source = structuredClone(record);
+  delete source.recordDigest;
+  return `sha256:${digest(canonicalJson(source))}`;
 }
 
 function timeline(value) {
@@ -192,7 +210,12 @@ function landingAdapter() {
   };
 }
 
-function baseDependencies(value, calls = [], captureInputs = []) {
+function baseDependencies(
+  value,
+  calls = [],
+  captureInputs = [],
+  qaInputs = [],
+) {
   const compiled = timeline(value);
   return {
     readScenario: async () => value,
@@ -289,6 +312,11 @@ function baseDependencies(value, calls = [], captureInputs = []) {
             invariants: { workspaceId: "seed-proof-001", tasks: 0 },
           },
           execution,
+          captureEvidence: {
+            visibleDomText: ["Safe seeded board"],
+            browserConsole: [],
+          },
+          applicationRuntime: { logs: ["isolated runtime ready"] },
         },
       };
     },
@@ -324,10 +352,16 @@ function baseDependencies(value, calls = [], captureInputs = []) {
         },
       };
     },
-    runQualityAssurance: async ({ artifacts }) => {
+    runQualityAssurance: async ({
+      artifacts,
+      captureEvidence,
+      runtimeEvidence,
+    }) => {
       calls.push("qa");
+      qaInputs.push({ captureEvidence, runtimeEvidence });
       return {
         contract: "kandev-highlight-qa-v1",
+        scenarioId: value.id,
         passed: true,
         artifacts: await Promise.all(
           artifacts.map(async ({ path: filePath, expected }) => {
@@ -350,7 +384,7 @@ function baseDependencies(value, calls = [], captureInputs = []) {
         ),
         camera: { passed: true },
         containment: { passed: true },
-        sensitiveData: { passed: true, findings: [] },
+        sensitiveData: structuredClone(SENSITIVE_DATA),
         browser: { passed: true },
       };
     },
@@ -370,6 +404,60 @@ async function roots(t, value) {
   const scenarioPath = path.join(repoRoot, `${value.id}.scenario.json`);
   await fs.writeFile(scenarioPath, `${JSON.stringify(value, null, 2)}\n`);
   return { base, repoRoot, artifactRoot, scenarioPath };
+}
+
+async function inventoryTree(root) {
+  const entries = [];
+  async function walk(directory) {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      const relative = path.relative(root, absolute);
+      if (entry.isDirectory()) {
+        entries.push(`dir:${relative}`);
+        await walk(absolute);
+      } else {
+        const bytes = await fs.readFile(absolute);
+        entries.push(`file:${relative}:${bytes.length}:${digest(bytes)}`);
+      }
+    }
+  }
+  await walk(root);
+  return entries.sort();
+}
+
+async function rewriteRecord(filePath, mutate) {
+  const record = JSON.parse(await fs.readFile(filePath, "utf8"));
+  mutate(record);
+  record.recordDigest = recordDigest(record);
+  await fs.writeFile(filePath, `${JSON.stringify(record, null, 2)}\n`);
+}
+
+async function runThroughQa({
+  value,
+  repoRoot,
+  artifactRoot,
+  scenarioPath,
+  runId,
+  dependencies,
+}) {
+  const common = {
+    scenarioPath,
+    artifactRoot,
+    landingRoot: path.join(path.dirname(repoRoot), "landing"),
+    runId,
+    repoRoot,
+    dependencies,
+  };
+  await runDeclarativeHighlightCommand({
+    ...common,
+    command: "capture",
+    source: "pr_head",
+    prNumber: 42,
+    prBaseSha: BASE_SHA,
+  });
+  await runDeclarativeHighlightCommand({ ...common, command: "render" });
+  await runDeclarativeHighlightCommand({ ...common, command: "qa" });
+  return common;
 }
 
 test("run dry-run is a zero-write complete machine plan", async (t) => {
@@ -419,7 +507,8 @@ test("run writes technical content-addressed review stage and never promotes", a
   const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
   const calls = [];
   const captureInputs = [];
-  const dependencies = baseDependencies(value, calls, captureInputs);
+  const qaInputs = [];
+  const dependencies = baseDependencies(value, calls, captureInputs, qaInputs);
   dependencies.promoteStagedHighlight = async () => {
     calls.push("PROMOTE");
     throw new Error("must not run");
@@ -465,11 +554,16 @@ test("run writes technical content-addressed review stage and never promotes", a
   assert.equal(review.qa.passed, true);
   assert.equal(path.basename(result.phases.stage.manifestPath), "review.json");
   assert.equal(review.qa.status, "technical_pass");
-  assert.deepEqual(result.phases.qa.sensitiveData.coverage, [
-    "scenario",
-    "camera-metadata",
+  assert.deepEqual(result.phases.qa.sensitiveData, SENSITIVE_DATA);
+  assert.deepEqual(qaInputs, [
+    {
+      captureEvidence: {
+        visibleDomText: ["Safe seeded board"],
+        browserConsole: [],
+      },
+      runtimeEvidence: { logs: ["isolated runtime ready"] },
+    },
   ]);
-  assert.equal(result.phases.qa.sensitiveData.pixelScan, false);
   assert.equal(review.provenance.seedId, value.seed.recipe);
   assert.deepEqual(review.provenance.landingAdapter, {
     sourceSha: LANDING_SHA,
@@ -634,5 +728,665 @@ test("attempt discovery refuses ambiguity and selects an explicit immutable run"
       runId: "one",
     }),
     path.join(root, "story", "runs", "one"),
+  );
+});
+
+test("stage recovers a completed attempt without recapturing, rendering, or rerunning QA", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const dependencies = baseDependencies(value);
+  const common = await runThroughQa({
+    value,
+    repoRoot,
+    artifactRoot,
+    scenarioPath,
+    runId: "recover-stage-001",
+    dependencies,
+  });
+  const forbidden = async () => {
+    throw new Error("recovery must not execute an expensive phase");
+  };
+  const result = await runDeclarativeHighlightCommand({
+    ...common,
+    command: "stage",
+    dependencies: {
+      ...dependencies,
+      captureScenario: forbidden,
+      renderHighlight: forbidden,
+      runQualityAssurance: forbidden,
+      loadLandingAdapter: forbidden,
+    },
+  });
+
+  assert.equal(result.command, "stage");
+  assert.deepEqual(result.order, ["stage"]);
+  assert.equal(result.runId, "recover-stage-001");
+  assert.equal(result.phases.stage.readyForReview, true);
+  assert.match(result.phases.stage.manifestPath, /review\.json$/);
+});
+
+test("capture persists self-digested immutable phase records", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const runId = "digested-phases-001";
+  await runDeclarativeHighlightCommand({
+    command: "capture",
+    scenarioPath,
+    artifactRoot,
+    source: "pr_head",
+    runId,
+    prNumber: 42,
+    prBaseSha: BASE_SHA,
+    repoRoot,
+    dependencies: baseDependencies(value),
+  });
+
+  const evidenceRoot = path.join(
+    artifactRoot,
+    value.id,
+    "runs",
+    runId,
+    "evidence",
+  );
+  for (const phase of ["validate", "storyboard", "capture"]) {
+    const record = JSON.parse(
+      await fs.readFile(path.join(evidenceRoot, `${phase}.json`), "utf8"),
+    );
+    assert.equal(record.recordDigest, recordDigest(record));
+  }
+});
+
+test("render recovery rejects a tampered phase record with an exact next command", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const runId = "tampered-storyboard-001";
+  const dependencies = baseDependencies(value);
+  await runDeclarativeHighlightCommand({
+    command: "capture",
+    scenarioPath,
+    artifactRoot,
+    source: "pr_head",
+    runId,
+    prNumber: 42,
+    prBaseSha: BASE_SHA,
+    repoRoot,
+    dependencies,
+  });
+  const storyboardPath = path.join(
+    artifactRoot,
+    value.id,
+    "runs",
+    runId,
+    "evidence",
+    "storyboard.json",
+  );
+  const storyboard = JSON.parse(await fs.readFile(storyboardPath, "utf8"));
+  storyboard.value.timeline.totalDurationMs += 1;
+  await fs.writeFile(
+    storyboardPath,
+    `${JSON.stringify(storyboard, null, 2)}\n`,
+  );
+
+  await assert.rejects(
+    runDeclarativeHighlightCommand({
+      command: "render",
+      scenarioPath,
+      artifactRoot,
+      landingRoot: path.join(path.dirname(repoRoot), "landing"),
+      runId,
+      repoRoot,
+      dependencies,
+    }),
+    (error) => {
+      assert.match(error.message, /storyboard.*manifest digest/i);
+      assert.match(
+        error.message,
+        /Next command: node scripts\/highlights\.mjs capture .* --artifact-root .* --source pr_head/,
+      );
+      return true;
+    },
+  );
+});
+
+test("default capture run IDs combine the injected clock with a safe uniqueness token", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const nonces = ["a1b2c3d4", "d4c3b2a1"];
+  const dependencies = {
+    ...baseDependencies(value),
+    runIdNonce: () => nonces.shift(),
+  };
+  const input = {
+    command: "capture",
+    scenarioPath,
+    artifactRoot,
+    source: "pr_head",
+    prNumber: 42,
+    prBaseSha: BASE_SHA,
+    repoRoot,
+    dependencies,
+  };
+  const first = await runDeclarativeHighlightCommand(input);
+  const second = await runDeclarativeHighlightCommand(input);
+  const digestPrefix = timeline(value).scenarioDigest.slice(7, 19);
+
+  assert.equal(first.runId, `run-${digestPrefix}-20260722T120000000Z-a1b2c3d4`);
+  assert.equal(
+    second.runId,
+    `run-${digestPrefix}-20260722T120000000Z-d4c3b2a1`,
+  );
+  assert.notEqual(first.runId, second.runId);
+
+  const explicit = await runDeclarativeHighlightCommand({
+    ...input,
+    runId: "agent-chosen-001",
+  });
+  assert.equal(explicit.runId, "agent-chosen-001");
+});
+
+test("stage dry-run verifies recovery and computes the exact review target with zero writes", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const dependencies = baseDependencies(value);
+  const common = await runThroughQa({
+    value,
+    repoRoot,
+    artifactRoot,
+    scenarioPath,
+    runId: "dry-stage-001",
+    dependencies,
+  });
+  const before = await inventoryTree(artifactRoot);
+  const forbidden = async () => {
+    throw new Error("stage dry-run must only read verified recovery evidence");
+  };
+  const plan = await runDeclarativeHighlightCommand({
+    ...common,
+    command: "stage",
+    dryRun: true,
+    dependencies: {
+      ...dependencies,
+      captureScenario: forbidden,
+      renderHighlight: forbidden,
+      runQualityAssurance: forbidden,
+      loadLandingAdapter: forbidden,
+    },
+  });
+
+  assert.equal(plan.contract, "kandev-highlight-stage-dry-run-v1");
+  assert.equal(plan.runId, "dry-stage-001");
+  assert.deepEqual(plan.verifiedPhases, [
+    "validate",
+    "storyboard",
+    "capture",
+    "camera",
+    "render",
+    "qa",
+  ]);
+  assert.match(plan.stageDigest, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(path.basename(plan.target), plan.stageDigest.slice(7));
+  assert.equal(plan.manifestPath, path.join(plan.target, "review.json"));
+  assert.deepEqual(await inventoryTree(artifactRoot), before);
+  await assert.rejects(fs.access(plan.target), /ENOENT/);
+});
+
+test("render self-digests camera evidence and QA recovery rejects camera edits", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const runId = "camera-digest-001";
+  const dependencies = baseDependencies(value);
+  const common = {
+    scenarioPath,
+    artifactRoot,
+    landingRoot: path.join(path.dirname(repoRoot), "landing"),
+    runId,
+    repoRoot,
+    dependencies,
+  };
+  await runDeclarativeHighlightCommand({
+    ...common,
+    command: "capture",
+    source: "pr_head",
+    prNumber: 42,
+    prBaseSha: BASE_SHA,
+  });
+  await runDeclarativeHighlightCommand({ ...common, command: "render" });
+  const cameraPath = path.join(
+    artifactRoot,
+    value.id,
+    "runs",
+    runId,
+    "evidence",
+    "camera.json",
+  );
+  const camera = JSON.parse(await fs.readFile(cameraPath, "utf8"));
+  assert.equal(camera.recordDigest, recordDigest(camera));
+  camera.track.keyframes[0].zoom = 1.01;
+  await fs.writeFile(cameraPath, `${JSON.stringify(camera, null, 2)}\n`);
+
+  await assert.rejects(
+    runDeclarativeHighlightCommand({ ...common, command: "qa" }),
+    (error) => {
+      assert.match(error.message, /camera evidence digest|camera.*contract/i);
+      assert.match(
+        error.message,
+        /Next command: node scripts\/highlights\.mjs render .* --run-id "camera-digest-001"/,
+      );
+      return true;
+    },
+  );
+});
+
+test("render recovery cross-checks source, build, and raw capture proof", async (t) => {
+  const cases = [
+    {
+      name: "source gate",
+      mutate: async ({ capturePath }) =>
+        rewriteRecord(capturePath, (record) => {
+          record.value.receipt.source.selectedSha = "f".repeat(40);
+        }),
+      message: /capture source.*validate source|source.*continuity/i,
+    },
+    {
+      name: "build manifest",
+      mutate: async ({ capturePath }) =>
+        rewriteRecord(capturePath, (record) => {
+          record.value.receipt.build.manifestDigest = `sha256:${"f".repeat(64)}`;
+        }),
+      message: /build.*manifest.*validate|build.*continuity/i,
+    },
+    {
+      name: "raw master bytes",
+      mutate: async ({ rawPath }) =>
+        fs.writeFile(rawPath, "tampered raw bytes"),
+      message: /raw master.*digest|raw capture.*hash/i,
+    },
+  ];
+
+  for (const [index, item] of cases.entries()) {
+    await t.test(item.name, async (subtest) => {
+      const value = scenario();
+      const { repoRoot, artifactRoot, scenarioPath } = await roots(
+        subtest,
+        value,
+      );
+      const runId = `capture-proof-${index}`;
+      const dependencies = baseDependencies(value);
+      await runDeclarativeHighlightCommand({
+        command: "capture",
+        scenarioPath,
+        artifactRoot,
+        source: "pr_head",
+        runId,
+        prNumber: 42,
+        prBaseSha: BASE_SHA,
+        repoRoot,
+        dependencies,
+      });
+      const attemptRoot = path.join(artifactRoot, value.id, "runs", runId);
+      const capturePath = path.join(attemptRoot, "evidence", "capture.json");
+      const capture = JSON.parse(await fs.readFile(capturePath, "utf8"));
+      await item.mutate({
+        capturePath,
+        rawPath: capture.value.receipt.rawMaster.path,
+      });
+
+      await assert.rejects(
+        runDeclarativeHighlightCommand({
+          command: "render",
+          scenarioPath,
+          artifactRoot,
+          landingRoot: path.join(path.dirname(repoRoot), "landing"),
+          runId,
+          repoRoot,
+          dependencies,
+        }),
+        (error) => {
+          assert.match(error.message, item.message);
+          assert.match(
+            error.message,
+            /Next command: node scripts\/highlights\.mjs capture .* --source pr_head/,
+          );
+          return true;
+        },
+      );
+    });
+  }
+});
+
+test("stage recovery cross-checks landing identity and rendered delivery bytes", async (t) => {
+  const cases = [
+    {
+      name: "landing identity",
+      mutate: async ({ renderPath }) =>
+        rewriteRecord(renderPath, (record) => {
+          record.value.landing.sourceSha = "f".repeat(40);
+        }),
+      message: /landing.*camera|landing.*identity/i,
+    },
+    {
+      name: "rendered delivery bytes",
+      mutate: async ({ render }) => {
+        const mp4 = render.value.manifest.artifacts.find(
+          (artifact) => artifact.kind === "mp4",
+        );
+        await fs.writeFile(
+          path.join(render.value.stageDir, mp4.path),
+          "tampered",
+        );
+      },
+      message: /render.*mp4.*digest|rendered delivery.*hash/i,
+    },
+  ];
+
+  for (const [index, item] of cases.entries()) {
+    await t.test(item.name, async (subtest) => {
+      const value = scenario();
+      const { repoRoot, artifactRoot, scenarioPath } = await roots(
+        subtest,
+        value,
+      );
+      const runId = `render-proof-${index}`;
+      const dependencies = baseDependencies(value);
+      const common = await runThroughQa({
+        value,
+        repoRoot,
+        artifactRoot,
+        scenarioPath,
+        runId,
+        dependencies,
+      });
+      const renderPath = path.join(
+        artifactRoot,
+        value.id,
+        "runs",
+        runId,
+        "evidence",
+        "render.json",
+      );
+      const render = JSON.parse(await fs.readFile(renderPath, "utf8"));
+      await item.mutate({ renderPath, render });
+
+      await assert.rejects(
+        runDeclarativeHighlightCommand({
+          ...common,
+          command: "stage",
+          dryRun: true,
+        }),
+        (error) => {
+          assert.match(error.message, item.message);
+          assert.match(
+            error.message,
+            new RegExp(
+              `Next command: node scripts/highlights\\.mjs render .* --run-id "${runId}"`,
+            ),
+          );
+          return true;
+        },
+      );
+    });
+  }
+});
+
+test("stage recovery validates QA status, report digest, and render linkage", async (t) => {
+  const cases = [
+    {
+      name: "QA status",
+      mutate: async ({ qaPath }) =>
+        rewriteRecord(qaPath, (record) => {
+          record.value.status = "accepted";
+        }),
+      message: /QA.*technical_pass|QA.*status/i,
+    },
+    {
+      name: "QA report bytes",
+      mutate: async ({ reportPath }) => fs.writeFile(reportPath, "{}\n"),
+      message: /QA report.*digest/i,
+    },
+    {
+      name: "QA artifact linkage",
+      mutate: async ({ qaPath, reportPath }) => {
+        const qa = JSON.parse(await fs.readFile(qaPath, "utf8"));
+        const report = JSON.parse(await fs.readFile(reportPath, "utf8"));
+        const changedSha = "f".repeat(64);
+        qa.value.artifacts.find((artifact) => artifact.kind === "mp4").sha256 =
+          changedSha;
+        report.artifacts.find((artifact) => artifact.kind === "mp4").sha256 =
+          changedSha;
+        const reportBytes = Buffer.from(`${JSON.stringify(report, null, 2)}\n`);
+        await fs.writeFile(reportPath, reportBytes);
+        qa.value.reportDigest = `sha256:${digest(reportBytes)}`;
+        qa.recordDigest = recordDigest(qa);
+        await fs.writeFile(qaPath, `${JSON.stringify(qa, null, 2)}\n`);
+      },
+      message: /QA.*artifact.*render|mp4.*hash/i,
+    },
+  ];
+
+  for (const [index, item] of cases.entries()) {
+    await t.test(item.name, async (subtest) => {
+      const value = scenario();
+      const { repoRoot, artifactRoot, scenarioPath } = await roots(
+        subtest,
+        value,
+      );
+      const runId = `qa-proof-${index}`;
+      const dependencies = baseDependencies(value);
+      const common = await runThroughQa({
+        value,
+        repoRoot,
+        artifactRoot,
+        scenarioPath,
+        runId,
+        dependencies,
+      });
+      const evidenceRoot = path.join(
+        artifactRoot,
+        value.id,
+        "runs",
+        runId,
+        "evidence",
+      );
+      const qaPath = path.join(evidenceRoot, "qa.json");
+      const qa = JSON.parse(await fs.readFile(qaPath, "utf8"));
+      await item.mutate({ qaPath, reportPath: qa.value.reportPath });
+
+      await assert.rejects(
+        runDeclarativeHighlightCommand({
+          ...common,
+          command: "stage",
+          dryRun: true,
+        }),
+        (error) => {
+          assert.match(error.message, item.message);
+          assert.match(
+            error.message,
+            new RegExp(
+              `Next command: node scripts/highlights\\.mjs qa .* --run-id "${runId}"`,
+            ),
+          );
+          return true;
+        },
+      );
+    });
+  }
+});
+
+test("recovery errors route missing phases to exact render and QA commands", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const dependencies = baseDependencies(value);
+  const captureInput = {
+    command: "capture",
+    scenarioPath,
+    artifactRoot,
+    source: "pr_head",
+    runId: "missing-render-001",
+    prNumber: 42,
+    prBaseSha: BASE_SHA,
+    repoRoot,
+    dependencies,
+  };
+  await runDeclarativeHighlightCommand(captureInput);
+  await assert.rejects(
+    runDeclarativeHighlightCommand({
+      ...captureInput,
+      command: "qa",
+      landingRoot: path.join(path.dirname(repoRoot), "landing"),
+      source: undefined,
+    }),
+    /Next command: node scripts\/highlights\.mjs render .* --run-id "missing-render-001"/,
+  );
+
+  const renderInput = {
+    ...captureInput,
+    command: "render",
+    runId: "missing-qa-001",
+    landingRoot: path.join(path.dirname(repoRoot), "landing"),
+    source: undefined,
+  };
+  await runDeclarativeHighlightCommand({
+    ...captureInput,
+    runId: renderInput.runId,
+  });
+  await runDeclarativeHighlightCommand(renderInput);
+  await assert.rejects(
+    runDeclarativeHighlightCommand({ ...renderInput, command: "stage" }),
+    /Next command: node scripts\/highlights\.mjs qa .* --run-id "missing-qa-001"/,
+  );
+});
+
+test("stage auto-selects one run and gives exact stage choices when runs are ambiguous", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const dependencies = baseDependencies(value);
+  await runThroughQa({
+    value,
+    repoRoot,
+    artifactRoot,
+    scenarioPath,
+    runId: "only-run",
+    dependencies,
+  });
+  const selected = await runDeclarativeHighlightCommand({
+    command: "stage",
+    scenarioPath,
+    artifactRoot,
+    repoRoot,
+    dryRun: true,
+    dependencies,
+  });
+  assert.equal(selected.runId, "only-run");
+
+  await runThroughQa({
+    value,
+    repoRoot,
+    artifactRoot,
+    scenarioPath,
+    runId: "second-run",
+    dependencies,
+  });
+  await assert.rejects(
+    runDeclarativeHighlightCommand({
+      command: "stage",
+      scenarioPath,
+      artifactRoot,
+      repoRoot,
+      dryRun: true,
+      dependencies,
+    }),
+    (error) => {
+      assert.match(error.message, /multiple Highlight runs/i);
+      assert.match(
+        error.message,
+        /node scripts\/highlights\.mjs stage .* --run-id "only-run"/,
+      );
+      assert.match(
+        error.message,
+        /node scripts\/highlights\.mjs stage .* --run-id "second-run"/,
+      );
+      return true;
+    },
+  );
+});
+
+test("render and QA dry-runs recover the selected attempt without writing phase outputs", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const dependencies = baseDependencies(value);
+  const runId = "dry-recovery-001";
+  const common = {
+    scenarioPath,
+    artifactRoot,
+    landingRoot: path.join(path.dirname(repoRoot), "landing"),
+    repoRoot,
+    dependencies,
+  };
+  await runDeclarativeHighlightCommand({
+    ...common,
+    command: "capture",
+    source: "pr_head",
+    runId,
+    prNumber: 42,
+    prBaseSha: BASE_SHA,
+  });
+  const beforeRender = await inventoryTree(artifactRoot);
+  const renderPlan = await runDeclarativeHighlightCommand({
+    ...common,
+    command: "render",
+    dryRun: true,
+  });
+  assert.equal(renderPlan.runId, runId);
+  assert.deepEqual(renderPlan.verifiedPhases, [
+    "validate",
+    "storyboard",
+    "capture",
+  ]);
+  assert.deepEqual(await inventoryTree(artifactRoot), beforeRender);
+
+  await runDeclarativeHighlightCommand({
+    ...common,
+    command: "render",
+    runId,
+  });
+  const beforeQa = await inventoryTree(artifactRoot);
+  const qaPlan = await runDeclarativeHighlightCommand({
+    ...common,
+    command: "qa",
+    dryRun: true,
+  });
+  assert.equal(qaPlan.runId, runId);
+  assert.deepEqual(qaPlan.verifiedPhases, [
+    "validate",
+    "storyboard",
+    "capture",
+    "camera",
+    "render",
+  ]);
+  assert.deepEqual(await inventoryTree(artifactRoot), beforeQa);
+});
+
+test("direct staging rejects capture source and build proof discontinuity", async (t) => {
+  const value = scenario();
+  const { base, repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const result = await runDeclarativeHighlightCommand({
+    command: "run",
+    scenarioPath,
+    artifactRoot,
+    source: "pr_head",
+    landingRoot: path.join(base, "landing"),
+    runId: "direct-stage-proof",
+    prNumber: 42,
+    prBaseSha: BASE_SHA,
+    repoRoot,
+    dependencies: baseDependencies(value),
+  });
+  const input = structuredClone(result.phases.stage.input);
+  input.artifactRoot = path.join(base, "discontinuous-stage");
+  input.capture.receipt.build.sourceSha = "f".repeat(40);
+
+  await assert.rejects(
+    writeContentAddressedStage(input),
+    /capture build.*source|source.*build.*continuity/i,
   );
 });

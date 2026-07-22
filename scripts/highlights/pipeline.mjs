@@ -1,5 +1,5 @@
 import { constants as fsConstants } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -74,6 +74,10 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function persistedJsonValue(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
 async function hashFile(filePath) {
   return sha256(await fs.readFile(filePath));
 }
@@ -106,6 +110,7 @@ function dependenciesWithDefaults(dependencies) {
     commandRunner: defaultCommandRunner,
     readFile: fs.readFile,
     clock: () => new Date(),
+    runIdNonce: () => randomBytes(4).toString("hex"),
     ...dependencies,
   };
 }
@@ -169,8 +174,17 @@ function validateCaptureBindings({ scenario, bindings, allowedExtensionIds }) {
   return bindings;
 }
 
-function defaultRunId(scenarioDigest) {
-  return `run-${scenarioDigest.slice("sha256:".length, "sha256:".length + 12)}`;
+function defaultRunId(scenarioDigest, capturedAt, nonce) {
+  if (!/^[a-z0-9]{8,20}$/.test(nonce ?? "")) {
+    throw new Error(
+      "default run ID uniqueness token must be 8-20 lowercase letters or digits",
+    );
+  }
+  const timestamp = capturedAt.replace(/[-:.]/g, "");
+  return `run-${scenarioDigest.slice(
+    "sha256:".length,
+    "sha256:".length + 12,
+  )}-${timestamp}-${nonce}`;
 }
 
 function pipelinePaths({ artifactRoot, scenarioId, runId }) {
@@ -240,17 +254,38 @@ async function writeJsonExclusive(filePath, value) {
 }
 
 async function writePhaseRecord(paths, phase, value, deps) {
-  const record = {
+  const source = persistedJsonValue({
     contract: `kandev-highlight-${phase}-phase-v1`,
     phase,
     completedAt: deps.clock().toISOString(),
     value,
+  });
+  const record = {
+    ...source,
+    recordDigest: `sha256:${sha256(canonicalJson(source))}`,
   };
   const manifestPath = await writeJsonExclusive(
     path.join(paths.evidenceRoot, `${phase}.json`),
     record,
   );
   return { ...value, phaseManifestPath: manifestPath };
+}
+
+async function writeCameraEvidence(paths, plan, track, landing) {
+  const source = persistedJsonValue({
+    contract: "kandev-highlight-camera-evidence-v1",
+    plan,
+    track,
+    landing,
+  });
+  const record = {
+    ...source,
+    recordDigest: `sha256:${sha256(canonicalJson(source))}`,
+  };
+  return writeJsonExclusive(
+    path.join(paths.evidenceRoot, "camera.json"),
+    record,
+  );
 }
 
 async function readJsonRegular(filePath, label) {
@@ -266,6 +301,387 @@ async function readJsonRegular(filePath, label) {
   } catch (error) {
     throw new Error(`cannot read ${label} ${filePath}: ${error.message}`);
   }
+}
+
+function shellArgument(value) {
+  return JSON.stringify(String(value));
+}
+
+function recoveryNextCommand(context, phase, { newAttempt = false } = {}) {
+  const base = `node scripts/highlights.mjs ${phase} ${shellArgument(
+    context.scenarioPath,
+  )} --artifact-root ${shellArgument(context.paths.artifactRoot)}`;
+  if (phase === "capture") {
+    const source =
+      context.sourceProvenance?.captureMode ?? context.source ?? "pr_head";
+    return `${base} --source ${source}`;
+  }
+  if (!newAttempt && context.runId) {
+    return `${base} --run-id ${shellArgument(context.runId)}`;
+  }
+  return base;
+}
+
+function recoveryError(context, message, nextPhase, options) {
+  return new Error(
+    `cannot recover ${context.command}: ${message}. Next command: ${recoveryNextCommand(
+      context,
+      nextPhase,
+      options,
+    )}`,
+  );
+}
+
+async function readPhaseRecord(paths, phase, context, nextPhase) {
+  let record;
+  try {
+    record = await readJsonRegular(
+      path.join(paths.evidenceRoot, `${phase}.json`),
+      `${phase} phase manifest`,
+    );
+  } catch (error) {
+    throw recoveryError(context, error.message, nextPhase);
+  }
+  const expectedDigest = `sha256:${sha256(
+    canonicalJson({
+      contract: record.contract,
+      phase: record.phase,
+      completedAt: record.completedAt,
+      value: record.value,
+    }),
+  )}`;
+  if (
+    record.contract !== `kandev-highlight-${phase}-phase-v1` ||
+    record.phase !== phase ||
+    !Number.isFinite(Date.parse(record.completedAt)) ||
+    record.recordDigest !== expectedDigest
+  ) {
+    throw recoveryError(
+      context,
+      `${phase} phase manifest digest or contract is invalid`,
+      nextPhase,
+      { newAttempt: nextPhase === "capture" },
+    );
+  }
+  return record;
+}
+
+async function readCameraEvidence(paths, context) {
+  let record;
+  try {
+    record = await readJsonRegular(
+      path.join(paths.evidenceRoot, "camera.json"),
+      "camera evidence",
+    );
+  } catch (error) {
+    throw recoveryError(context, error.message, "render");
+  }
+  const source = {
+    contract: record.contract,
+    plan: record.plan,
+    track: record.track,
+    landing: record.landing,
+  };
+  if (
+    record.contract !== "kandev-highlight-camera-evidence-v1" ||
+    record.recordDigest !== `sha256:${sha256(canonicalJson(source))}`
+  ) {
+    throw recoveryError(
+      context,
+      "camera evidence digest or contract is invalid",
+      "render",
+    );
+  }
+  return record;
+}
+
+function compactBuildProof(build) {
+  return {
+    contract: build?.contract,
+    manifestDigest: build?.manifestDigest,
+    sourceSha: build?.source?.selectedSha,
+    outputs: build?.outputs,
+  };
+}
+
+async function verifyRegularDigest({
+  filePath,
+  allowedRoot,
+  expectedDigest,
+  expectedBytes,
+  label,
+}) {
+  const absolute = path.resolve(filePath ?? "");
+  const relative = path.relative(path.resolve(allowedRoot), absolute);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`${label} path escapes its immutable attempt directory`);
+  }
+  const stat = await fs.lstat(absolute).catch(() => null);
+  if (!stat?.isFile() || stat.isSymbolicLink()) {
+    throw new Error(
+      `${label} is missing or is not a regular file: ${absolute}`,
+    );
+  }
+  if ((await fs.realpath(absolute)) !== absolute) {
+    throw new Error(`${label} cannot resolve through symlinks: ${absolute}`);
+  }
+  if (
+    !DIGEST_PATTERN.test(expectedDigest ?? "") ||
+    (expectedBytes !== undefined && stat.size !== expectedBytes) ||
+    `sha256:${await hashFile(absolute)}` !== expectedDigest
+  ) {
+    throw new Error(`${label} digest or byte count does not match evidence`);
+  }
+  return absolute;
+}
+
+async function validateRecoveredCapture(context, validate, capture) {
+  const fail = (message) => {
+    throw recoveryError(context, message, "capture", { newAttempt: true });
+  };
+  const source = validate?.source;
+  const receipt = capture?.receipt;
+  if (
+    validate?.scenarioId !== context.scenario.id ||
+    validate?.scenarioPath !== context.scenarioPath ||
+    validate?.scenarioDigest !== context.scenarioDigest ||
+    canonicalJson(validate?.profile) !== canonicalJson(context.profile)
+  ) {
+    fail("validate phase does not match the canonical scenario and profile");
+  }
+  if (
+    !source ||
+    !["pr_head", "current_main"].includes(source.captureMode) ||
+    !SHA_PATTERN.test(source.sourceSha ?? "") ||
+    source.gate?.contract !== "kandev-highlight-source-v1" ||
+    source.gate?.selectedSha !== source.sourceSha ||
+    source.gate?.clean !== true ||
+    source.gate?.status !== ""
+  ) {
+    fail("validate source provenance is incomplete or invalid");
+  }
+  const sourceDigest = computeSourceCaptureDigest(source);
+  if (
+    capture?.contract !== "kandev-highlight-capture-result-v1" ||
+    receipt?.contract !== "kandev-highlight-source-capture-v1" ||
+    receipt.scenarioDigest !== context.scenarioDigest ||
+    receipt.sourceDigest !== sourceDigest ||
+    canonicalJson(receipt.source) !== canonicalJson(source.gate)
+  ) {
+    fail("capture source continuity does not match validate source evidence");
+  }
+  const build = validate.build;
+  if (
+    build?.contract !== "kandev-highlight-build-provenance-v1" ||
+    !DIGEST_PATTERN.test(build.manifestDigest ?? "") ||
+    build.source?.selectedSha !== source.sourceSha ||
+    canonicalJson(receipt.build) !== canonicalJson(compactBuildProof(build))
+  ) {
+    fail("capture build manifest does not match validate build continuity");
+  }
+  for (const key of ["backend", "mockAgent", "webDist"]) {
+    const output = receipt.build?.outputs?.[key];
+    if (
+      !DIGEST_PATTERN.test(output?.digest ?? "") ||
+      !Number.isInteger(output?.bytes) ||
+      output.bytes <= 0 ||
+      (key === "webDist" &&
+        (!Number.isInteger(output.fileCount) || output.fileCount <= 0))
+    ) {
+      fail(`capture build output ${key} is invalid`);
+    }
+  }
+  if (
+    capture.rawMasterPath &&
+    path.resolve(capture.rawMasterPath) !==
+      path.resolve(receipt.rawMaster?.path ?? "")
+  ) {
+    fail("raw master result path does not match capture receipt");
+  }
+  try {
+    await verifyRegularDigest({
+      filePath: receipt.rawMaster?.path,
+      allowedRoot: context.paths.captureRoot,
+      expectedDigest: receipt.rawMaster?.digest,
+      expectedBytes: receipt.rawMaster?.bytes,
+      label: "raw master",
+    });
+  } catch (error) {
+    fail(error.message);
+  }
+  if (
+    receipt.seed?.seedId !== context.scenario.seed.recipe ||
+    !DIGEST_PATTERN.test(receipt.seed?.seedDigest ?? "")
+  ) {
+    fail("capture seed evidence does not match the canonical scenario");
+  }
+  return { source, sourceDigest };
+}
+
+async function collectRenderArtifactEvidence(render, renderRoot) {
+  const stageDir = path.resolve(render?.stageDir ?? "");
+  const stageRelative = path.relative(path.resolve(renderRoot), stageDir);
+  if (
+    !stageRelative ||
+    stageRelative.startsWith("..") ||
+    path.isAbsolute(stageRelative)
+  ) {
+    throw new Error("render stage directory escapes the immutable run");
+  }
+  return Promise.all(
+    absoluteRenderArtifacts(render).map(async ({ kind, path: filePath }) => {
+      const stat = await fs.lstat(filePath).catch(() => null);
+      if (!stat?.isFile() || stat.isSymbolicLink()) {
+        throw new Error(`render ${kind} is missing or is not a regular file`);
+      }
+      if ((await fs.realpath(filePath)) !== path.resolve(filePath)) {
+        throw new Error(`render ${kind} cannot resolve through symlinks`);
+      }
+      return {
+        kind,
+        path: filePath,
+        bytes: stat.size,
+        digest: `sha256:${await hashFile(filePath)}`,
+      };
+    }),
+  );
+}
+
+async function validateRecoveredRender(context, camera, render) {
+  const fail = (message) => {
+    throw recoveryError(context, message, "render");
+  };
+  let recordedLanding;
+  try {
+    recordedLanding = landingEvidence({
+      provenance: { sha: render?.landing?.sourceSha },
+      contracts: {
+        camera: { version: render?.landing?.contractVersion },
+      },
+    });
+  } catch (error) {
+    fail(`render landing identity is invalid: ${error.message}`);
+  }
+  if (
+    canonicalJson(camera?.landing) !== canonicalJson(render?.landing) ||
+    canonicalJson(recordedLanding.sourceSha) !==
+      canonicalJson(render.landing.sourceSha)
+  ) {
+    fail("render landing identity does not match independent camera evidence");
+  }
+  if (
+    context.landing &&
+    canonicalJson(render.landing) !==
+      canonicalJson(landingEvidence(context.landing))
+  ) {
+    fail("render landing identity does not match the loaded landing adapter");
+  }
+  if (canonicalJson(camera.track) !== canonicalJson(render.cameraTrack)) {
+    fail("render camera track does not match camera evidence");
+  }
+  if (
+    render?.manifest?.contract !== "kandev-highlight-render-v1" ||
+    render.manifest.profile !== context.scenario.profile.kind
+  ) {
+    fail("render manifest does not match the canonical scenario profile");
+  }
+  let actual;
+  try {
+    actual = await collectRenderArtifactEvidence(
+      render,
+      context.paths.renderRoot,
+    );
+  } catch (error) {
+    fail(error.message);
+  }
+  if (canonicalJson(actual) !== canonicalJson(render.artifactEvidence)) {
+    fail(
+      "rendered delivery artifact hashes/digests do not match render evidence",
+    );
+  }
+  return render;
+}
+
+function validateSensitiveDataEvidence(sensitiveData) {
+  const coverageKeys = [
+    "metadata",
+    "visibleDomText",
+    "browserConsole",
+    "runtimeLogs",
+    "renderedPixelOcr",
+  ];
+  return (
+    sensitiveData?.contract === "kandev-highlight-sensitive-scan-v1" &&
+    sensitiveData.passed === true &&
+    Array.isArray(sensitiveData.findings) &&
+    sensitiveData.findings.length === 0 &&
+    sensitiveData.coverage?.metadata === true &&
+    Object.keys(sensitiveData.coverage ?? {}).length === coverageKeys.length &&
+    coverageKeys.every(
+      (key) => typeof sensitiveData.coverage?.[key] === "boolean",
+    )
+  );
+}
+
+async function validateRecoveredQa(context, render, qa) {
+  const fail = (message) => {
+    throw recoveryError(context, message, "qa");
+  };
+  if (
+    qa?.contract !== "kandev-highlight-qa-v1" ||
+    qa.scenarioId !== context.scenario.id ||
+    qa.passed !== true ||
+    qa.status !== "technical_pass" ||
+    !Number.isFinite(Date.parse(qa.completedAt)) ||
+    !validateSensitiveDataEvidence(qa.sensitiveData) ||
+    qa.browser?.passed !== true
+  ) {
+    fail(
+      "QA evidence must retain passed=true, status=technical_pass, and trusted scan/browser results",
+    );
+  }
+  try {
+    await verifyRegularDigest({
+      filePath: qa.reportPath,
+      allowedRoot: context.paths.qaRoot,
+      expectedDigest: qa.reportDigest,
+      label: "QA report",
+    });
+  } catch (error) {
+    fail(error.message);
+  }
+  let report;
+  try {
+    report = await readJsonRegular(qa.reportPath, "QA report");
+  } catch (error) {
+    fail(error.message);
+  }
+  const phaseReport = persistedJsonValue(qa);
+  delete phaseReport.reportPath;
+  delete phaseReport.reportDigest;
+  if (canonicalJson(report) !== canonicalJson(phaseReport)) {
+    fail("QA report content does not match the QA phase evidence");
+  }
+  const rendered = new Map(
+    (render.artifactEvidence ?? []).map((artifact) => [
+      artifact.kind,
+      artifact,
+    ]),
+  );
+  const reported = reportArtifacts(qa);
+  for (const kind of REQUIRED_DELIVERY_KINDS) {
+    const expected = rendered.get(kind);
+    const actual = reported.get(kind);
+    if (
+      !expected ||
+      path.resolve(actual.path) !== path.resolve(expected.path) ||
+      actual.bytes !== expected.bytes ||
+      `sha256:${actual.sha256}` !== expected.digest
+    ) {
+      fail(`QA ${kind} artifact hash does not match render evidence`);
+    }
+  }
+  return qa;
 }
 
 export async function resolveAttemptDirectory({
@@ -298,10 +714,13 @@ export async function resolveAttemptDirectory({
     .sort();
   if (runs.length === 0)
     throw new Error(`no recoverable Highlight runs found under ${root}`);
-  if (runs.length > 1)
-    throw new Error(
+  if (runs.length > 1) {
+    const error = new Error(
       `multiple Highlight runs found (${runs.join(", ")}); select one with --run-id`,
     );
+    error.runIds = runs;
+    throw error;
+  }
   return path.join(root, runs[0]);
 }
 
@@ -657,6 +1076,22 @@ function expectedForArtifact(kind, profile, durationMs) {
   };
 }
 
+function stageInput(context, phases) {
+  return {
+    artifactRoot: context.paths.artifactRoot,
+    scenario: context.scenario,
+    scenarioPath: context.scenarioPath,
+    scenarioDigest: context.scenarioDigest,
+    delivery: context.delivery,
+    capture: phases.capture,
+    render: phases.render,
+    qa: phases.qa,
+    sourceProvenance: context.sourceProvenance,
+    landing: context.recoveredLanding ?? landingEvidence(context.landing),
+    toolVersion: `kandev-highlights/${HIGHLIGHT_PIPELINE_VERSION}`,
+  };
+}
+
 function phaseAdapters(context) {
   const {
     deps,
@@ -682,6 +1117,7 @@ function phaseAdapters(context) {
           scenarioPath,
           scenarioDigest,
           source: sourceProvenance,
+          build: context.captureBindings?.buildProvenance ?? null,
           profile,
         },
         deps,
@@ -758,12 +1194,23 @@ function phaseAdapters(context) {
         repoRoots: [context.repoRoot, landing.root].filter(Boolean),
         landingAdapter: landing,
       });
-      await writeJsonExclusive(path.join(paths.evidenceRoot, "camera.json"), {
-        contract: "kandev-highlight-camera-evidence-v1",
-        plan: camera,
-        track: render.cameraTrack,
-      });
-      return writePhaseRecord(paths, "render", render, deps);
+      const adapterEvidence = landingEvidence(landing);
+      const artifactEvidence = await collectRenderArtifactEvidence(
+        render,
+        paths.renderRoot,
+      );
+      await writeCameraEvidence(
+        paths,
+        camera,
+        render.cameraTrack,
+        adapterEvidence,
+      );
+      return writePhaseRecord(
+        paths,
+        "render",
+        { ...render, landing: adapterEvidence, artifactEvidence },
+        deps,
+      );
     },
     qa: async ({ phases }) => {
       const capture = phases.capture;
@@ -790,6 +1237,15 @@ function phaseAdapters(context) {
         camera: render.cameraTrack,
         pointerTrack: geometry.pointerTrack,
         targetIntervals: geometry.targetIntervals,
+        ...(capture.receipt?.captureEvidence
+          ? { captureEvidence: capture.receipt.captureEvidence }
+          : {}),
+        ...((capture.receipt?.applicationRuntime ?? capture.runtimeEvidence)
+          ? {
+              runtimeEvidence:
+                capture.receipt?.applicationRuntime ?? capture.runtimeEvidence,
+            }
+          : {}),
         runner: deps.commandRunner,
         readFile: deps.readFile,
         browserPlayback: ({ artifacts: reports }) =>
@@ -803,24 +1259,8 @@ function phaseAdapters(context) {
       });
       if (report?.passed !== true) throw new Error("automatic QA did not pass");
       const completedAt = deps.clock().toISOString();
-      const sensitiveData =
-        typeof sensitiveScanner === "function"
-          ? {
-              ...report.sensitiveData,
-              coverage: report.sensitiveData?.coverage ?? ["custom-hook"],
-              hook: true,
-            }
-          : {
-              ...report.sensitiveData,
-              coverage: ["scenario", "camera-metadata"],
-              pixelScan: false,
-              logScan: false,
-              limitation:
-                "rendered pixels and process logs require a configured sensitiveScanner hook",
-            };
       const technical = {
         ...report,
-        sensitiveData,
         status: "technical_pass",
         passed: true,
         completedAt,
@@ -838,47 +1278,99 @@ function phaseAdapters(context) {
       );
     },
     stage: async ({ phases }) =>
-      writeContentAddressedStage({
-        artifactRoot: paths.artifactRoot,
-        scenario,
-        scenarioPath,
-        scenarioDigest,
-        delivery: context.delivery,
-        capture: phases.capture,
-        render: phases.render,
-        qa: phases.qa,
-        sourceProvenance,
-        landing: landingEvidence(landing),
-        toolVersion: `kandev-highlights/${HIGHLIGHT_PIPELINE_VERSION}`,
-      }),
+      writeContentAddressedStage(stageInput(context, phases)),
   };
 }
 
 async function recoverContext(context) {
-  const attemptRoot = await resolveAttemptDirectory({
-    artifactRoot: context.paths.artifactRoot,
-    scenarioId: context.scenario.id,
-    runId: context.requestedRunId,
-  });
+  let attemptRoot;
+  try {
+    attemptRoot = await resolveAttemptDirectory({
+      artifactRoot: context.paths.artifactRoot,
+      scenarioId: context.scenario.id,
+      runId: context.requestedRunId,
+    });
+  } catch (error) {
+    if (Array.isArray(error.runIds)) {
+      const choices = error.runIds.map((candidate) =>
+        recoveryNextCommand({ ...context, runId: candidate }, context.command),
+      );
+      throw new Error(
+        `${error.message}. Next commands:\n${choices.join("\n")}`,
+      );
+    }
+    throw new Error(
+      `${error.message}. Next command: ${recoveryNextCommand(
+        context,
+        "capture",
+        { newAttempt: true },
+      )}`,
+    );
+  }
   const recoveredRunId = path.basename(attemptRoot);
   const paths = pipelinePaths({
     artifactRoot: context.paths.artifactRoot,
     scenarioId: context.scenario.id,
     runId: recoveredRunId,
   });
-  const captureRecord = await readJsonRegular(
-    path.join(paths.evidenceRoot, "capture.json"),
-    "capture phase manifest",
+  const recovery = { ...context, runId: recoveredRunId, paths };
+  const validateRecord = await readPhaseRecord(
+    paths,
+    "validate",
+    recovery,
+    "capture",
   );
-  if (captureRecord.value?.receipt?.scenarioDigest !== context.scenarioDigest) {
-    throw new Error(
-      "scenario changed since capture; capture manifest digest does not match",
+  recovery.sourceProvenance = validateRecord.value?.source;
+  if (validateRecord.value?.scenarioDigest !== context.scenarioDigest) {
+    throw recoveryError(
+      recovery,
+      "scenario changed since validation; validate manifest digest does not match",
+      "capture",
+      { newAttempt: true },
     );
   }
-  return {
-    ...context,
-    runId: recoveredRunId,
+  const storyboardRecord = await readPhaseRecord(
     paths,
+    "storyboard",
+    recovery,
+    "capture",
+  );
+  if (
+    canonicalJson(storyboardRecord.value?.timeline) !==
+    canonicalJson(context.timeline)
+  ) {
+    throw recoveryError(
+      recovery,
+      "storyboard timeline does not match the canonical scenario timeline",
+      "capture",
+      { newAttempt: true },
+    );
+  }
+  const captureRecord = await readPhaseRecord(
+    paths,
+    "capture",
+    recovery,
+    "capture",
+  );
+  if (captureRecord.value?.receipt?.scenarioDigest !== context.scenarioDigest) {
+    throw recoveryError(
+      recovery,
+      "scenario changed since capture; capture manifest digest does not match",
+      "capture",
+      { newAttempt: true },
+    );
+  }
+  const captureProof = await validateRecoveredCapture(
+    recovery,
+    validateRecord.value,
+    captureRecord.value,
+  );
+  return {
+    ...recovery,
+    sourceProvenance: captureProof.source,
+    sourceDigest: captureProof.sourceDigest,
+    validate: validateRecord.value,
+    storyboard: storyboardRecord.value,
     capture: captureRecord.value,
   };
 }
@@ -898,8 +1390,8 @@ export async function runDeclarativeHighlightCommand({
   env = process.env,
   dependencies = {},
 } = {}) {
-  if (!["capture", "render", "qa", "run"].includes(command))
-    throw new Error("command must be capture, render, qa, or run");
+  if (!["capture", "render", "qa", "stage", "run"].includes(command))
+    throw new Error("command must be capture, render, qa, stage, or run");
   if (typeof scenarioPath !== "string" || !scenarioPath)
     throw new Error(`${command} requires scenarioPath`);
   if (typeof artifactRoot !== "string" || !artifactRoot)
@@ -919,7 +1411,9 @@ export async function runDeclarativeHighlightCommand({
   if (timeline.scenarioDigest !== scenarioDigest)
     throw new Error("compiled timeline scenario digest mismatch");
   const profile = resolveCaptureProfile(scenario.profile);
-  const delivery = command === "run" ? requireDelivery(deps, scenario) : null;
+  const delivery = ["run", "stage"].includes(command)
+    ? requireDelivery(deps, scenario)
+    : null;
   let captureBindings = null;
   if (["capture", "run"].includes(command) && !dryRun) {
     const candidate =
@@ -936,8 +1430,14 @@ export async function runDeclarativeHighlightCommand({
       allowedExtensionIds,
     });
   }
+  const captureTime = deps.clock();
+  const capturedAt = captureTime.toISOString();
+  const createsAttempt = ["capture", "run"].includes(command);
   const selectedRunId = requireSafeSegment(
-    runId ?? defaultRunId(scenarioDigest),
+    runId ??
+      (createsAttempt
+        ? defaultRunId(scenarioDigest, capturedAt, deps.runIdNonce())
+        : "recover"),
     "runId",
   );
   const externalRoot = assertExternalArtifactRoot({
@@ -949,7 +1449,6 @@ export async function runDeclarativeHighlightCommand({
     scenarioId: scenario.id,
     runId: selectedRunId,
   });
-  const capturedAt = deps.clock().toISOString();
   const sourceProvenance = ["capture", "run"].includes(command)
     ? await resolveSourceProvenance({
         source,
@@ -993,7 +1492,7 @@ export async function runDeclarativeHighlightCommand({
     allowedExtensionIds,
     captureBindings,
   };
-  if (dryRun) return buildDryRunPlan(common);
+  if (dryRun && createsAttempt) return buildDryRunPlan(common);
 
   if (["capture", "run"].includes(command)) await reserveAttempt(paths);
   if (command === "run") {
@@ -1022,6 +1521,13 @@ export async function runDeclarativeHighlightCommand({
   const adapters = phaseAdapters(recovered);
   const phases = { capture: recovered.capture };
   if (command === "render") {
+    if (dryRun) {
+      return {
+        ...buildDryRunPlan(recovered),
+        runId: recovered.runId,
+        verifiedPhases: ["validate", "storyboard", "capture"],
+      };
+    }
     phases.render = await adapters.render({ phases });
     return {
       contract: "kandev-highlight-command-v1",
@@ -1031,15 +1537,62 @@ export async function runDeclarativeHighlightCommand({
       phases,
     };
   }
-  const renderRecord = await readJsonRegular(
-    path.join(recovered.paths.evidenceRoot, "render.json"),
-    "render phase manifest",
+  const renderRecord = await readPhaseRecord(
+    recovered.paths,
+    "render",
+    recovered,
+    "render",
   );
-  const cameraRecord = await readJsonRegular(
-    path.join(recovered.paths.evidenceRoot, "camera.json"),
-    "camera evidence",
-  );
+  const cameraRecord = await readCameraEvidence(recovered.paths, recovered);
+  await validateRecoveredRender(recovered, cameraRecord, renderRecord.value);
   phases.render = { ...renderRecord.value, cameraTrack: cameraRecord.track };
+  if (command === "qa" && dryRun) {
+    return {
+      ...buildDryRunPlan(recovered),
+      runId: recovered.runId,
+      verifiedPhases: ["validate", "storyboard", "capture", "camera", "render"],
+    };
+  }
+  if (command === "stage") {
+    const qaRecord = await readPhaseRecord(
+      recovered.paths,
+      "qa",
+      recovered,
+      "qa",
+    );
+    phases.qa = qaRecord.value;
+    await validateRecoveredQa(recovered, phases.render, phases.qa);
+    recovered.recoveredLanding = renderRecord.value.landing;
+    if (dryRun) {
+      const preview = previewContentAddressedStage(
+        stageInput(recovered, phases),
+      );
+      return {
+        contract: "kandev-highlight-stage-dry-run-v1",
+        command,
+        dryRun: true,
+        runId: recovered.runId,
+        verifiedPhases: [
+          "validate",
+          "storyboard",
+          "capture",
+          "camera",
+          "render",
+          "qa",
+        ],
+        ...preview,
+      };
+    }
+    const stageAdapters = phaseAdapters(recovered);
+    phases.stage = await stageAdapters.stage({ phases });
+    return {
+      contract: "kandev-highlight-command-v1",
+      command,
+      runId: recovered.runId,
+      order: ["stage"],
+      phases,
+    };
+  }
   phases.qa = await adapters.qa({ phases });
   return {
     contract: "kandev-highlight-command-v1",
@@ -1098,8 +1651,7 @@ async function copyDeliverySet({ qa, building, form }) {
   const result = {};
   for (const kind of REQUIRED_DELIVERY_KINDS) {
     const report = qa.get(kind);
-    const extension = kind === "poster" ? "webp" : kind;
-    const relative = `deliveries/${form}.${extension}`;
+    const relative = deliveryRelativePath(form, kind);
     const destination = path.join(building, relative);
     await copyRegular(report.path, destination, `${form} ${kind}`);
     const bytes = await fs.readFile(destination);
@@ -1107,20 +1659,97 @@ async function copyDeliverySet({ qa, building, form }) {
     if (report.bytes !== bytes.length || report.sha256 !== exactSha) {
       throw new Error(`${form} ${kind} QA hash/bytes do not match delivery`);
     }
-    const probe = report.probe;
-    result[kind] = {
-      path: relative,
+    result[kind] = deliveryRecord(report, form, kind, {
       bytes: bytes.length,
       sha256: exactSha,
-      codec: probe.codec,
-      width: probe.width,
-      height: probe.height,
-      fps: kind === "poster" ? null : probe.fps,
-      duration: kind === "poster" ? null : probe.durationMs / 1_000,
-      audio: probe.audioStreams !== 0,
-    };
+    });
   }
   return result;
+}
+
+function deliveryRelativePath(form, kind) {
+  const extension = kind === "poster" ? "webp" : kind;
+  return `deliveries/${form}.${extension}`;
+}
+
+function deliveryRecord(report, form, kind, exact = {}) {
+  const probe = report.probe;
+  return {
+    path: deliveryRelativePath(form, kind),
+    bytes: exact.bytes ?? report.bytes,
+    sha256: exact.sha256 ?? report.sha256,
+    codec: probe.codec,
+    width: probe.width,
+    height: probe.height,
+    fps: kind === "poster" ? null : probe.fps,
+    duration: kind === "poster" ? null : probe.durationMs / 1_000,
+    audio: probe.audioStreams !== 0,
+  };
+}
+
+function reviewManifest(input, assets, form) {
+  const common = {
+    schemaVersion: 1,
+    revision: input.delivery.revision,
+    highlight: input.delivery.highlight,
+    scenario: { path: "scenario.json", digest: input.scenarioDigest },
+    capture: {
+      path: `raw/${input.scenario.id}.source.mp4`,
+      digest: input.capture.receipt.rawMaster.digest,
+    },
+    qa: {
+      status: "technical_pass",
+      passed: true,
+      reportPath: "qa/report.json",
+      reportDigest: input.qa.reportDigest,
+      completedAt: input.qa.completedAt,
+    },
+    provenance: stageProvenance(input),
+  };
+  const reason =
+    form === "desktop"
+      ? "explicit-acceptance-required"
+      : "desktop-stage-required";
+  const manifest = {
+    contract: "kandev-highlight-review-stage-v1",
+    ...common,
+    profile: input.scenario.profile.kind,
+    promotable: false,
+    readyForReview: true,
+    reason,
+    assets: { [form]: assets },
+  };
+  manifest.stageDigest = computeStageManifestDigest(manifest);
+  return { manifest, reason };
+}
+
+function previewContentAddressedStage(input) {
+  assertStageInput(input);
+  const form =
+    input.scenario.profile.kind === "native-mobile" ? "mobile" : "desktop";
+  const reports = reportArtifacts(input.qa);
+  const assets = Object.fromEntries(
+    REQUIRED_DELIVERY_KINDS.map((kind) => [
+      kind,
+      deliveryRecord(reports.get(kind), form, kind),
+    ]),
+  );
+  const { manifest, reason } = reviewManifest(input, assets, form);
+  const target = path.join(
+    path.resolve(input.artifactRoot),
+    input.scenario.id,
+    "stages",
+    manifest.stageDigest.slice("sha256:".length),
+  );
+  return {
+    promotable: false,
+    readyForReview: true,
+    reason,
+    stageDigest: manifest.stageDigest,
+    target,
+    manifestPath: path.join(target, "review.json"),
+    manifest,
+  };
 }
 
 function stageProvenance(input) {
@@ -1158,6 +1787,22 @@ function assertStageInput(input) {
     throw new Error("stage requires exact scenario digest");
   if (!DIGEST_PATTERN.test(input.capture?.receipt?.rawMaster?.digest ?? ""))
     throw new Error("stage requires exact raw capture digest");
+  const receipt = input.capture.receipt;
+  const source = input.sourceProvenance;
+  if (
+    !source ||
+    receipt.sourceDigest !== computeSourceCaptureDigest(source) ||
+    canonicalJson(receipt.source) !== canonicalJson(source.gate)
+  ) {
+    throw new Error("stage capture source continuity is invalid");
+  }
+  if (
+    receipt.build?.contract !== "kandev-highlight-build-provenance-v1" ||
+    !DIGEST_PATTERN.test(receipt.build?.manifestDigest ?? "") ||
+    receipt.build?.sourceSha !== source.sourceSha
+  ) {
+    throw new Error("stage capture build source continuity is invalid");
+  }
   if (input.capture?.receipt?.seed?.seedId !== input.scenario.seed.recipe)
     throw new Error("stage seed identity must match scenario seed recipe");
   if (!DIGEST_PATTERN.test(input.capture?.receipt?.seed?.seedDigest ?? ""))
@@ -1234,38 +1879,7 @@ export async function writeContentAddressedStage(input = {}) {
       building,
       form,
     });
-    const common = {
-      schemaVersion: 1,
-      revision: input.delivery.revision,
-      highlight: input.delivery.highlight,
-      scenario: { path: scenarioRelative, digest: input.scenarioDigest },
-      capture: {
-        path: captureRelative,
-        digest: input.capture.receipt.rawMaster.digest,
-      },
-      qa: {
-        status: "technical_pass",
-        passed: true,
-        reportPath: reportRelative,
-        reportDigest: input.qa.reportDigest,
-        completedAt: input.qa.completedAt,
-      },
-      provenance: stageProvenance(input),
-    };
-    const reason =
-      form === "desktop"
-        ? "explicit-acceptance-required"
-        : "desktop-stage-required";
-    const manifest = {
-      contract: "kandev-highlight-review-stage-v1",
-      ...common,
-      profile: input.scenario.profile.kind,
-      promotable: false,
-      readyForReview: true,
-      reason,
-      assets: { [form]: assets },
-    };
-    manifest.stageDigest = computeStageManifestDigest(manifest);
+    const { manifest, reason } = reviewManifest(input, assets, form);
     const manifestName = "review.json";
     await writeJsonExclusive(path.join(building, manifestName), manifest);
     const stageDir = path.join(
