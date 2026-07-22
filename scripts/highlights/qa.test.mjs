@@ -120,6 +120,91 @@ test("containment audits pointer glyph and target glyph over visibility interval
   );
 });
 
+function containmentCamera({ zoom = 1, x = 0.5, y = 0.5 } = {}) {
+  return {
+    fps: 25,
+    durationMs: 1_000,
+    safeMargin: { top: 0.04, right: 0.025, bottom: 0.04, left: 0.025 },
+    keyframes: [
+      { frame: 0, zoom, x, y },
+      { frame: 25, zoom, x, y },
+    ],
+  };
+}
+
+function edgeTargetInterval() {
+  return {
+    label: "Open task composer",
+    startFrame: 0,
+    endFrame: 25,
+    bounds: {
+      left: 8 / 1920,
+      right: 311 / 1920,
+      top: 86 / 1200,
+      bottom: 122 / 1200,
+    },
+    glyphBounds: {
+      left: 18 / 1920,
+      right: 99 / 1920,
+      top: 96 / 1200,
+      bottom: 112 / 1200,
+    },
+  };
+}
+
+test("containment uses viewport bounds for identity camera without allowing clipping", () => {
+  const identityCamera = containmentCamera();
+  const edgeTarget = edgeTargetInterval();
+
+  assert.equal(
+    auditContainment({ camera: identityCamera, targetIntervals: [edgeTarget] })
+      .passed,
+    true,
+  );
+
+  assert.throws(
+    () =>
+      auditContainment({
+        camera: identityCamera,
+        targetIntervals: [
+          {
+            ...edgeTarget,
+            bounds: { ...edgeTarget.bounds, left: -0.001 },
+          },
+        ],
+      }),
+    /Open task composer target leaves camera frame/i,
+  );
+});
+
+test("containment requires maximum achievable margin for a zoomed edge target", () => {
+  const edgeTarget = edgeTargetInterval();
+  const edgeClampedZoom = containmentCamera({ zoom: 2, x: 0.25, y: 0.25 });
+
+  assert.equal(
+    auditContainment({
+      camera: edgeClampedZoom,
+      targetIntervals: [edgeTarget],
+    }).passed,
+    true,
+  );
+
+  assert.throws(
+    () =>
+      auditContainment({
+        camera: {
+          ...edgeClampedZoom,
+          keyframes: edgeClampedZoom.keyframes.map((keyframe) => ({
+            ...keyframe,
+            x: 0.251,
+          })),
+        },
+        targetIntervals: [edgeTarget],
+      }),
+    /Open task composer target leaves camera frame/i,
+  );
+});
+
 test("camera motion audit measures limits, settle, and depth reversals", () => {
   const identity = {
     fps: 25,

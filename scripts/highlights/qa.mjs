@@ -285,11 +285,23 @@ function viewFor(state) {
 function assertRectInView(rect, cameraState, margin, label, frame) {
   rectKeys(rect);
   const view = viewFor(cameraState);
+  const effectiveMargin = {
+    left: Math.min(margin.left / cameraState.zoom, Math.max(0, rect.left)),
+    right: Math.min(
+      margin.right / cameraState.zoom,
+      Math.max(0, 1 - rect.right),
+    ),
+    top: Math.min(margin.top / cameraState.zoom, Math.max(0, rect.top)),
+    bottom: Math.min(
+      margin.bottom / cameraState.zoom,
+      Math.max(0, 1 - rect.bottom),
+    ),
+  };
   if (
-    rect.left < view.left + margin.left / cameraState.zoom - 1e-6 ||
-    rect.right > view.right - margin.right / cameraState.zoom + 1e-6 ||
-    rect.top < view.top + margin.top / cameraState.zoom - 1e-6 ||
-    rect.bottom > view.bottom - margin.bottom / cameraState.zoom + 1e-6
+    rect.left < view.left + effectiveMargin.left - 1e-6 ||
+    rect.right > view.right - effectiveMargin.right + 1e-6 ||
+    rect.top < view.top + effectiveMargin.top - 1e-6 ||
+    rect.bottom > view.bottom - effectiveMargin.bottom + 1e-6
   ) {
     throw new Error(`${label} leaves camera frame at frame ${frame}`);
   }
