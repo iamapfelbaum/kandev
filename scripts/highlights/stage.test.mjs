@@ -231,19 +231,37 @@ test("adds a new immutable revision without changing prior revision bytes", asyn
   assert.notDeepEqual(await fs.readFile(path.join(first.highlightsDir, "stage-demo/revisions/r2/desktop.mp4")), oldBytes);
 });
 
-test("CLI promote dry-run verifies an external stage without touching the repository", async () => {
+test("CLI promote refuses a legacy accepted-stage manifest", async () => {
   const fixture = await createStage();
   const script = path.resolve("scripts/highlights.mjs");
   const result = spawnSync(process.execPath, [script, "promote", fixture.manifestPath, "--dry-run"], {
     cwd: fixture.repoRoot,
     encoding: "utf8",
   });
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Dry run:.*stage-demo.*accepted/i);
+  assert.notEqual(result.status, 0, result.stdout);
+  assert.match(result.stderr, /promote.*review.*v1|review.*manifest.*only/i);
   await assert.rejects(fs.access(path.join(fixture.highlightsDir, "stage-demo")));
 });
 
-async function createStage({ revision = "r1", qaStatus = "accepted", reportStatus = qaStatus, seedId, seedDigest, existing, payloadSuffix = "", desktopWidth = 1920, desktopHeight = 1200, landingAdapter = { sourceSha: "89abcdef0123456789abcdef0123456789abcdef", contractVersion: "1.0.0" } } = {}) {
+test("CLI promote refuses a self-hashed legacy stage backed only by technical_pass", async () => {
+  const fixture = await createStage({
+    payloadSuffix: "-technical-pass-bypass",
+    qaStatus: "accepted",
+    reportStatus: "technical_pass",
+    reportPassed: true,
+  });
+  const script = path.resolve("scripts/highlights.mjs");
+  const result = spawnSync(process.execPath, [script, "promote", fixture.manifestPath, "--dry-run"], {
+    cwd: fixture.repoRoot,
+    encoding: "utf8",
+  });
+
+  assert.notEqual(result.status, 0, result.stdout);
+  assert.match(result.stderr, /promote.*review.*v1|review.*manifest.*only/i);
+  await assert.rejects(fs.access(path.join(fixture.highlightsDir, "stage-demo")));
+});
+
+async function createStage({ revision = "r1", qaStatus = "accepted", reportStatus = qaStatus, reportPassed, seedId, seedDigest, existing, payloadSuffix = "", desktopWidth = 1920, desktopHeight = 1200, landingAdapter = { sourceSha: "89abcdef0123456789abcdef0123456789abcdef", contractVersion: "1.0.0" } } = {}) {
   let base;
   let repoRoot;
   let highlightsDir;
@@ -265,7 +283,11 @@ async function createStage({ revision = "r1", qaStatus = "accepted", reportStatu
   const files = {
     "scenario.json": await fs.readFile(path.resolve("scripts/highlights/examples/quick-start.scenario.json")),
     "raw/capture.webm": Buffer.from(`raw-capture${payloadSuffix}`),
-    "qa/report.json": Buffer.from(`${JSON.stringify({ status: reportStatus, checks: ["codec", "containment"] })}\n`),
+    "qa/report.json": Buffer.from(`${JSON.stringify({
+      status: reportStatus,
+      ...(reportPassed === undefined ? {} : { passed: reportPassed }),
+      checks: ["codec", "containment"],
+    })}\n`),
     "deliveries/desktop.webm": Buffer.from(`desktop-webm${payloadSuffix}`),
     "deliveries/desktop.mp4": Buffer.from(`desktop-mp4${payloadSuffix}`),
     "deliveries/desktop.webp": Buffer.from(`desktop-webp${payloadSuffix}`),

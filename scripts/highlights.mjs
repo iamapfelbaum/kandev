@@ -1034,52 +1034,38 @@ export async function runHighlightsCli(argv = process.argv.slice(2), {
     }
   } else if (command === "promote") {
     const parsed = parseCliArgs(args, new Set(["accept-reviewed-by", "mobile-review", "allow-extension", "dry-run"]));
-    if (parsed.positionals.length !== 1) throw new Error("usage: highlights.mjs promote <desktop-review.json|accepted-stage.json|legacy-highlight-directory> [--accept-reviewed-by <stable-id>] [--mobile-review <path>] [--dry-run]");
+    if (parsed.positionals.length !== 1) throw new Error("usage: highlights.mjs promote <desktop-review.json> --accept-reviewed-by <stable-id> [--mobile-review <path>] [--dry-run]");
     const target = path.resolve(repoRoot, parsed.positionals[0]);
     const stat = await fs.lstat(target);
-    if (stat.isFile()) {
-      const allowedExtensionIds = parsed.repeated["allow-extension"] ?? [];
-      const stage = await import("./highlights/stage.mjs");
-      let contract;
-      try {
-        contract = JSON.parse(await fs.readFile(target, "utf8")).contract;
-      } catch (error) {
-        throw new Error(`cannot inspect promotion manifest ${target}: ${error.message}`);
-      }
-      if (contract === "kandev-highlight-review-stage-v1") {
-        const result = await stage.promoteReviewedHighlight({
-          desktopManifestPath: target,
-          mobileManifestPath: parsed.values["mobile-review"]
-            ? path.resolve(repoRoot, parsed.values["mobile-review"])
-            : undefined,
-          acceptedBy: parsed.values["accept-reviewed-by"],
-          repoRoot,
-          highlightsDir,
-          allowedExtensionIds,
-          dryRun: parsed.flags.has("dry-run"),
-        });
-        if (result.dryRun) {
-          log(`Dry run: review ${result.highlightId}/${result.revision} accepted by ${result.acceptance.acceptedBy}; verified ${result.reviewDigests.join(", ")}; repository unchanged.`);
-        } else {
-          log(JSON.stringify(result, null, 2));
-        }
-      } else {
-        if (parsed.values["accept-reviewed-by"] || parsed.values["mobile-review"]) {
-          throw new Error("--accept-reviewed-by and --mobile-review apply only to technical review manifests");
-        }
-        if (parsed.flags.has("dry-run")) {
-          const staged = await stage.readStageManifest(target, { repoRoot, allowedExtensionIds });
-          log(`Dry run: stage ${staged.manifest.highlight.id}/${staged.manifest.revision} has accepted QA and verified digest ${staged.manifest.stageDigest}; repository unchanged.`);
-        } else {
-          log(JSON.stringify(await stage.promoteStagedHighlight({ manifestPath: target, repoRoot, highlightsDir, allowedExtensionIds }), null, 2));
-        }
-      }
+    if (!stat.isFile()) {
+      throw new Error("promote accepts only a kandev-highlight-review-stage-v1 manifest");
+    }
+    const allowedExtensionIds = parsed.repeated["allow-extension"] ?? [];
+    const stage = await import("./highlights/stage.mjs");
+    let contract;
+    try {
+      contract = JSON.parse(await fs.readFile(target, "utf8")).contract;
+    } catch (error) {
+      throw new Error(`cannot inspect promotion manifest ${target}: ${error.message}`);
+    }
+    if (contract !== "kandev-highlight-review-stage-v1") {
+      throw new Error("promote accepts only a kandev-highlight-review-stage-v1 manifest");
+    }
+    const result = await stage.promoteReviewedHighlight({
+      desktopManifestPath: target,
+      mobileManifestPath: parsed.values["mobile-review"]
+        ? path.resolve(repoRoot, parsed.values["mobile-review"])
+        : undefined,
+      acceptedBy: parsed.values["accept-reviewed-by"],
+      repoRoot,
+      highlightsDir,
+      allowedExtensionIds,
+      dryRun: parsed.flags.has("dry-run"),
+    });
+    if (result.dryRun) {
+      log(`Dry run: review ${result.highlightId}/${result.revision} accepted by ${result.acceptance.acceptedBy}; verified ${result.reviewDigests.join(", ")}; repository unchanged.`);
     } else {
-      if (parsed.values["accept-reviewed-by"] || parsed.values["mobile-review"]) {
-        throw new Error("--accept-reviewed-by and --mobile-review apply only to technical review manifests");
-      }
-      if (parsed.flags.has("dry-run")) throw new Error("legacy directory promotion does not support --dry-run; use a content-addressed stage manifest");
-      log(JSON.stringify(await promoteHighlight({ highlightDir: target }), null, 2));
+      log(JSON.stringify(result, null, 2));
     }
   } else if (command === "activate") {
     if (!args[0] || !args[1]) throw new Error("usage: highlights.mjs activate <highlight-directory> <release-version>");
