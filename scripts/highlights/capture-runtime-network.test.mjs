@@ -5,6 +5,7 @@ import http from "node:http";
 import path from "node:path";
 import test from "node:test";
 
+import { installCaptureOriginIsolation } from "./capture-origin-isolation.mjs";
 import { loadPlaywrightChromium } from "./capture-source.mjs";
 import {
   allocateRuntimeCoordinates,
@@ -21,8 +22,7 @@ import { prepareRuntimeTempNamespace } from "./runtime-temp.mjs";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dirname, "../..");
 const AUTHORIZATION_PATH = "/kandev-boundary/authorization.json";
-const LOOPBACK_PEER_CONNECTION_ARG =
-  "--allow-loopback-in-peer-connection";
+const LOOPBACK_PEER_CONNECTION_ARG = "--allow-loopback-in-peer-connection";
 const ATTESTED_DOCKER_BOUNDARY =
   process.env[CHROMIUM_DOCKER_BOUNDARY_AUTHORIZATION_ENV] ===
   AUTHORIZATION_PATH;
@@ -301,6 +301,14 @@ test(
     t.after(() => browser.close().catch(() => {}));
     const context = browser.contexts()[0];
     const page = await context.newPage();
+    const cdp = await context.newCDPSession(page);
+    const originIsolation = await installCaptureOriginIsolation({
+      context,
+      page,
+      cdp,
+      allowedOrigin,
+    });
+    t.after(() => originIsolation.dispose());
     await page.goto(allowedOrigin);
 
     const guardedProbe = await gatherIce(page, udpAddress.port);
@@ -313,7 +321,12 @@ test(
     );
     assert.equal(guardedProbe.directTcpSocket, "undefined");
     assert.equal(guardedProbe.directUdpSocket, "undefined");
+    assert.equal(webTransportProbe.surface, "undefined");
     assert.notEqual(webTransportProbe.outcome, "ready");
+    assert.equal(
+      originIsolation.snapshot().controls.directTransportConstructorsBlocked,
+      true,
+    );
 
     await browser.close();
     const teardown = await runtime.stop();

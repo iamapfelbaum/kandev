@@ -787,6 +787,7 @@ function validateOriginIsolationControls(controls) {
     "subframeGuard",
     "serviceWorkerBypass",
     "serviceWorkerRegistrationBlocked",
+    "directTransportConstructorsBlocked",
   ];
   requireExactKeys(controls, keys, "capture origin isolation controls");
   if (keys.some((key) => controls[key] !== true)) {

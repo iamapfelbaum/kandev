@@ -928,6 +928,7 @@ function navigationHarness(initialUrl = "about:blank") {
       subframeGuard: true,
       serviceWorkerBypass: true,
       serviceWorkerRegistrationBlocked: true,
+      directTransportConstructorsBlocked: true,
     },
     traffic: {
       httpAllowed: 1,
@@ -1396,6 +1397,7 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
       subframeGuard: true,
       serviceWorkerBypass: true,
       serviceWorkerRegistrationBlocked: true,
+      directTransportConstructorsBlocked: true,
     },
     traffic: {
       httpAllowed: 3,
@@ -1824,6 +1826,7 @@ test("capture failure aggregates every cleanup error and persists structured tea
                   subframeGuard: true,
                   serviceWorkerBypass: true,
                   serviceWorkerRegistrationBlocked: true,
+                  directTransportConstructorsBlocked: true,
                 },
                 traffic: {
                   httpAllowed: 0,

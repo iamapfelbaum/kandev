@@ -400,6 +400,7 @@ async function evidenceFixture(
           subframeGuard: true,
           serviceWorkerBypass: true,
           serviceWorkerRegistrationBlocked: true,
+          directTransportConstructorsBlocked: true,
         },
         traffic: {
           httpAllowed: 4,

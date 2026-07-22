@@ -87,10 +87,11 @@ intent or runtime source; never patch delivery bytes or provenance after QA.
   ordinary release failure. Start a new run after resolving ownership instead
   of deleting the retained root by hand.
 - Chromium network-policy mismatch or UDP escape: capture evidence must retain
-  the fixed WebRTC non-proxied-UDP, QUIC, Direct Sockets, and WebTransport
-  controls, which the host rechecks. Do not drop a browser switch to make a
-  local probe pass; fix the trusted runtime or browser version and rerun the
-  real loopback STUN test.
+  the fixed WebRTC non-proxied-UDP and QUIC switches, the Direct Sockets feature
+  disable, and the pre-navigation immutable direct-transport constructor guard.
+  The Docker eval also proves an OS-level `network=none` egress boundary. Do not
+  drop a switch or init guard to make a local probe pass; fix the trusted runtime
+  or browser version and rerun the real loopback STUN/WebTransport test.
 - host failure: inspect `runtime-host/<run-id>/failure.json`, `result.json`, the
   bounded host log, worker result, and teardown receipt. Fix the first failed
   invariant before a capture retry; a capture retry always uses a new run ID.

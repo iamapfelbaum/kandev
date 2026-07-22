@@ -51,7 +51,19 @@ function requireCaptureTarget({ context, page, cdp }) {
   }
 }
 
-function blockServiceWorkerRegistration() {
+function installMainWorldGuards() {
+  for (const constructorName of ["WebTransport", "TCPSocket", "UDPSocket"]) {
+    const descriptor = Object.getOwnPropertyDescriptor(
+      globalThis,
+      constructorName,
+    );
+    Object.defineProperty(globalThis, constructorName, {
+      configurable: false,
+      enumerable: descriptor?.enumerable ?? false,
+      writable: false,
+      value: undefined,
+    });
+  }
   const container = globalThis.navigator?.serviceWorker;
   if (!container) return;
   const prototype = Object.getPrototypeOf(container);
@@ -126,6 +138,7 @@ function controlsEvidence() {
     subframeGuard: true,
     serviceWorkerBypass: true,
     serviceWorkerRegistrationBlocked: true,
+    directTransportConstructorsBlocked: true,
   };
 }
 
@@ -204,7 +217,7 @@ function createOriginHandlers({ page, configured, state }) {
 async function installControls({ context, cdp, handlers }) {
   await context.route(HTTP_ROUTE_PATTERN, handlers.handleHttp);
   await context.routeWebSocket(HTTP_ROUTE_PATTERN, handlers.handleWebSocket);
-  await context.addInitScript(blockServiceWorkerRegistration);
+  await context.addInitScript(installMainWorldGuards);
   context.on("page", handlers.handlePopup);
   await cdp.send("Network.enable");
   await cdp.send("Network.setBypassServiceWorker", { bypass: true });

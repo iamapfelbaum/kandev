@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import vm from "node:vm";
 
 import { installCaptureOriginIsolation } from "./capture-origin-isolation.mjs";
 
@@ -114,6 +115,7 @@ test("origin isolation installs every guard before capture navigation", async ()
       subframeGuard: true,
       serviceWorkerBypass: true,
       serviceWorkerRegistrationBlocked: true,
+      directTransportConstructorsBlocked: true,
     },
     traffic: {
       httpAllowed: 0,
@@ -123,6 +125,45 @@ test("origin isolation installs every guard before capture navigation", async ()
     },
     violations: [],
   });
+});
+
+test("origin isolation removes direct transport constructors before page scripts", async () => {
+  const target = fakeCaptureTarget();
+  await installCaptureOriginIsolation({
+    context: target.context,
+    page: target.page,
+    cdp: target.cdp,
+    allowedOrigin: ALLOWED_ORIGIN,
+  });
+  const initScript = target.calls.find(
+    ({ operation }) => operation === "addInitScript",
+  )?.script;
+  assert.equal(typeof initScript, "function");
+  const realm = vm.createContext({
+    WebTransport: class WebTransport {},
+    TCPSocket: class TCPSocket {},
+    UDPSocket: class UDPSocket {},
+  });
+
+  vm.runInContext(`(${initScript.toString()})()`, realm);
+
+  assert.deepEqual(
+    Array.from(
+      vm.runInContext(
+        "[typeof WebTransport, typeof TCPSocket, typeof UDPSocket]",
+        realm,
+      ),
+    ),
+    ["undefined", "undefined", "undefined"],
+  );
+  assert.throws(
+    () =>
+      vm.runInContext(
+        '"use strict"; globalThis.WebTransport = class WebTransport {}',
+        realm,
+      ),
+    /read only|Cannot assign/i,
+  );
 });
 
 test("same-origin HTTP and WebSocket traffic passes through", async () => {

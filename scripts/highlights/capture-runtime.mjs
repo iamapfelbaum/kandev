@@ -22,12 +22,12 @@ const CHROMIUM_NETWORK_POLICY = Object.freeze({
   version: 1,
   webrtcIpHandlingPolicy: "disable_non_proxied_udp",
   quicDisabled: true,
-  disabledFeatures: Object.freeze(["DirectSockets", "WebTransport"]),
+  disabledFeatures: Object.freeze(["DirectSockets"]),
   switches: Object.freeze([
     "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
     "--webrtc-ip-handling-policy=disable_non_proxied_udp",
     "--disable-quic",
-    "--disable-blink-features=DirectSockets,WebTransport",
+    "--disable-blink-features=DirectSockets",
   ]),
 });
 
