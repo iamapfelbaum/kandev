@@ -67,13 +67,10 @@ function normalizeFrameTiming(frameTiming = {}) {
   return stableObject(normalized);
 }
 
-function normalizeFileIdentity(record = {}) {
-  const identity = {
-    bytes: record.bytes,
-    sha256: record.sha256,
-  };
-  if (Number.isInteger(record.frame)) identity.frame = record.frame;
-  return identity;
+function normalizeMediaProbe(probe) {
+  const normalized = stableObject(probe);
+  if (normalized && typeof normalized === "object") delete normalized.bytes;
+  return normalized;
 }
 
 function normalizeRenderedArtifacts(artifacts = []) {
@@ -81,15 +78,19 @@ function normalizeRenderedArtifacts(artifacts = []) {
     .sort((left, right) => String(left?.kind).localeCompare(String(right?.kind)))
     .map((artifact) => ({
       kind: artifact.kind,
-      ...normalizeFileIdentity(artifact),
+      probe: normalizeMediaProbe(artifact.probe),
+      cadence: stableObject(artifact.cadence),
+      fullDecode: stableObject(artifact.fullDecode),
+      faststart:
+        artifact.faststart == null ? artifact.faststart : { passed: artifact.faststart.passed },
       proofs: artifact.proofs?.skipped
         ? {
             skipped: true,
             reason: artifact.proofs.reason,
           }
         : {
-            keyframes: (artifact.proofs?.keyframes ?? []).map(normalizeFileIdentity),
-            contactSheet: normalizeFileIdentity(artifact.proofs?.contactSheet),
+            keyframeCount: (artifact.proofs?.keyframes ?? []).length,
+            contactSheet: Boolean(artifact.proofs?.contactSheet),
           },
     }));
 }
@@ -113,7 +114,6 @@ export function normalizeDeterminismEvidence(evidence = {}) {
     frameTiming: normalizeFrameTiming(evidence.frameTiming),
     selectedFrames: (evidence.selectedFrames ?? []).map((frame) => ({
       storyTimeMs: frame.storyTimeMs,
-      sha256: frame.sha256,
     })),
     renderedArtifacts: normalizeRenderedArtifacts(evidence.renderedArtifacts),
   };

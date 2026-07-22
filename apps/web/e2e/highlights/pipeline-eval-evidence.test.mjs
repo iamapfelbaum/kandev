@@ -14,8 +14,10 @@ const SHA = "a".repeat(40);
 const DIGEST = `sha256:${"b".repeat(64)}`;
 const HEX_DIGEST = "c".repeat(64);
 const QUICK_START_ID = "quick-start";
+const EVAL_ROOT = "/external/eval";
+const STILL_IMAGE_REASON = "still-image";
 
-function technicalFixture(root = "/external/eval") {
+function technicalFixture(root = EVAL_ROOT) {
   const codecs = { mp4: "h264", webm: "vp9", poster: "webp" };
   const asset = (kind, codec) => ({
     path: `assets/desktop.${kind === "poster" ? "webp" : kind}`,
@@ -40,7 +42,7 @@ function technicalFixture(root = "/external/eval") {
     faststart: kind === "mp4" ? { passed: true } : null,
     proofs:
       kind === "poster"
-        ? { skipped: true, reason: "still-image" }
+        ? { skipped: true, reason: STILL_IMAGE_REASON }
         : {
             keyframes: [proof(`${kind}-0`), proof(`${kind}-last`)],
             contactSheet: proof(`${kind}-sheet`),
@@ -80,7 +82,7 @@ function technicalFixture(root = "/external/eval") {
   };
 }
 
-function runtimeFixture(root = "/external/eval", runId = "fresh-agent-1") {
+function runtimeFixture(root = EVAL_ROOT, runId = "fresh-agent-1") {
   const attempt = path.join(root, QUICK_START_ID, "runs", runId);
   const hostRoot = path.join(root, "runtime-host", runId);
   const buildRoot = path.join(root, "runtime-builds", runId);
@@ -215,6 +217,7 @@ test("determinism normalization excludes volatile host data but retains semantic
   second.frameTiming.absoluteMediaStartMs = 77_777;
   second.frameTiming.recorderPid = 888;
   second.selectedFrames[0].path = "/run-2/frame.png";
+  second.selectedFrames[0].sha256 = "d".repeat(64);
   second.runId = "fresh-agent-2";
   second.capturedAt = "2026-01-02T00:00:00Z";
   second.ports.backend = 18081;
@@ -229,13 +232,13 @@ test("determinism normalization excludes volatile host data but retains semantic
   assert.equal(normalized.camera.track.keyframes[0].zoom, 1);
   assert.equal(normalized.pointer.samples[0].storyTMs, 600);
   assert.equal(normalized.frameTiming.storyDurationMs, 3_000);
-  assert.equal(normalized.selectedFrames[0].sha256, HEX_DIGEST);
+  assert.deepEqual(normalized.selectedFrames[0], { storyTimeMs: 200 });
   assert.equal(JSON.stringify(normalized).includes("/run-"), false);
   assert.equal(JSON.stringify(normalized).includes("99999"), false);
 });
 
-test("determinism assertion reports first semantic or decoded-frame mismatch", () => {
-  const first = normalizeDeterminismEvidence({
+test("determinism assertion reports semantic drift and ignores projected frame identity", () => {
+  const evidence = {
     scenario: { id: QUICK_START_ID, digest: DIGEST },
     timeline: { totalDurationMs: 3_000, events: [] },
     seed: { seedId: "seed", seedDigest: DIGEST, invariants: {} },
@@ -243,22 +246,29 @@ test("determinism assertion reports first semantic or decoded-frame mismatch", (
     pointer: { samples: [] },
     frameTiming: { fps: 25, storyDurationMs: 3_000, relativeStartFrame: 0 },
     selectedFrames: [{ storyTimeMs: 200, sha256: HEX_DIGEST }],
-  });
+  };
+  const first = normalizeDeterminismEvidence(evidence);
   const cameraMismatch = structuredClone(first);
   cameraMismatch.camera.track.keyframes[0].zoom = 1.1;
   assert.throws(
     () => assertDeterministicRuns(first, cameraMismatch),
     /camera\.track\.keyframes\[0\]\.zoom/i,
   );
+  const frameIdentityDrift = structuredClone(evidence);
+  frameIdentityDrift.selectedFrames[0].sha256 = "d".repeat(64);
+  assert.equal(
+    assertDeterministicRuns(first, normalizeDeterminismEvidence(frameIdentityDrift)).passed,
+    true,
+  );
   const frameMismatch = structuredClone(first);
-  frameMismatch.selectedFrames[0].sha256 = "d".repeat(64);
+  frameMismatch.selectedFrames[0].storyTimeMs = 240;
   assert.throws(
     () => assertDeterministicRuns(first, frameMismatch),
-    /selectedFrames\[0\]\.sha256/i,
+    /selectedFrames\[0\]\.storyTimeMs/i,
   );
 });
 
-test("determinism normalization retains delivery and QA proof hashes", () => {
+test("semantic determinism excludes exact media identities but retains media contracts", () => {
   const evidence = {
     renderedArtifacts: [
       {
@@ -266,6 +276,20 @@ test("determinism normalization retains delivery and QA proof hashes", () => {
         path: "/run-1/render/quick-start.mp4",
         bytes: 12_345,
         sha256: "1".repeat(64),
+        probe: {
+          codec: "h264",
+          width: 1920,
+          height: 1200,
+          fps: 25,
+          durationMs: 3_000,
+          frameCount: 75,
+          audioStreams: 0,
+          pixelFormat: "yuv420p",
+          bytes: 12_345,
+        },
+        cadence: { passed: true, frameCount: 75, integerTicksPerFrame: 512 },
+        fullDecode: { passed: true },
+        faststart: { passed: true, moovOffset: 32, mdatOffset: 64 },
         proofs: {
           keyframes: [
             {
@@ -287,7 +311,21 @@ test("determinism normalization retains delivery and QA proof hashes", () => {
         path: "/run-1/render/quick-start.webp",
         bytes: 4_321,
         sha256: "4".repeat(64),
-        proofs: { skipped: true, reason: "still-image" },
+        probe: {
+          codec: "webp",
+          width: 1920,
+          height: 1200,
+          fps: null,
+          durationMs: null,
+          frameCount: 1,
+          audioStreams: 0,
+          pixelFormat: "yuv420p",
+          bytes: 4_321,
+        },
+        cadence: { skipped: true, reason: STILL_IMAGE_REASON },
+        fullDecode: { skipped: true, reason: STILL_IMAGE_REASON },
+        faststart: null,
+        proofs: { skipped: true, reason: STILL_IMAGE_REASON },
       },
     ],
   };
@@ -296,34 +334,39 @@ test("determinism normalization retains delivery and QA proof hashes", () => {
   relocated.renderedArtifacts[0].proofs.keyframes[0].path = "/run-2/qa/mp4-keyframe-01.png";
   relocated.renderedArtifacts[0].proofs.contactSheet.path = "/run-2/qa/mp4-contact-sheet.png";
   relocated.renderedArtifacts[1].path = "/run-2/render/quick-start.webp";
+  relocated.renderedArtifacts[0].bytes = 12_999;
+  relocated.renderedArtifacts[0].sha256 = "5".repeat(64);
+  relocated.renderedArtifacts[0].probe.bytes = 12_999;
+  relocated.renderedArtifacts[0].proofs.keyframes[0].bytes = 333;
+  relocated.renderedArtifacts[0].proofs.keyframes[0].sha256 = "6".repeat(64);
+  relocated.renderedArtifacts[0].proofs.contactSheet.bytes = 666;
+  relocated.renderedArtifacts[0].proofs.contactSheet.sha256 = "7".repeat(64);
+  relocated.renderedArtifacts[1].bytes = 4_500;
+  relocated.renderedArtifacts[1].sha256 = "8".repeat(64);
+  relocated.renderedArtifacts[1].probe.bytes = 4_500;
 
   const normalized = normalizeDeterminismEvidence(evidence);
   assert.deepEqual(normalized, normalizeDeterminismEvidence(relocated));
-  assert.deepEqual(
-    normalized.renderedArtifacts.map(({ kind, bytes, sha256 }) => ({
-      kind,
-      bytes,
-      sha256,
-    })),
-    [
-      { kind: "mp4", bytes: 12_345, sha256: "1".repeat(64) },
-      { kind: "poster", bytes: 4_321, sha256: "4".repeat(64) },
-    ],
-  );
+  assert.equal(normalized.renderedArtifacts[0].probe.frameCount, 75);
+  assert.equal(normalized.renderedArtifacts[0].proofs.keyframeCount, 1);
+  assert.equal(normalized.renderedArtifacts[0].proofs.contactSheet, true);
+  assert.equal(Object.hasOwn(normalized.renderedArtifacts[0], "bytes"), false);
+  assert.equal(Object.hasOwn(normalized.renderedArtifacts[0], "sha256"), false);
   assert.equal(JSON.stringify(normalized).includes("/run-"), false);
+  assert.equal(JSON.stringify(normalized).includes("1".repeat(64)), false);
 
   const deliveryMismatch = structuredClone(normalized);
-  deliveryMismatch.renderedArtifacts[0].sha256 = "5".repeat(64);
+  deliveryMismatch.renderedArtifacts[0].probe.frameCount = 74;
   assert.throws(
     () => assertDeterministicRuns(normalized, deliveryMismatch),
-    /renderedArtifacts\[0\]\.sha256/i,
+    /renderedArtifacts\[0\]\.probe\.frameCount/i,
   );
 
   const proofMismatch = structuredClone(normalized);
-  proofMismatch.renderedArtifacts[0].proofs.contactSheet.sha256 = "6".repeat(64);
+  proofMismatch.renderedArtifacts[0].proofs.keyframeCount = 0;
   assert.throws(
     () => assertDeterministicRuns(normalized, proofMismatch),
-    /renderedArtifacts\[0\]\.proofs\.contactSheet\.sha256/i,
+    /renderedArtifacts\[0\]\.proofs\.keyframeCount/i,
   );
 });
 

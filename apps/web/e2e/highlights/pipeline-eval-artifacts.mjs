@@ -17,6 +17,19 @@ import {
 } from "./pipeline-eval-shared.mjs";
 
 const QUICK_START_ID = "quick-start";
+export function summarizeQaArtifacts(artifacts = []) {
+  return artifacts.map((artifact) => ({
+    kind: artifact.kind,
+    path: artifact.path,
+    bytes: artifact.bytes,
+    sha256: artifact.sha256,
+    probe: structuredClone(artifact.probe),
+    cadence: structuredClone(artifact.cadence),
+    fullDecode: structuredClone(artifact.fullDecode),
+    faststart: structuredClone(artifact.faststart),
+    proofs: structuredClone(artifact.proofs),
+  }));
+}
 
 async function readJsonIdentity(filePath, label) {
   const absolute = requireAbsolute(filePath, label);
@@ -254,6 +267,17 @@ function summarizeRun(files, selectedFrames, normalized) {
     reviewPath: review.path,
     qaReportPath: qa.path,
     rawMasterPath: capture.value.rawMaster?.path,
+    rawMaster: {
+      path: capture.value.rawMaster?.path,
+      bytes: capture.value.rawMaster?.bytes,
+      sha256: capture.value.rawMaster?.digest?.replace(/^sha256:/, ""),
+      width: capture.value.capture?.width,
+      height: capture.value.capture?.height,
+      fps: capture.value.capture?.fps,
+      storyStartFrame: capture.value.storyMedia?.start?.frameCount,
+      storyEndFrame: capture.value.storyMedia?.end?.frameCount,
+      storyFrameCount: capture.value.capture?.frameAlignment?.observedStoryFrames,
+    },
     paths: expected,
     digests: {
       runtimeResult: host.digest,
@@ -264,14 +288,7 @@ function summarizeRun(files, selectedFrames, normalized) {
       review: review.value.stageDigest,
       qa: qa.digest,
     },
-    media: qa.value.artifacts.map((artifact) => ({
-      kind: artifact.kind,
-      path: artifact.path,
-      bytes: artifact.bytes,
-      sha256: artifact.sha256,
-      keyframes: artifact.proofs?.keyframes?.length ?? 0,
-      contactSheet: artifact.proofs?.contactSheet ?? null,
-    })),
+    media: summarizeQaArtifacts(qa.value.artifacts),
     browser: qa.value.browser,
     selectedFrames,
     normalized,

@@ -12,6 +12,7 @@ const EVAL_MODULES = [
   "pipeline-eval-repository.mjs",
   "pipeline-eval-evidence.mjs",
   "pipeline-eval-artifacts.mjs",
+  "pipeline-eval-visual.mjs",
   "pipeline-eval-orchestrator.mjs",
 ];
 

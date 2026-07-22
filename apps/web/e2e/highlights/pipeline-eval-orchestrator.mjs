@@ -23,6 +23,7 @@ import {
   requireAbsolute,
   runBoundedSubprocess,
 } from "./pipeline-eval-shared.mjs";
+import { compareRunVisuals } from "./pipeline-eval-visual.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_WEB_ROOT = path.resolve(HERE, "../..");
@@ -347,10 +348,25 @@ async function executeCaptureRuns(context, markCaptureStarted) {
   });
   context.first = await executeOneRun(context, firstCommand);
   context.second = await executeOneRun(context, context.commands[4]);
-  context.deterministic = assertDeterministicRuns(
-    context.first.normalized,
-    context.second.normalized,
-  );
+  const semantic = assertDeterministicRuns(context.first.normalized, context.second.normalized);
+  const visual = await compareRunVisuals({
+    first: context.first,
+    second: context.second,
+    cwd: context.evalRoot,
+    logRoot: context.logRoot,
+    env: context.environment,
+  });
+  const deterministic = {
+    contract: "kandev-highlight-determinism-v1",
+    version: 1,
+    passed: true,
+    semanticDigest: semantic.digest,
+    visual,
+  };
+  context.deterministic = {
+    ...deterministic,
+    resultDigest: digestValue(deterministic),
+  };
 }
 
 async function runRecoveryDryRun(context, command) {
@@ -412,6 +428,7 @@ function summarizeRun(run) {
     reviewPath: run.reviewPath,
     qaReportPath: run.qaReportPath,
     rawMasterPath: run.rawMasterPath,
+    rawMaster: run.rawMaster,
     paths: run.paths,
     digests: run.digests,
     normalizedDigest: run.normalizedDigest,
