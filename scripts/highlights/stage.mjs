@@ -12,6 +12,7 @@ import {
   readScenario,
   requireDeliveryMetadata,
 } from "./scenario.mjs";
+import { processStartToken } from "./capture-runtime.mjs";
 
 export const STAGE_MANIFEST_VERSION = 1;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -21,6 +22,7 @@ const ASSET_KEYS = ["webm", "mp4", "poster"];
 const ASSET_EXTENSIONS = { webm: ".webm", mp4: ".mp4", poster: ".webp" };
 const ASSET_NAMES = { webm: "webm", mp4: "mp4", poster: "webp" };
 const REVIEWER_ID_PATTERN = /^[a-z0-9](?:[a-z0-9._@-]{0,126}[a-z0-9])?$/;
+const PROMOTION_LOCK_CONTRACT = "kandev-highlight-promotion-lock-v1";
 
 export function computeStageManifestDigest(manifest) {
   if (!isObject(manifest)) throw new Error("stage manifest must be an object");
@@ -251,18 +253,138 @@ export async function promoteStagedHighlight({
 async function promoteWithLock({ staged, repoRoot, highlightsDir, allowedExtensionIds, probe, now }) {
   const { manifest } = staged;
   await fs.mkdir(highlightsDir, { recursive: true });
-  const lockPath = path.join(highlightsDir, `.promote-${manifest.highlight.id}.lock`);
+  const canonicalHighlightsDir = await fs.realpath(highlightsDir);
+  const lockPath = path.join(canonicalHighlightsDir, `.promote-${manifest.highlight.id}.lock`);
+  const lock = await acquirePromotionLock(lockPath, canonicalHighlightsDir, manifest.highlight.id);
+  let result;
+  let primaryError;
   try {
-    await fs.mkdir(lockPath);
+    result = await promoteVerifiedStage({ staged, repoRoot, highlightsDir, allowedExtensionIds, probe, now });
   } catch (error) {
-    if (error.code === "EEXIST") throw new Error(`Highlight promotion already in progress for ${manifest.highlight.id}; lock exists at ${lockPath}`);
+    primaryError = error;
+  }
+  let cleanupError;
+  try {
+    await unlinkSamePromotionLock(lockPath, lock.stat, "cleanup");
+  } catch (error) {
+    cleanupError = new Error(`promotion lock cleanup failed for ${manifest.highlight.id}: ${error.message}`, { cause: error });
+  }
+  if (primaryError && cleanupError) {
+    throw new AggregateError([primaryError, cleanupError], "Highlight promotion failed and promotion lock cleanup failed");
+  }
+  if (primaryError) throw primaryError;
+  if (cleanupError) throw cleanupError;
+  return result;
+}
+
+async function acquirePromotionLock(lockPath, canonicalHighlightsDir, highlightId) {
+  const startToken = await processStartToken(process.pid);
+  if (typeof startToken !== "string" || startToken === "") {
+    throw new Error(`cannot prove promotion lock owner start token for PID ${process.pid}`);
+  }
+  const owner = {
+    contract: PROMOTION_LOCK_CONTRACT,
+    highlightId,
+    owner: { pid: process.pid, startToken },
+    createdAt: new Date().toISOString(),
+  };
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await fs.writeFile(lockPath, `${JSON.stringify(owner)}\n`, { flag: "wx", mode: 0o600 });
+      const opened = await openPromotionLock(lockPath, canonicalHighlightsDir, highlightId);
+      if (canonicalJson(opened.lock) !== canonicalJson(owner)) {
+        throw new Error(`promotion lock changed while acquiring ${lockPath}`);
+      }
+      return opened;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      const opened = await openPromotionLock(lockPath, canonicalHighlightsDir, highlightId);
+      if (!opened) continue;
+      let currentToken;
+      try {
+        currentToken = await processStartToken(opened.lock.owner.pid);
+      } catch (ownerError) {
+        throw new Error(`cannot prove promotion lock owner for ${lockPath}: ${ownerError.message}`, { cause: ownerError });
+      }
+      if (currentToken === opened.lock.owner.startToken) {
+        throw new Error(`active Highlight promotion lock for ${highlightId} is owned by PID ${opened.lock.owner.pid}: ${lockPath}`);
+      }
+      await unlinkSamePromotionLock(lockPath, opened.stat, "stale reclaim");
+    }
+  }
+  throw new Error(`promotion lock remained contended after stale-lock retry: ${lockPath}`);
+}
+
+async function openPromotionLock(lockPath, canonicalHighlightsDir, highlightId) {
+  let pathStat;
+  try {
+    pathStat = await fs.lstat(lockPath);
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+  if (!pathStat.isFile() || pathStat.isSymbolicLink()) {
+    throw new Error(`ambiguous promotion lock must be a regular non-symlink file: ${lockPath}`);
+  }
+  const realPath = await fs.realpath(lockPath);
+  if (path.dirname(realPath) !== canonicalHighlightsDir) {
+    throw new Error(`ambiguous promotion lock escapes canonical Highlights directory: ${lockPath}`);
+  }
+  let handle;
+  try {
+    handle = await fs.open(lockPath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    if (error.code === "ELOOP") throw new Error(`ambiguous symlinked promotion lock: ${lockPath}`, { cause: error });
     throw error;
   }
   try {
-    return await promoteVerifiedStage({ staged, repoRoot, highlightsDir, allowedExtensionIds, probe, now });
+    const [contents, stat] = await Promise.all([handle.readFile("utf8"), handle.stat()]);
+    if (stat.dev !== pathStat.dev || stat.ino !== pathStat.ino) {
+      throw new Error(`ambiguous promotion lock changed while opening: ${lockPath}`);
+    }
+    let lock;
+    try {
+      lock = JSON.parse(contents);
+      assertObjectKeys(lock, ["contract", "highlightId", "owner", "createdAt"], "promotion lock");
+      assertObjectKeys(lock.owner, ["pid", "startToken"], "promotion lock owner");
+      if (
+        lock.contract !== PROMOTION_LOCK_CONTRACT ||
+        lock.highlightId !== highlightId ||
+        !Number.isInteger(lock.owner.pid) ||
+        lock.owner.pid <= 0 ||
+        typeof lock.owner.startToken !== "string" ||
+        !/^\d+$/.test(lock.owner.startToken) ||
+        !validDate(lock.createdAt)
+      ) {
+        throw new Error("invalid owner record");
+      }
+    } catch (error) {
+      throw new Error(`malformed or ambiguous promotion lock ${lockPath}: ${error.message}`, { cause: error });
+    }
+    return { lock, stat };
   } finally {
-    await fs.rmdir(lockPath).catch(() => {});
+    await handle.close();
   }
+}
+
+async function unlinkSamePromotionLock(lockPath, expectedStat, phase) {
+  let current;
+  try {
+    current = await fs.lstat(lockPath);
+  } catch (error) {
+    if (error.code === "ENOENT") throw new Error(`promotion lock disappeared before ${phase}: ${lockPath}`);
+    throw error;
+  }
+  if (
+    !current.isFile() ||
+    current.isSymbolicLink() ||
+    current.dev !== expectedStat.dev ||
+    current.ino !== expectedStat.ino
+  ) {
+    throw new Error(`promotion lock changed before ${phase}: ${lockPath}`);
+  }
+  await fs.unlink(lockPath);
 }
 
 function buildAcceptedReviewStage({ desktop, mobile, acceptance }) {

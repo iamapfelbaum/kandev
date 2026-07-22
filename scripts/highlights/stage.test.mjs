@@ -186,10 +186,34 @@ test("failed validation leaves no partial destination", async () => {
   assert.equal((await fs.readdir(fixture.highlightsDir)).filter((name) => name.startsWith(".promote-")).length, 0);
 });
 
-test("promotion refuses an existing per-Highlight lock before changing the repository", async () => {
+test("promotion reclaims a lock whose recorded owner is provably gone", async () => {
   const fixture = await createStage();
-  const lockPath = path.join(fixture.highlightsDir, ".promote-stage-demo.lock");
-  await fs.mkdir(lockPath);
+  const lockPath = promotionLockPath(fixture);
+  await writePromotionLock(lockPath, {
+    pid: 2_147_483_647,
+    startToken: "1",
+  });
+  const { promoteStagedHighlight } = await import("./stage.mjs");
+
+  const result = await promoteStagedHighlight({
+    manifestPath: fixture.manifestPath,
+    repoRoot: fixture.repoRoot,
+    highlightsDir: fixture.highlightsDir,
+    probe: probeFixture,
+    now: "2026-07-22T12:00:00.000Z",
+  });
+
+  assert.equal(result.descriptor.id, "stage-demo");
+  await assert.rejects(fs.access(lockPath));
+});
+
+test("promotion refuses a lock owned by the active PID and start token", async () => {
+  const fixture = await createStage();
+  const lockPath = promotionLockPath(fixture);
+  const { processStartToken } = await import("./capture-runtime.mjs");
+  const startToken = await processStartToken(process.pid);
+  assert.equal(typeof startToken, "string");
+  await writePromotionLock(lockPath, { pid: process.pid, startToken });
   const { promoteStagedHighlight } = await import("./stage.mjs");
 
   await assert.rejects(
@@ -199,10 +223,105 @@ test("promotion refuses an existing per-Highlight lock before changing the repos
       highlightsDir: fixture.highlightsDir,
       probe: probeFixture,
     }),
-    /promotion.*progress|lock/i,
+    new RegExp(`active.*promotion.*lock.*PID ${process.pid}|promotion.*lock.*PID ${process.pid}.*active`, "i"),
   );
   await assert.rejects(fs.access(path.join(fixture.highlightsDir, "stage-demo")));
-  assert.deepEqual(await fs.readdir(lockPath), []);
+  assert.equal(JSON.parse(await fs.readFile(lockPath, "utf8")).owner.startToken, startToken);
+});
+
+test("promotion refuses malformed or ambiguous lock ownership", async () => {
+  const fixture = await createStage();
+  const lockPath = promotionLockPath(fixture);
+  await fs.writeFile(lockPath, "{\"contract\":\"unknown\"}\n", { flag: "wx" });
+  const { promoteStagedHighlight } = await import("./stage.mjs");
+
+  await assert.rejects(
+    promoteStagedHighlight({
+      manifestPath: fixture.manifestPath,
+      repoRoot: fixture.repoRoot,
+      highlightsDir: fixture.highlightsDir,
+      probe: probeFixture,
+    }),
+    /malformed|ambiguous|cannot prove.*owner/i,
+  );
+  assert.equal(await fs.readFile(lockPath, "utf8"), "{\"contract\":\"unknown\"}\n");
+});
+
+test("promotion refuses a symlinked lock without touching its target", async () => {
+  const fixture = await createStage();
+  const lockPath = promotionLockPath(fixture);
+  const outside = path.join(fixture.base, "outside-promotion.lock");
+  await writePromotionLock(outside, {
+    pid: 2_147_483_647,
+    startToken: "1",
+  });
+  await fs.symlink(outside, lockPath);
+  const { promoteStagedHighlight } = await import("./stage.mjs");
+
+  await assert.rejects(
+    promoteStagedHighlight({
+      manifestPath: fixture.manifestPath,
+      repoRoot: fixture.repoRoot,
+      highlightsDir: fixture.highlightsDir,
+      probe: probeFixture,
+    }),
+    /symlink|ambiguous|regular.*lock/i,
+  );
+  assert.equal(JSON.parse(await fs.readFile(outside, "utf8")).owner.pid, 2_147_483_647);
+});
+
+test("promotion surfaces lock cleanup failure after successful promotion", async () => {
+  const fixture = await createStage();
+  const lockPath = promotionLockPath(fixture);
+  let replaced = false;
+  const { promoteStagedHighlight } = await import("./stage.mjs");
+
+  await assert.rejects(
+    promoteStagedHighlight({
+      manifestPath: fixture.manifestPath,
+      repoRoot: fixture.repoRoot,
+      highlightsDir: fixture.highlightsDir,
+      probe: async (filePath) => {
+        if (!replaced) {
+          replaced = true;
+          await replacePromotionLock(lockPath);
+        }
+        return probeFixture(filePath);
+      },
+      now: "2026-07-22T12:00:00.000Z",
+    }),
+    /promotion.*lock.*cleanup|cleanup.*promotion.*lock/i,
+  );
+  await fs.access(path.join(fixture.highlightsDir, "stage-demo/highlight.json"));
+  assert.equal(await fs.readFile(path.join(lockPath, "foreign-owner"), "utf8"), "preserve");
+});
+
+test("promotion aggregates primary and lock cleanup failures", async () => {
+  const fixture = await createStage();
+  const lockPath = promotionLockPath(fixture);
+  const { promoteStagedHighlight } = await import("./stage.mjs");
+  let failure;
+  try {
+    await promoteStagedHighlight({
+      manifestPath: fixture.manifestPath,
+      repoRoot: fixture.repoRoot,
+      highlightsDir: fixture.highlightsDir,
+      probe: async () => {
+        await replacePromotionLock(lockPath);
+        throw new Error("decode failed before promotion");
+      },
+      now: "2026-07-22T12:00:00.000Z",
+    });
+  } catch (error) {
+    failure = error;
+  }
+
+  assert(failure instanceof AggregateError);
+  assert.match(failure.message, /promotion.*cleanup/i);
+  assert(failure.errors.some((error) => /decode failed before promotion/.test(error.message)));
+  assert(failure.errors.some((error) => /lock.*changed|lock.*cleanup|cleanup.*lock/i.test(error.message)));
+  await assert.rejects(fs.access(path.join(fixture.highlightsDir, "stage-demo")));
+  assert.equal(await fs.readFile(path.join(lockPath, "foreign-owner"), "utf8"), "preserve");
 });
 
 test("adds a new immutable revision without changing prior revision bytes", async () => {
@@ -383,6 +502,25 @@ function canonicalJson(value) {
     return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+function promotionLockPath(fixture) {
+  return path.join(fixture.highlightsDir, ".promote-stage-demo.lock");
+}
+
+async function writePromotionLock(lockPath, { pid, startToken }) {
+  await fs.writeFile(lockPath, `${JSON.stringify({
+    contract: "kandev-highlight-promotion-lock-v1",
+    highlightId: "stage-demo",
+    owner: { pid, startToken },
+    createdAt: "2026-07-22T09:00:00.000Z",
+  })}\n`, { flag: "wx" });
+}
+
+async function replacePromotionLock(lockPath) {
+  await fs.rm(lockPath, { recursive: true, force: true });
+  await fs.mkdir(lockPath);
+  await fs.writeFile(path.join(lockPath, "foreign-owner"), "preserve");
 }
 
 async function probeFixture(filePath) {
