@@ -37,6 +37,10 @@ const WAIT_STATES = new Set([
 const EASINGS = new Set(["linear", "easeInOutCubic", "easeOutCubic"]);
 const ID_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 const TEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]*$/;
+const REVISION_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const RELEASE_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+const FEATURE_FLAG_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
+const HIGHLIGHT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 const ACTION_KEYS = {
   click: ["kind", "target", "button", "clickCount", "cursorDurationMs", "label", "settleMs"],
@@ -80,7 +84,7 @@ export function validateScenario(scenario, { allowedExtensionIds = [] } = {}) {
     return { ok: false, errors };
   }
 
-  rejectUnknownKeys(scenario, ["$schema", "schemaVersion", "id", "title", "description", "profile", "seed", "setup", "story", "camera"], "", errors);
+  rejectUnknownKeys(scenario, ["$schema", "schemaVersion", "id", "title", "description", "profile", "seed", "setup", "story", "camera", "delivery"], "", errors);
   if (scenario.$schema !== undefined) stringValue(scenario.$schema, "/$schema", errors, { min: 1, max: 240 });
   if (scenario.schemaVersion !== SCENARIO_SCHEMA_VERSION) addError(errors, "/schemaVersion", `must equal ${SCENARIO_SCHEMA_VERSION}`);
   idValue(scenario.id, "/id", errors);
@@ -89,8 +93,12 @@ export function validateScenario(scenario, { allowedExtensionIds = [] } = {}) {
   validateProfile(scenario.profile, errors);
   validateSeed(scenario.seed, errors);
   validateSetup(scenario.setup, allowedExtensions, errors);
-  validateStory(scenario.story, scenario.camera, allowedExtensions, errors);
+  validateStory(scenario.story, scenario.camera, scenario.profile, allowedExtensions, errors);
   if (scenario.camera !== undefined) validateCamera(scenario.camera, scenario.profile, errors);
+  if (scenario.delivery !== undefined) {
+    validateDelivery(scenario.delivery, errors);
+    validatePromotableIdentity(scenario, errors);
+  }
 
   if (errors.length === 0) {
     const duration = estimateStoryDuration(scenario.story);
@@ -125,6 +133,33 @@ export function canonicalScenarioJson(scenario, options = {}) {
 
 export function computeScenarioDigest(scenario, options = {}) {
   return `sha256:${createHash("sha256").update(canonicalScenarioJson(scenario, options)).digest("hex")}`;
+}
+
+export function requireDeliveryMetadata(scenario, options = {}) {
+  assertValidScenario(scenario, options);
+  if (scenario.delivery === undefined) {
+    throw new ScenarioValidationError([{
+      pointer: "/delivery",
+      message: "delivery metadata is required for promotion; add revision, releaseVersion, summary, caption, featureFlags, docs, and mobileDeclaration",
+    }], options.filePath);
+  }
+  const delivery = scenario.delivery;
+  return {
+    revision: delivery.revision,
+    highlight: {
+      id: scenario.id,
+      title: scenario.title,
+      summary: delivery.summary,
+      caption: delivery.caption,
+      releaseVersion: delivery.releaseVersion,
+      featureFlags: [...delivery.featureFlags],
+      docs: {
+        page: delivery.docs.page,
+        section: delivery.docs.section,
+      },
+      mobileDeclaration: delivery.mobileDeclaration,
+    },
+  };
 }
 
 export function compileTimeline(scenario, options = {}) {
@@ -190,6 +225,7 @@ export function compileTimeline(scenario, options = {}) {
     viewport: { ...scenario.profile.viewport },
     storyRecipe: scenario.story.recipe ?? null,
     setup: structuredClone(scenario.setup),
+    delivery: scenario.delivery === undefined ? null : structuredClone(scenario.delivery),
     recordingStartsAfterSetup: true,
     initialCameraZoom: 1,
     scenarioDigest: computeScenarioDigest(scenario, options),
@@ -229,6 +265,7 @@ export function createScenarioScaffold({ id, title, profileKind = "desktop" } = 
     schemaVersion: SCENARIO_SCHEMA_VERSION,
     id,
     title: title ?? titleFromId(id),
+    description: "TODO: describe this story and add delivery metadata before promotion.",
     profile: {
       kind: profileKind,
       viewport: nativeMobile ? { width: 430, height: 932 } : { width: 1920, height: 1200 },
@@ -320,7 +357,7 @@ function validateSetup(setup, allowedExtensions, errors) {
   });
 }
 
-function validateStory(story, camera, allowedExtensions, errors) {
+function validateStory(story, camera, profile, allowedExtensions, errors) {
   if (!objectValue(story, "/story", errors)) return;
   rejectUnknownKeys(story, ["recipe", "openingSettleMs", "actions", "endingSettleMs"], "/story", errors);
   if (story.recipe !== undefined) idValue(story.recipe, "/story/recipe", errors);
@@ -331,10 +368,10 @@ function validateStory(story, camera, allowedExtensions, errors) {
     return;
   }
   if (story.actions.length < 1 || story.actions.length > 100) addError(errors, "/story/actions", "must contain 1-100 actions");
-  story.actions.forEach((action, index) => validateAction(action, index, camera, allowedExtensions, errors));
+  story.actions.forEach((action, index) => validateAction(action, index, camera, profile, allowedExtensions, errors));
 }
 
-function validateAction(action, index, camera, allowedExtensions, errors) {
+function validateAction(action, index, camera, profile, allowedExtensions, errors) {
   const pointer = `/story/actions/${index}`;
   if (!objectValue(action, pointer, errors)) return;
   const kind = action.kind;
@@ -392,6 +429,20 @@ function validateAction(action, index, camera, allowedExtensions, errors) {
     validatePrimitive(action, pointer, allowedExtensions, errors);
     if (action.durationMs !== undefined) integerValue(action.durationMs, `${pointer}/durationMs`, errors, 0, 5000);
   }
+  validateNativeMobileAction(action, pointer, profile, errors);
+}
+
+function validateNativeMobileAction(action, pointer, profile, errors) {
+  if (profile?.kind !== "native-mobile") return;
+  const guidance = "native-mobile uses real touch; use a native click action or an allowlisted primitive";
+  if (action.kind === "hover") addError(errors, `${pointer}/kind`, `hover is unavailable because ${guidance}`);
+  if (action.kind !== "click") return;
+  if (action.button === "middle" || action.button === "right") {
+    addError(errors, `${pointer}/button`, `${action.button} click is unavailable because ${guidance}`);
+  }
+  if (Number.isInteger(action.clickCount) && action.clickCount > 1) {
+    addError(errors, `${pointer}/clickCount`, `multi-click is unavailable because ${guidance}`);
+  }
 }
 
 function validateTarget(target, pointer, errors) {
@@ -431,6 +482,78 @@ function validateCamera(camera, profile, errors) {
   numberValue(camera.maxPanAccelerationPxPerSecond2, "/camera/maxPanAccelerationPxPerSecond2", errors, 100, 12_000);
   numberValue(camera.maxZoomRatePerSecond, "/camera/maxZoomRatePerSecond", errors, 0.1, 2);
   if (!EASINGS.has(camera.easing)) addError(errors, "/camera/easing", `must be one of ${[...EASINGS].join(", ")}`);
+}
+
+function validateDelivery(delivery, errors) {
+  if (!objectValue(delivery, "/delivery", errors)) return;
+  rejectUnknownKeys(delivery, ["revision", "releaseVersion", "summary", "caption", "featureFlags", "docs", "mobileDeclaration"], "/delivery", errors);
+  if (typeof delivery.revision !== "string" || !REVISION_PATTERN.test(delivery.revision)) {
+    addError(errors, "/delivery/revision", "must be a safe immutable revision segment of 1-64 lowercase characters");
+  }
+  if (typeof delivery.releaseVersion !== "string" || !RELEASE_VERSION_PATTERN.test(delivery.releaseVersion)) {
+    addError(errors, "/delivery/releaseVersion", "must be release SemVer X.Y.Z without prerelease or build metadata");
+  }
+  nonBlankStringValue(delivery.summary, "/delivery/summary", errors, { min: 1, max: 500 });
+  nonBlankStringValue(delivery.caption, "/delivery/caption", errors, { min: 1, max: 500 });
+  nonBlankStringValue(delivery.mobileDeclaration, "/delivery/mobileDeclaration", errors, { min: 1, max: 500 });
+  validateFeatureFlags(delivery.featureFlags, errors);
+  validateDeliveryDocs(delivery.docs, errors);
+}
+
+function validatePromotableIdentity(scenario, errors) {
+  if (typeof scenario.id === "string" && !HIGHLIGHT_ID_PATTERN.test(scenario.id)) {
+    addError(errors, "/id", "must be lowercase kebab-case when delivery metadata makes the scenario promotion-ready");
+  }
+  if (typeof scenario.title === "string" && !scenario.title.trim()) {
+    addError(errors, "/title", "must be nonempty when delivery metadata makes the scenario promotion-ready");
+  }
+}
+
+function validateFeatureFlags(featureFlags, errors) {
+  if (!Array.isArray(featureFlags)) {
+    addError(errors, "/delivery/featureFlags", "must be a nonempty array of stable feature flag IDs");
+    return;
+  }
+  if (featureFlags.length < 1 || featureFlags.length > 64) {
+    addError(errors, "/delivery/featureFlags", "must contain 1-64 stable feature flag IDs");
+  }
+  const seen = new Set();
+  featureFlags.forEach((flag, index) => {
+    const pointer = `/delivery/featureFlags/${index}`;
+    if (typeof flag !== "string" || flag.length > 128 || !FEATURE_FLAG_PATTERN.test(flag)) {
+      addError(errors, pointer, "must be a lowercase dotted, underscored, or kebab stable ID");
+    } else if (seen.has(flag)) {
+      addError(errors, pointer, "must not duplicate another feature flag ID");
+    }
+    seen.add(flag);
+  });
+}
+
+function validateDeliveryDocs(docs, errors) {
+  if (!objectValue(docs, "/delivery/docs", errors)) return;
+  rejectUnknownKeys(docs, ["page", "section"], "/delivery/docs", errors);
+  validateSafeMarkdownPath(docs.page, "/delivery/docs/page", errors);
+  nonBlankStringValue(docs.section, "/delivery/docs/section", errors, { min: 1, max: 160 });
+}
+
+function validateSafeMarkdownPath(value, pointer, errors) {
+  if (typeof value !== "string" || value.length < 1 || value.length > 240) {
+    addError(errors, pointer, "must be a safe repo-relative Markdown path of 1-240 characters");
+    return;
+  }
+  const segments = value.split("/");
+  const unsafe = value !== value.trim()
+    || path.posix.isAbsolute(value)
+    || path.win32.isAbsolute(value)
+    || /^[A-Za-z]:/.test(value)
+    || value.includes("\\")
+    || value.includes("?")
+    || value.includes("#")
+    || /[\0-\x1f\x7f]/.test(value)
+    || segments.some((segment) => segment === "" || segment === "." || segment === "..");
+  if (unsafe || !/\.mdx?$/i.test(value)) {
+    addError(errors, pointer, "must be a safe repo-relative Markdown path without traversal, query, or fragment");
+  }
 }
 
 function actionTiming(action) {
@@ -529,6 +652,12 @@ function idValue(value, pointer, errors) {
 
 function stringValue(value, pointer, errors, { min, max }) {
   if (typeof value !== "string" || value.length < min || value.length > max) addError(errors, pointer, `must be a string of ${min}-${max} characters`);
+}
+
+function nonBlankStringValue(value, pointer, errors, { min, max }) {
+  if (typeof value !== "string" || value.length < min || value.length > max || !value.trim()) {
+    addError(errors, pointer, `must be a nonempty string of ${min}-${max} characters`);
+  }
 }
 
 function integerValue(value, pointer, errors, min, max) {

@@ -56,6 +56,18 @@ function validScenario() {
   };
 }
 
+function validDelivery() {
+  return {
+    revision: "r1",
+    releaseVersion: "1.2.3",
+    summary: "Create focused work without leaving the board.",
+    caption: "Open the task dialog, enter a title, and create the task.",
+    featureFlags: ["features.highlights"],
+    docs: { page: "guide/tasks.md", section: "Create a task" },
+    mobileDeclaration: "Feature has a native mobile surface.",
+  };
+}
+
 after(async () => {
   await Promise.all(tempDirs.map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
@@ -72,7 +84,176 @@ test("checked-in JSON Schema, declarations, and example describe schema v1", asy
   assert.match(declarations, /kind: "native-mobile"/);
   assert.match(declarations, /kind: "desktop"; viewport: \{ width: 1920; height: 1200 \}; deviceScaleFactor: 2/);
   assert.match(declarations, /kind: "native-mobile"; viewport: \{ width: 430; height: 932 \}; deviceScaleFactor: 3/);
+  assert.equal(schema.properties.delivery.$ref, "#/$defs/delivery");
+  assert.equal(schema.$defs.delivery.additionalProperties, false);
+  assert.deepEqual(schema.$defs.delivery.required, [
+    "revision",
+    "releaseVersion",
+    "summary",
+    "caption",
+    "featureFlags",
+    "docs",
+    "mobileDeclaration",
+  ]);
+  assert.match(JSON.stringify(schema.allOf), /native-mobile.*hover.*middle.*right/s);
+  assert.match(declarations, /export interface DeliveryMetadata/);
+  assert.match(declarations, /export type NativeMobileScenarioAction/);
+  assert.match(declarations, /export type HighlightScenarioV1\s*=/);
   assert.deepEqual(validateScenario(example), { ok: true, errors: [] });
+});
+
+test("delivery metadata is optional for capture but required promotion errors at its JSON pointer", async () => {
+  const { compileTimeline, requireDeliveryMetadata, validateScenario } = await import(scenarioModule);
+  const scenario = validScenario();
+
+  assert.deepEqual(validateScenario(scenario), { ok: true, errors: [] });
+  assert.equal(compileTimeline(scenario).delivery, null);
+  assert.throws(
+    () => requireDeliveryMetadata(scenario),
+    (error) => {
+      assert.equal(error.name, "ScenarioValidationError");
+      assert(error.errors.some((issue) => issue.pointer === "/delivery"));
+      assert.match(error.message, /promotion|delivery metadata/i);
+      return true;
+    },
+  );
+});
+
+test("delivery metadata maps canonical id and title into stage-manifest fields", async () => {
+  const { compileTimeline, requireDeliveryMetadata, validateScenario } = await import(scenarioModule);
+  const scenario = validScenario();
+  scenario.delivery = validDelivery();
+
+  assert.deepEqual(validateScenario(scenario), { ok: true, errors: [] });
+  assert.deepEqual(requireDeliveryMetadata(scenario), {
+    revision: "r1",
+    highlight: {
+      id: "short-task-story",
+      title: "Create a task from the board",
+      summary: "Create focused work without leaving the board.",
+      caption: "Open the task dialog, enter a title, and create the task.",
+      releaseVersion: "1.2.3",
+      featureFlags: ["features.highlights"],
+      docs: { page: "guide/tasks.md", section: "Create a task" },
+      mobileDeclaration: "Feature has a native mobile surface.",
+    },
+  });
+  assert.deepEqual(compileTimeline(scenario).delivery, scenario.delivery);
+});
+
+test("promotable scenarios keep canonical id and title stage-compatible", async () => {
+  const { validateScenario } = await import(scenarioModule);
+  const captureOnly = validScenario();
+  captureOnly.id = "capture.only";
+  assert.deepEqual(validateScenario(captureOnly), { ok: true, errors: [] });
+
+  captureOnly.delivery = validDelivery();
+  const invalidId = validateScenario(captureOnly);
+  assert(invalidId.errors.some((error) => error.pointer === "/id" && /delivery|promotion|kebab/i.test(error.message)));
+
+  const blankTitle = validScenario();
+  blankTitle.title = "   ";
+  blankTitle.delivery = validDelivery();
+  const invalidTitle = validateScenario(blankTitle);
+  assert(invalidTitle.errors.some((error) => error.pointer === "/title" && /nonempty|promotion|delivery/i.test(error.message)));
+});
+
+test("canonical digest includes every delivery intent change", async () => {
+  const { computeScenarioDigest } = await import(scenarioModule);
+  const captureOnly = validScenario();
+  const promotable = structuredClone(captureOnly);
+  promotable.delivery = validDelivery();
+  const changed = structuredClone(promotable);
+  changed.delivery.caption = "A different accepted delivery caption.";
+
+  assert.notEqual(computeScenarioDigest(captureOnly), computeScenarioDigest(promotable));
+  assert.notEqual(computeScenarioDigest(promotable), computeScenarioDigest(changed));
+});
+
+test("delivery metadata rejects unknown or derived fields and malformed values", async () => {
+  const { validateScenario } = await import(scenarioModule);
+  const scenario = validScenario();
+  scenario.delivery = {
+    ...validDelivery(),
+    revision: "../r1",
+    releaseVersion: "v1.2",
+    summary: "",
+    featureFlags: [],
+    mobileDeclaration: "",
+    qaStatus: "accepted",
+    sourceSha: "0123456789abcdef0123456789abcdef01234567",
+    docs: { page: "guide/tasks.txt", section: "", anchor: "create" },
+  };
+  const result = validateScenario(scenario);
+
+  assert.equal(result.ok, false);
+  for (const pointer of [
+    "/delivery/revision",
+    "/delivery/releaseVersion",
+    "/delivery/summary",
+    "/delivery/featureFlags",
+    "/delivery/mobileDeclaration",
+    "/delivery/qaStatus",
+    "/delivery/sourceSha",
+    "/delivery/docs/page",
+    "/delivery/docs/section",
+    "/delivery/docs/anchor",
+  ]) {
+    assert(result.errors.some((error) => error.pointer === pointer), `missing error for ${pointer}`);
+  }
+});
+
+test("delivery docs path rejects absolute, traversal, and platform-ambiguous paths", async () => {
+  const { validateScenario } = await import(scenarioModule);
+  for (const unsafePage of ["../guide.md", "guide/../secret.md", "/guide.md", "C:/guide.md", "guide\\tasks.md", "guide//tasks.md", "guide.md?raw=1", "guide.md#part"]) {
+    const scenario = validScenario();
+    scenario.delivery = { ...validDelivery(), docs: { page: unsafePage, section: "Create a task" } };
+    const result = validateScenario(scenario);
+    assert.equal(result.ok, false, unsafePage);
+    assert(result.errors.some((error) => error.pointer === "/delivery/docs/page" && /relative|markdown|safe/i.test(error.message)), unsafePage);
+  }
+});
+
+test("native-mobile rejects mouse-only actions while preserving native click and drag", async () => {
+  const { validateScenario } = await import(scenarioModule);
+  const invalid = validScenario();
+  invalid.profile = { kind: "native-mobile", viewport: { width: 430, height: 932 }, deviceScaleFactor: 3 };
+  invalid.camera.maxZoom = 1.18;
+  invalid.story.actions = [
+    { kind: "hover", target: { testId: "menu" } },
+    { kind: "click", target: { testId: "open" }, button: "middle" },
+    { kind: "click", target: { testId: "open" }, button: "right" },
+    { kind: "click", target: { testId: "open" }, clickCount: 2 },
+  ];
+  const result = validateScenario(invalid);
+
+  assert.equal(result.ok, false);
+  for (const pointer of [
+    "/story/actions/0/kind",
+    "/story/actions/1/button",
+    "/story/actions/2/button",
+    "/story/actions/3/clickCount",
+  ]) {
+    const issue = result.errors.find((error) => error.pointer === pointer);
+    assert(issue, `missing error for ${pointer}`);
+    assert.match(issue.message, /native touch|native click|allowlisted primitive/i);
+  }
+
+  const allowed = validScenario();
+  allowed.profile = { kind: "native-mobile", viewport: { width: 430, height: 932 }, deviceScaleFactor: 3 };
+  allowed.camera.maxZoom = 1.18;
+  allowed.story.actions = [
+    { kind: "click", target: { testId: "open" }, button: "left", clickCount: 1 },
+    { kind: "drag", from: { testId: "card" }, to: { testId: "done" }, durationMs: 500 },
+  ];
+  assert.deepEqual(validateScenario(allowed), { ok: true, errors: [] });
+
+  const desktop = validScenario();
+  desktop.story.actions = [
+    { kind: "hover", target: { testId: "menu" } },
+    { kind: "click", target: { testId: "open" }, button: "right", clickCount: 3 },
+  ];
+  assert.deepEqual(validateScenario(desktop), { ok: true, errors: [] });
 });
 
 test("validator accepts every built-in action and stable locator form", async () => {
@@ -289,6 +470,8 @@ test("scaffold refuses overwrite and dry-run leaves no file", async () => {
 
   const preview = await writeScenarioScaffold({ destination, id: "demo", profileKind: "native-mobile", dryRun: true });
   assert.equal(preview.scenario.profile.kind, "native-mobile");
+  assert.equal(preview.scenario.delivery, undefined);
+  assert.match(preview.scenario.description, /TODO.*delivery metadata.*promotion/i);
   await assert.rejects(fs.access(destination));
 
   await writeScenarioScaffold({ destination, id: "demo", profileKind: "desktop" });
