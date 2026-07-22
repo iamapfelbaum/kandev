@@ -34,6 +34,7 @@ function runtimeProvenance() {
     runtimeId: "kandev-isolated-e2e",
     receiptDigest: `sha256:${"4".repeat(64)}`,
     buildManifestDigest: `sha256:${"e".repeat(64)}`,
+    buildContentDigest: `sha256:${"f".repeat(64)}`,
     captureEvidenceDigest: `sha256:${"5".repeat(64)}`,
     runtimeLogDigest: `sha256:${"6".repeat(64)}`,
     source: { mode: "pr_head", selectedSha: SOURCE_SHA },
@@ -341,6 +342,7 @@ function baseDependencies(
       captureEvidence: {
         visibleDomText: ["Safe seeded board"],
         browserConsole: [],
+        truncated: { visibleDomText: false, browserConsole: false },
       },
       runtimeEvidence: { logs: [] },
       provenance: runtimeProvenance(),
@@ -587,6 +589,7 @@ test("run writes technical content-addressed review stage and never promotes", a
       captureEvidence: {
         visibleDomText: ["Safe seeded board"],
         browserConsole: [],
+        truncated: { visibleDomText: false, browserConsole: false },
       },
       runtimeEvidence: { logs: [] },
     },
@@ -615,6 +618,7 @@ test("QA loads verified runtime evidence and persists only compact runtime prove
       captureEvidence: {
         visibleDomText: ["Verified DOM value"],
         browserConsole: [],
+        truncated: { visibleDomText: false, browserConsole: false },
       },
       runtimeEvidence: { logs: [] },
       provenance: runtimeProvenance(),
@@ -634,6 +638,7 @@ test("QA loads verified runtime evidence and persists only compact runtime prove
     captureEvidence: {
       visibleDomText: ["Verified DOM value"],
       browserConsole: [],
+      truncated: { visibleDomText: false, browserConsole: false },
     },
     runtimeEvidence: { logs: [] },
   }]);
@@ -653,7 +658,11 @@ test("QA rejects a trusted scanner result weaker than catalog runtime coverage",
   const dependencies = baseDependencies(value);
   dependencies.loadRuntimeEvidence = async () => ({
     contract: "kandev-highlight-runtime-evidence-v1",
-    captureEvidence: { visibleDomText: ["Safe DOM"], browserConsole: [] },
+    captureEvidence: {
+      visibleDomText: ["Safe DOM"],
+      browserConsole: [],
+      truncated: { visibleDomText: false, browserConsole: false },
+    },
     runtimeEvidence: { logs: [] },
     provenance: runtimeProvenance(),
   });

@@ -7,6 +7,10 @@ export interface VerifiedCaptureEvidence {
     text: string;
     digest: string;
   }>;
+  truncated: {
+    visibleDomText: false;
+    browserConsole: false;
+  };
 }
 
 export interface VerifiedRuntimeEvidence {

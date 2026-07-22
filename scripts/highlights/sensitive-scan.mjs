@@ -157,6 +157,14 @@ function requireEvidence(input, coverage, hasCustomScanner) {
     const evidence = valueAt(input, pathParts);
     if (!Array.isArray(evidence))
       throw new Error(`${key} evidence is required as an array`);
+    if (
+      (key === "visibleDomText" || key === "browserConsole") &&
+      input?.captureEvidence?.truncated?.[key] !== false
+    ) {
+      throw new Error(
+        `${key} evidence must carry an explicit untruncated collection attestation`,
+      );
+    }
   }
   if (coverage.renderedPixelOcr) {
     if (!hasCustomScanner) {

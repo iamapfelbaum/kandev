@@ -503,7 +503,7 @@ function assertReviewPair(desktop, mobile) {
   }
   if (!sameRuntimePolicy(desktop.manifest.provenance.runtime, mobile.manifest.provenance.runtime)) {
     throw new Error(
-      "paired mobile review runtime, build, source, or scanner policy does not match desktop review",
+      "paired mobile review runtime, build content identity, source, or scanner policy does not match desktop review",
     );
   }
 }

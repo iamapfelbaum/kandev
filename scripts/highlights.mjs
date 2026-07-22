@@ -799,7 +799,7 @@ function sameCompactRuntimePolicy(left, right) {
   validateCompactRuntimeProvenance(right);
   return (
     left.runtime_id === right.runtime_id &&
-    left.build_manifest_digest === right.build_manifest_digest &&
+    left.build_content_digest === right.build_content_digest &&
     canonicalJson(left.source) === canonicalJson(right.source) &&
     canonicalJson(left.scanner) === canonicalJson(right.scanner)
   );

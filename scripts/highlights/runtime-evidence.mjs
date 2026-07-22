@@ -11,7 +11,10 @@ import {
 import { computeScenarioDigest, readScenario } from "./scenario.mjs";
 import { SENSITIVE_SCAN_CONTRACT } from "./sensitive-scan.mjs";
 import { computeSourceCaptureDigest } from "./source-gate.mjs";
-import { validateRuntimeProvenance } from "./runtime-provenance.mjs";
+import {
+  computeBuildContentDigest,
+  validateRuntimeProvenance,
+} from "./runtime-provenance.mjs";
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
@@ -355,6 +358,7 @@ function validateCaptureContent(value, summary) {
   return {
     visibleDomText: structuredClone(value.visibleDomText),
     browserConsole: structuredClone(value.browserConsole),
+    truncated: structuredClone(value.truncated),
   };
 }
 
@@ -1310,6 +1314,16 @@ export async function loadVerifiedRuntimeEvidence({
     contentRecord.value,
     captureEvidenceIdentity,
   );
+  for (const source of ["visibleDomText", "browserConsole"]) {
+    if (
+      runtime.scannerCoverage[source] === true &&
+      captureEvidence.truncated[source] !== false
+    ) {
+      throw new Error(
+        `${source} evidence is truncated and cannot satisfy sensitive-scan coverage`,
+      );
+    }
+  }
 
   requireExactKeys(
     result.applicationRuntime,
@@ -1400,6 +1414,10 @@ export async function loadVerifiedRuntimeEvidence({
     runtimeId: runtime.id,
     receiptDigest: receipt.receiptDigest,
     buildManifestDigest: receipt.build.manifestDigest,
+    buildContentDigest: computeBuildContentDigest({
+      sourceSha: requestBuild.sourceSha,
+      outputs: requestBuild.outputs,
+    }),
     captureEvidenceDigest: contentRecord.identity.digest,
     runtimeLogDigest: logRecord.identity.digest,
     source: {

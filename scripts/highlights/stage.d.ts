@@ -20,6 +20,7 @@ export interface HighlightRuntimeProvenanceV1 {
   runtimeId: string;
   receiptDigest: string;
   buildManifestDigest: string;
+  buildContentDigest: string;
   captureEvidenceDigest: string;
   runtimeLogDigest: string;
   source: { mode: "pr_head" | "current_main"; selectedSha: string };

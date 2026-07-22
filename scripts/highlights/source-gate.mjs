@@ -6,6 +6,10 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const SHA_PATTERN = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
+const GIT_RUN_OPTIONS = Object.freeze({
+  timeoutMs: 30_000,
+  env: Object.freeze({ GIT_TERMINAL_PROMPT: "0" }),
+});
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -75,6 +79,8 @@ async function defaultRunner(command, args, options = {}) {
     cwd: options.cwd,
     encoding: "utf8",
     maxBuffer: 4 * 1024 * 1024,
+    timeout: options.timeoutMs ?? GIT_RUN_OPTIONS.timeoutMs,
+    env: { ...process.env, ...GIT_RUN_OPTIONS.env, ...options.env },
   });
   return { ...result, exitCode: 0 };
 }
@@ -82,7 +88,11 @@ async function defaultRunner(command, args, options = {}) {
 async function gitValue(runner, repoRoot, args, label) {
   let result;
   try {
-    result = await runner("git", ["-C", repoRoot, ...args]);
+    result = await runner(
+      "git",
+      ["-C", repoRoot, ...args],
+      GIT_RUN_OPTIONS,
+    );
   } catch (error) {
     throw new Error(`cannot inspect ${label} in ${repoRoot}: ${error.message}`);
   }
@@ -101,6 +111,29 @@ export async function verifySourceGate({
   if (typeof repoRoot !== "string" || repoRoot.trim() === "")
     throw new Error("repoRoot is required");
   const resolvedRoot = path.resolve(repoRoot);
+  if (source === "current_main") {
+    try {
+      const fetched = await runner(
+        "git",
+        [
+          "-C",
+          resolvedRoot,
+          "fetch",
+          "--no-tags",
+          "origin",
+          "+refs/heads/main:refs/remotes/origin/main",
+        ],
+        GIT_RUN_OPTIONS,
+      );
+      if (Number.isInteger(fetched?.exitCode) && fetched.exitCode !== 0) {
+        throw new Error(`git exited with status ${fetched.exitCode}`);
+      }
+    } catch (error) {
+      throw new Error(
+        `cannot fetch exact origin main for current_main in ${resolvedRoot}: ${error.message}`,
+      );
+    }
+  }
   const [headSha, currentMainSha, status] = await Promise.all([
     gitValue(runner, resolvedRoot, ["rev-parse", "HEAD"], "HEAD"),
     gitValue(runner, resolvedRoot, ["rev-parse", "origin/main"], "origin/main"),

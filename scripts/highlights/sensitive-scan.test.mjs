@@ -215,7 +215,11 @@ test("trusted scanner builder requires and reports exact text evidence coverage"
     camera: {},
     artifacts: [],
     generatedProofEvidence: [],
-    captureEvidence: { visibleDomText: [], browserConsole: [] },
+    captureEvidence: {
+      visibleDomText: [],
+      browserConsole: [],
+      truncated: { visibleDomText: false, browserConsole: false },
+    },
     runtimeEvidence: { logs: [] },
   });
   assert.deepEqual(result.coverage, {
@@ -229,6 +233,31 @@ test("trusted scanner builder requires and reports exact text evidence coverage"
     sensitiveScan.getTrustedSensitiveScannerCoverage(scanner),
     result.coverage,
   );
+});
+
+test("trusted scanner refuses coverage for truncated capture evidence", async () => {
+  const scanner = sensitiveScan.createTrustedSensitiveScanner({
+    requiredCoverage: ["metadata", "visibleDomText", "browserConsole"],
+  });
+  for (const source of ["visibleDomText", "browserConsole"]) {
+    await assert.rejects(
+      scanner({
+        scenario: { id: `truncated-${source}` },
+        camera: {},
+        artifacts: [],
+        generatedProofEvidence: [],
+        captureEvidence: {
+          visibleDomText: ["Safe bounded prefix"],
+          browserConsole: [],
+          truncated: {
+            visibleDomText: source === "visibleDomText",
+            browserConsole: source === "browserConsole",
+          },
+        },
+      }),
+      new RegExp(`${source}.*(?:truncated|incomplete)|(?:truncated|incomplete).*${source}`, "i"),
+    );
+  }
 });
 
 test("trusted custom scanner may explicitly require generated proof OCR coverage", async () => {

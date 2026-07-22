@@ -69,6 +69,8 @@ async function evidenceFixture(
   {
     visibleDomText = ["Quick start", "Review API"],
     browserConsole = [],
+    visibleDomTextTruncated = false,
+    browserConsoleTruncated = false,
     runtimeLog = "worker launched from /home/capture/repo and connected to http://127.0.0.1:4173\n",
     runtimeLogLimitBytes = 8 * 1024 * 1024,
     runtimeLogDiscardedBytes = 0,
@@ -167,7 +169,10 @@ async function evidenceFixture(
     },
     visibleDomText,
     browserConsole,
-    truncated: { visibleDomText: false, browserConsole: false },
+    truncated: {
+      visibleDomText: visibleDomTextTruncated,
+      browserConsole: browserConsoleTruncated,
+    },
   };
   const captureContentIdentity = await writeJson(
     captureEvidencePath,
@@ -186,7 +191,7 @@ async function evidenceFixture(
         0,
       ),
       digest: digestBytes(canonicalJson(visibleDomText)),
-      truncated: false,
+      truncated: visibleDomTextTruncated,
     },
     browserConsole: {
       records: browserConsole.length,
@@ -195,7 +200,7 @@ async function evidenceFixture(
         0,
       ),
       digest: digestBytes(canonicalJson(browserConsole)),
-      truncated: false,
+      truncated: browserConsoleTruncated,
     },
   };
   mutateSummary?.(captureEvidence);
@@ -588,6 +593,7 @@ async function evidenceFixture(
     scenarioId,
     runId,
     captureReceipt,
+    buildOutputs,
     captureEvidencePath,
     resultPath,
     runtimeReceiptPath,
@@ -619,6 +625,7 @@ test("verified loader never relabels infrastructure logs as application scan evi
   assert.deepEqual(loaded.captureEvidence, {
     visibleDomText: ["Quick start", "Review API"],
     browserConsole: [],
+    truncated: { visibleDomText: false, browserConsole: false },
   });
   assert.deepEqual(loaded.runtimeEvidence.logs, []);
   assert.equal(
@@ -626,6 +633,15 @@ test("verified loader never relabels infrastructure logs as application scan evi
     "kandev-highlight-runtime-provenance-v1",
   );
   assert.equal(loaded.provenance.runtimeId, "kandev-isolated-e2e");
+  assert.equal(
+    loaded.provenance.buildContentDigest,
+    digestBytes(
+      canonicalJson({
+        sourceSha: SOURCE_SHA,
+        outputs: fixture.buildOutputs,
+      }),
+    ),
+  );
   assert.equal(
     loaded.provenance.receiptDigest,
     (await fs.readFile(fixture.runtimeReceiptPath, "utf8")).includes(
@@ -765,6 +781,26 @@ test("verified loader recomputes summaries and requires nonempty visible DOM evi
   const emptyConsole = await evidenceFixture(t, { browserConsole: [] });
   const loaded = await loader()(emptyConsole.options);
   assert.deepEqual(loaded.captureEvidence.browserConsole, []);
+});
+
+test("verified loader rejects truncated covered DOM and console evidence", async (t) => {
+  const truncatedDom = await evidenceFixture(t, {
+    visibleDomText: ["Safe bounded prefix"],
+    visibleDomTextTruncated: true,
+  });
+  await assert.rejects(
+    loader()(truncatedDom.options),
+    /visibleDomText.*(?:truncated|incomplete)|(?:truncated|incomplete).*visibleDomText/i,
+  );
+
+  const truncatedConsole = await evidenceFixture(t, {
+    browserConsole: [],
+    browserConsoleTruncated: true,
+  });
+  await assert.rejects(
+    loader()(truncatedConsole.options),
+    /browserConsole.*(?:truncated|incomplete)|(?:truncated|incomplete).*browserConsole/i,
+  );
 });
 
 test("verified loader rejects incomplete teardown and missing typed runtime logs", async (t) => {

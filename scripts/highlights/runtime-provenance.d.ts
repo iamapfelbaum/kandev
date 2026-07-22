@@ -11,6 +11,7 @@ export interface RuntimeProvenanceV1 {
   runtimeId: string;
   receiptDigest: string;
   buildManifestDigest: string;
+  buildContentDigest: string;
   captureEvidenceDigest: string;
   runtimeLogDigest: string;
   source: {
@@ -28,6 +29,7 @@ export interface CompactRuntimeProvenanceV1 {
   runtime_id: string;
   receipt_digest: string;
   build_manifest_digest: string;
+  build_content_digest: string;
   capture_evidence_digest: string;
   runtime_log_digest: string;
   source: {
@@ -41,6 +43,16 @@ export interface RuntimeIdentityExpectation {
   sourceMode?: "pr_head" | "current_main";
   sourceSha?: string;
   buildManifestDigest?: string;
+  buildContentDigest?: string;
+}
+
+export interface BuildContentIdentity {
+  sourceSha: string;
+  outputs: {
+    backend: { digest: string; bytes: number };
+    mockAgent: { digest: string; bytes: number };
+    webDist: { digest: string; bytes: number; fileCount: number };
+  };
 }
 
 export const RUNTIME_PROVENANCE_CONTRACT: "kandev-highlight-runtime-provenance-v1";
@@ -55,4 +67,5 @@ export function validateCompactRuntimeProvenance(
   provenance: unknown,
   expected?: RuntimeIdentityExpectation,
 ): CompactRuntimeProvenanceV1;
+export function computeBuildContentDigest(identity: BuildContentIdentity): string;
 export function sameRuntimePolicy(left: RuntimeProvenanceV1, right: RuntimeProvenanceV1): boolean;

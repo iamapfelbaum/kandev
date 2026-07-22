@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { resolveHighlightRuntime } from "./runtime-catalog.mjs";
 import { SENSITIVE_SCAN_CONTRACT, validateSensitiveScanResult } from "./sensitive-scan.mjs";
 
@@ -5,11 +7,13 @@ export const RUNTIME_PROVENANCE_CONTRACT = "kandev-highlight-runtime-provenance-
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
+const BUILD_OUTPUT_KEYS = Object.freeze(["backend", "mockAgent", "webDist"]);
 const RUNTIME_KEYS = Object.freeze([
   "contract",
   "runtimeId",
   "receiptDigest",
   "buildManifestDigest",
+  "buildContentDigest",
   "captureEvidenceDigest",
   "runtimeLogDigest",
   "source",
@@ -20,6 +24,7 @@ const COMPACT_RUNTIME_KEYS = Object.freeze([
   "runtime_id",
   "receipt_digest",
   "build_manifest_digest",
+  "build_content_digest",
   "capture_evidence_digest",
   "runtime_log_digest",
   "source",
@@ -28,7 +33,7 @@ const COMPACT_RUNTIME_KEYS = Object.freeze([
 
 export function validateRuntimeProvenance(
   provenance,
-  { sourceMode, sourceSha, buildManifestDigest } = {},
+  { sourceMode, sourceSha, buildManifestDigest, buildContentDigest } = {},
 ) {
   requireExactKeys(provenance, RUNTIME_KEYS, "runtime provenance");
   if (provenance.contract !== RUNTIME_PROVENANCE_CONTRACT) {
@@ -38,6 +43,7 @@ export function validateRuntimeProvenance(
   for (const field of [
     "receiptDigest",
     "buildManifestDigest",
+    "buildContentDigest",
     "captureEvidenceDigest",
     "runtimeLogDigest",
   ]) {
@@ -55,7 +61,8 @@ export function validateRuntimeProvenance(
   if (
     (sourceMode !== undefined && provenance.source.mode !== sourceMode) ||
     (sourceSha !== undefined && provenance.source.selectedSha !== sourceSha) ||
-    (buildManifestDigest !== undefined && provenance.buildManifestDigest !== buildManifestDigest)
+    (buildManifestDigest !== undefined && provenance.buildManifestDigest !== buildManifestDigest) ||
+    (buildContentDigest !== undefined && provenance.buildContentDigest !== buildContentDigest)
   ) {
     throw new Error("runtime provenance does not match source or build identity");
   }
@@ -82,6 +89,7 @@ export function compactRuntimeProvenance(provenance) {
     runtime_id: provenance.runtimeId,
     receipt_digest: provenance.receiptDigest,
     build_manifest_digest: provenance.buildManifestDigest,
+    build_content_digest: provenance.buildContentDigest,
     capture_evidence_digest: provenance.captureEvidenceDigest,
     runtime_log_digest: provenance.runtimeLogDigest,
     source: {
@@ -94,7 +102,7 @@ export function compactRuntimeProvenance(provenance) {
 
 export function validateCompactRuntimeProvenance(
   provenance,
-  { sourceMode, sourceSha, buildManifestDigest } = {},
+  { sourceMode, sourceSha, buildManifestDigest, buildContentDigest } = {},
 ) {
   requireExactKeys(provenance, COMPACT_RUNTIME_KEYS, "compact runtime provenance");
   requireExactKeys(provenance.source, ["mode", "selected_sha"], "compact runtime source");
@@ -104,6 +112,7 @@ export function validateCompactRuntimeProvenance(
       runtimeId: provenance.runtime_id,
       receiptDigest: provenance.receipt_digest,
       buildManifestDigest: provenance.build_manifest_digest,
+      buildContentDigest: provenance.build_content_digest,
       captureEvidenceDigest: provenance.capture_evidence_digest,
       runtimeLogDigest: provenance.runtime_log_digest,
       source: {
@@ -112,7 +121,7 @@ export function validateCompactRuntimeProvenance(
       },
       scanner: provenance.scanner,
     },
-    { sourceMode, sourceSha, buildManifestDigest },
+    { sourceMode, sourceSha, buildManifestDigest, buildContentDigest },
   );
   return provenance;
 }
@@ -122,10 +131,44 @@ export function sameRuntimePolicy(left, right) {
   validateRuntimeProvenance(right);
   return (
     left.runtimeId === right.runtimeId &&
-    left.buildManifestDigest === right.buildManifestDigest &&
+    left.buildContentDigest === right.buildContentDigest &&
     canonicalJson(left.source) === canonicalJson(right.source) &&
     canonicalJson(left.scanner) === canonicalJson(right.scanner)
   );
+}
+
+export function computeBuildContentDigest(value) {
+  requireExactKeys(value, ["sourceSha", "outputs"], "build content identity");
+  if (!SHA_PATTERN.test(value.sourceSha ?? "")) {
+    throw new Error("build content identity sourceSha must be an exact Git SHA");
+  }
+  requireExactKeys(value.outputs, BUILD_OUTPUT_KEYS, "build content outputs");
+  const outputs = {};
+  for (const key of BUILD_OUTPUT_KEYS) {
+    const output = value.outputs[key];
+    const expectedKeys =
+      key === "webDist"
+        ? ["digest", "bytes", "fileCount"]
+        : ["digest", "bytes"];
+    requireExactKeys(output, expectedKeys, `build content ${key}`);
+    if (
+      !DIGEST_PATTERN.test(output.digest ?? "") ||
+      !Number.isInteger(output.bytes) ||
+      output.bytes <= 0 ||
+      (key === "webDist" &&
+        (!Number.isInteger(output.fileCount) || output.fileCount <= 0))
+    ) {
+      throw new Error(`build content ${key} identity is invalid`);
+    }
+    outputs[key] = {
+      digest: output.digest,
+      bytes: output.bytes,
+      ...(key === "webDist" ? { fileCount: output.fileCount } : {}),
+    };
+  }
+  return `sha256:${createHash("sha256")
+    .update(canonicalJson({ sourceSha: value.sourceSha, outputs }))
+    .digest("hex")}`;
 }
 
 function requireExactKeys(value, expected, label) {

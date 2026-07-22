@@ -24,6 +24,7 @@ function runtimeProvenance(sourceSha, overrides = {}) {
     runtimeId: "kandev-isolated-e2e",
     receiptDigest: `sha256:${"2".repeat(64)}`,
     buildManifestDigest: `sha256:${"3".repeat(64)}`,
+    buildContentDigest: `sha256:${"a".repeat(64)}`,
     captureEvidenceDigest: `sha256:${"4".repeat(64)}`,
     runtimeLogDigest: `sha256:${"5".repeat(64)}`,
     source: { mode: "pr_head", selectedSha: sourceSha },
@@ -240,6 +241,23 @@ test("technical review refuses missing runtime and scanner provenance", async (t
   );
 });
 
+test("technical review requires stable build content identity", async (t) => {
+  const sourceSha = "0123456789abcdef0123456789abcdef01234567";
+  const runtime = runtimeProvenance(sourceSha);
+  delete runtime.buildContentDigest;
+  const fixture = await writeReview({
+    sourceSha,
+    runtime,
+  });
+  t.after(() => fs.rm(fixture.base, { recursive: true, force: true }));
+  const { readReviewManifest } = await import("./stage.mjs");
+
+  await assert.rejects(
+    readReviewManifest(fixture.manifestPath, { repoRoot: fixture.repoRoot }),
+    /runtime provenance.*buildContentDigest|build content digest.*required/i,
+  );
+});
+
 test("technical review binds QA sensitive coverage to runtime policy", async (t) => {
   const sourceSha = "0123456789abcdef0123456789abcdef01234567";
   const runtime = runtimeProvenance(sourceSha);
@@ -420,7 +438,7 @@ test("desktop and mobile reviews require one runtime, build, and scanner policy"
     },
     {
       name: "build",
-      overrides: { buildManifestDigest: `sha256:${"9".repeat(64)}` },
+      overrides: { buildContentDigest: `sha256:${"9".repeat(64)}` },
       pattern: /runtime.*build|build.*match/i,
     },
     {
@@ -493,14 +511,90 @@ test("paired reviews may retain independent receipt and evidence digests", async
   assert.equal(result.dryRun, true);
 });
 
+test("paired reviews may retain independent build manifests for identical build content", async (t) => {
+  const buildContentDigest = `sha256:${"a".repeat(64)}`;
+  const desktop = await writeReview({
+    mobileRequired: true,
+    runtime: runtimeProvenance("0123456789abcdef0123456789abcdef01234567", {
+      buildContentDigest,
+    }),
+  });
+  const sourceSha = desktop.manifest.provenance.sourceSha;
+  const mobile = await writeReview({
+    form: "mobile",
+    mobileRequired: true,
+    existing: desktop,
+    payloadSuffix: "-independent-build-manifest",
+    runtime: runtimeProvenance(sourceSha, {
+      buildManifestDigest: `sha256:${"9".repeat(64)}`,
+      buildContentDigest,
+    }),
+  });
+  t.after(() => fs.rm(desktop.base, { recursive: true, force: true }));
+  const { promoteReviewedHighlight } = await import("./stage.mjs");
+
+  const result = await promoteReviewedHighlight({
+    desktopManifestPath: desktop.manifestPath,
+    mobileManifestPath: mobile.manifestPath,
+    acceptedBy: "reviewer-42",
+    repoRoot: desktop.repoRoot,
+    highlightsDir: desktop.highlightsDir,
+    dryRun: true,
+  });
+  assert.equal(result.dryRun, true);
+});
+
+test("paired reviews reject different build content under the same source", async (t) => {
+  const sourceSha = "0123456789abcdef0123456789abcdef01234567";
+  const desktop = await writeReview({
+    mobileRequired: true,
+    sourceSha,
+    runtime: runtimeProvenance(sourceSha, {
+      buildContentDigest: `sha256:${"a".repeat(64)}`,
+    }),
+  });
+  const mobile = await writeReview({
+    form: "mobile",
+    mobileRequired: true,
+    existing: desktop,
+    sourceSha,
+    payloadSuffix: "-different-build-content",
+    runtime: runtimeProvenance(sourceSha, {
+      buildManifestDigest: `sha256:${"9".repeat(64)}`,
+      buildContentDigest: `sha256:${"b".repeat(64)}`,
+    }),
+  });
+  t.after(() => fs.rm(desktop.base, { recursive: true, force: true }));
+  const { promoteReviewedHighlight } = await import("./stage.mjs");
+
+  await assert.rejects(
+    promoteReviewedHighlight({
+      desktopManifestPath: desktop.manifestPath,
+      mobileManifestPath: mobile.manifestPath,
+      acceptedBy: "reviewer-42",
+      repoRoot: desktop.repoRoot,
+      highlightsDir: desktop.highlightsDir,
+      dryRun: true,
+    }),
+    /paired.*build content identity.*match/i,
+  );
+});
+
 test("accepted exact desktop/mobile pair preserves both scenarios and per-form review provenance", async (t) => {
   const desktop = await writeReview({ mobileRequired: true });
+  const mobileRuntime = runtimeProvenance(desktop.manifest.provenance.sourceSha, {
+    receiptDigest: `sha256:${"6".repeat(64)}`,
+    buildManifestDigest: `sha256:${"9".repeat(64)}`,
+    captureEvidenceDigest: `sha256:${"7".repeat(64)}`,
+    runtimeLogDigest: `sha256:${"8".repeat(64)}`,
+  });
   const mobile = await writeReview({
     form: "mobile",
     mobileRequired: true,
     existing: desktop,
     capturedAt: "2026-07-22T10:05:00.000Z",
     payloadSuffix: "-mobile",
+    runtime: mobileRuntime,
   });
   t.after(() => fs.rm(desktop.base, { recursive: true, force: true }));
   const { promoteReviewedHighlight } = await import("./stage.mjs");
@@ -531,6 +625,36 @@ test("accepted exact desktop/mobile pair preserves both scenarios and per-form r
   assert.equal(compact.forms.mobile.qa.report_digest, mobile.manifest.qa.reportDigest);
   assert.equal(compact.forms.mobile.provenance.captured_at, "2026-07-22T10:05:00.000Z");
   assert.equal(compact.forms.mobile.provenance.source_sha, mobile.manifest.provenance.sourceSha);
+  assert.equal(
+    compact.forms.desktop.provenance.runtime.build_manifest_digest,
+    desktop.manifest.provenance.runtime.buildManifestDigest,
+  );
+  assert.equal(
+    compact.forms.mobile.provenance.runtime.build_manifest_digest,
+    mobileRuntime.buildManifestDigest,
+  );
+  assert.equal(
+    compact.forms.desktop.provenance.runtime.build_content_digest,
+    compact.forms.mobile.provenance.runtime.build_content_digest,
+  );
+  for (const [compactKey, runtimeKey] of [
+    ["receipt_digest", "receiptDigest"],
+    ["capture_evidence_digest", "captureEvidenceDigest"],
+    ["runtime_log_digest", "runtimeLogDigest"],
+  ]) {
+    assert.equal(
+      compact.forms.desktop.provenance.runtime[compactKey],
+      desktop.manifest.provenance.runtime[runtimeKey],
+    );
+    assert.equal(
+      compact.forms.mobile.provenance.runtime[compactKey],
+      mobileRuntime[runtimeKey],
+    );
+  }
+  assert.doesNotMatch(
+    JSON.stringify(compact),
+    /builtAt|commands|environment|apps\/backend\/bin|apps\/web\/dist/,
+  );
 });
 
 test("CLI review promotion requires explicit acceptance and dry-run stays read-only", async (t) => {
