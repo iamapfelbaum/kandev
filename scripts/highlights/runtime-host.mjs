@@ -106,12 +106,18 @@ export function sanitizeRuntimeHostEnvironment(
   ) {
     throw new Error("runtime host portOffset must be an integer 0-29");
   }
+  const homeRoot = requireAbsolute(options.homeRoot, "runtime host HOME");
   return {
     ...clean,
-    HOME: requireAbsolute(options.homeRoot, "runtime host HOME"),
+    HOME: homeRoot,
     TMPDIR: requireAbsolute(options.tempRoot, "runtime host TMPDIR"),
     TMP: requireAbsolute(options.tempRoot, "runtime host TMP"),
     TEMP: requireAbsolute(options.tempRoot, "runtime host TEMP"),
+    PWTEST_CACHE_DIR: path.join(
+      homeRoot,
+      ".cache",
+      "playwright-transform",
+    ),
     CI: "1",
     E2E_PORT_OFFSET: String(options.portOffset),
     PLAYWRIGHT_BROWSERS_PATH: requireAbsolute(

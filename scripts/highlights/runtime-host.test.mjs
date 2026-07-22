@@ -525,6 +525,7 @@ test("child environment is an allowlist with no provider, cloud, API, or GitHub 
       KANDEV_PROVIDER_TOKEN: "secret-provider",
       ARBITRARY_PASSWORD: "secret-password",
       NODE_OPTIONS: "--require=/tmp/evil.cjs",
+      PWTEST_CACHE_DIR: "/tmp/attacker-cache",
       KANDEV_HIGHLIGHT_TRUSTED_SOURCE_SHA: SHA,
     },
     {
@@ -546,6 +547,7 @@ test("child environment is an allowlist with no provider, cloud, API, or GitHub 
     TMPDIR: "/external/worker-tmp",
     TMP: "/external/worker-tmp",
     TEMP: "/external/worker-tmp",
+    PWTEST_CACHE_DIR: "/external/host-home/.cache/playwright-transform",
     KANDEV_HIGHLIGHT_FIXTURE_ROOT: "/external/fixture-root",
     CI: "1",
     E2E_PORT_OFFSET: "7",
