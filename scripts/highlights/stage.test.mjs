@@ -20,6 +20,8 @@ test("reads a content-addressed external stage and verifies source, capture, QA,
   assert.equal(result.manifest.highlight.id, "stage-demo");
   assert.equal(result.manifest.stageDigest, `sha256:${path.basename(fixture.stageDir)}`);
   assert.equal(result.scenario.id, "quick-start");
+  assert.equal(result.manifest.provenance.seedId, result.scenario.seed.recipe);
+  assert.equal(result.manifest.provenance.seedDigest, fixtureSeedDigest(result.scenario.seed));
   assert.match(declarations, /export interface HighlightStageManifestV1/);
   assert.match(declarations, /landingAdapter: \{ sourceSha: string; contractVersion: string \}/);
 
@@ -241,7 +243,7 @@ test("CLI promote dry-run verifies an external stage without touching the reposi
   await assert.rejects(fs.access(path.join(fixture.highlightsDir, "stage-demo")));
 });
 
-async function createStage({ revision = "r1", qaStatus = "accepted", reportStatus = qaStatus, seedId = "kandev.empty-workspace", existing, payloadSuffix = "", desktopWidth = 1920, desktopHeight = 1200, landingAdapter = { sourceSha: "89abcdef0123456789abcdef0123456789abcdef", contractVersion: "1.0.0" } } = {}) {
+async function createStage({ revision = "r1", qaStatus = "accepted", reportStatus = qaStatus, seedId, seedDigest, existing, payloadSuffix = "", desktopWidth = 1920, desktopHeight = 1200, landingAdapter = { sourceSha: "89abcdef0123456789abcdef0123456789abcdef", contractVersion: "1.0.0" } } = {}) {
   let base;
   let repoRoot;
   let highlightsDir;
@@ -278,7 +280,8 @@ async function createStage({ revision = "r1", qaStatus = "accepted", reportStatu
     await fs.writeFile(target, bytes);
   }));
   const { computeScenarioDigest } = await import("./scenario.mjs");
-  const scenarioDigest = computeScenarioDigest(JSON.parse(files["scenario.json"]));
+  const scenario = JSON.parse(files["scenario.json"]);
+  const scenarioDigest = computeScenarioDigest(scenario);
   const mediaRecord = (relative, codec, width, height, fps, duration) => ({
     path: relative,
     bytes: files[relative].length,
@@ -315,8 +318,8 @@ async function createStage({ revision = "r1", qaStatus = "accepted", reportStatu
       captureMode: "pr_head",
       sourceSha: "0123456789abcdef0123456789abcdef01234567",
       capturedAt: "2026-07-22T10:00:00.000Z",
-      seedId,
-      seedDigest: `sha256:${"1".repeat(64)}`,
+      seedId: seedId ?? scenario.seed.recipe,
+      seedDigest: seedDigest ?? fixtureSeedDigest(scenario.seed),
       toolVersion: "highlights/1",
       ...(landingAdapter ? { landingAdapter } : {}),
       prNumber: 42,
@@ -346,6 +349,18 @@ async function createStage({ revision = "r1", qaStatus = "accepted", reportStatu
 
 function sha(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function fixtureSeedDigest(seed) {
+  return `sha256:${sha(Buffer.from(canonicalJson(seed)))}`;
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 async function probeFixture(filePath) {
