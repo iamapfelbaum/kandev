@@ -1,0 +1,21 @@
+{
+  "streams": [
+    {
+      "index": 0,
+      "codec_name": "h264",
+      "codec_type": "video",
+      "width": 1920,
+      "height": 1200,
+      "r_frame_rate": "25/1",
+      "avg_frame_rate": "25/1",
+      "time_base": "1/12800",
+      "pix_fmt": "yuv420p",
+      "nb_frames": "100"
+    }
+  ],
+  "format": {
+    "duration": "4.000000",
+    "size": "4096",
+    "format_name": "mov,mp4,m4a,3gp,3g2,mj2"
+  }
+}
