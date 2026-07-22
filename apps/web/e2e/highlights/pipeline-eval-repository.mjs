@@ -16,7 +16,7 @@ import {
 const SHA_PATTERN = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 const DEPENDENCY_CONTRACT = "kandev-highlight-pipeline-dependencies-v1";
 const MAIN_REF = "refs/heads/main";
-const DEPENDENCY_INSTALL_DEADLINE_MS = 5 * 60_000;
+const DEPENDENCY_INSTALL_DEADLINE_MS = 12 * 60_000;
 const INSTALL_ARGS = Object.freeze([
   "install",
   "--offline",

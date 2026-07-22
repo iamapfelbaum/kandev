@@ -83,7 +83,7 @@ test("dependency install is frozen, offline, integrity-checked, and provenance-b
   assert.equal(proof.install.packageManager, `pnpm@${PNPM_VERSION}`);
   assert.equal(proof.install.actualVersion, PNPM_VERSION);
   assert.equal(proof.install.storeRoot, fixture.storeRoot);
-  assert.equal(proof.install.deadlineMs, 300_000);
+  assert.equal(proof.install.deadlineMs, 720_000);
   assert.equal(
     fixture.calls.every(
       ({ command, env }) => command === "pnpm" && env.COREPACK_ENABLE_NETWORK === "0",
@@ -111,7 +111,7 @@ test("dependency install is frozen, offline, integrity-checked, and provenance-b
     true,
   );
   const installCall = fixture.calls.find(({ args }) => args.includes("install"));
-  assert.equal(installCall.deadlineMs, 300_000);
+  assert.equal(installCall.deadlineMs, 720_000);
   assert.equal((await verifyFrozenOfflineDependencies(proof)).passed, true);
 });
 
