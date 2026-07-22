@@ -477,6 +477,9 @@ async function writeEvaluationResult(context) {
 
 async function executeEvaluation(input, markCaptureStarted) {
   const context = await setupEvaluation(input);
+  if (input.beforeCapture) {
+    context.networkGate = await input.beforeCapture(context);
+  }
   await executeCaptureRuns(context, markCaptureStarted);
   await executeDryRuns(context);
   context.dependencyVerification = await verifyFrozenOfflineDependencies(context.dependencyInstall);
@@ -492,7 +495,11 @@ export async function runFreshAgentPipelineEvaluation({
   securityEnvironment = {},
   prNumber = SYNTHETIC_EVAL_PR_NUMBER,
   securityBoundary = null,
+  beforeCapture = null,
 } = {}) {
+  if (beforeCapture !== null && typeof beforeCapture !== "function") {
+    throw new Error("pipeline eval beforeCapture must be a function");
+  }
   const source = await canonicalDirectory(path.resolve(sourceRoot), "production source repository");
   const landing = await canonicalDirectory(path.resolve(landingRoot), "landing repository");
   const parent = path.resolve(evalParent);
@@ -514,6 +521,7 @@ export async function runFreshAgentPipelineEvaluation({
           securityEnvironment,
           prNumber,
           securityBoundary,
+          beforeCapture,
         },
         markCaptureStarted,
       ),

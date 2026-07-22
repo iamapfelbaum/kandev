@@ -5,10 +5,16 @@ import {
   canonicalJson,
   captureDockerRepositoryProof,
   capturePathIdentity,
+  digestBytes,
   readJson,
   validateDockerBoundaryAuthorization,
   writeJsonExclusive,
 } from "./pipeline-eval-docker-boundary.mjs";
+import {
+  RUNTIME_NETWORK_GATE,
+  validateRuntimeNetworkGateEvidence,
+} from "./pipeline-eval-docker-network-gate.mjs";
+import { runBoundedSubprocess } from "./pipeline-eval-shared.mjs";
 
 function mountInfoMode(mountInfo, target) {
   const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -83,8 +89,42 @@ function innerDependencies(overrides = {}) {
     captureRepositoryProof: overrides.captureRepositoryProof ?? captureDockerRepositoryProof,
     capturePathIdentity: overrides.capturePathIdentity ?? capturePathIdentity,
     writeJson: overrides.writeJson ?? writeJsonExclusive,
+    runCommand: overrides.runCommand ?? runBoundedSubprocess,
     runEvaluation: overrides.runEvaluation,
   };
+}
+
+function streamEvidence(bytes, filePath) {
+  return {
+    bytes: bytes.length,
+    sha256: digestBytes(bytes),
+    path: filePath,
+  };
+}
+
+async function runRuntimeNetworkGate(context, deps) {
+  const result = await deps.runCommand({
+    command: RUNTIME_NETWORK_GATE.argv[0],
+    args: RUNTIME_NETWORK_GATE.argv.slice(1),
+    cwd: context.cloneRoot,
+    env: context.environment,
+    phase: RUNTIME_NETWORK_GATE.phase,
+    logRoot: context.logRoot,
+    deadlineMs: 120_000,
+  });
+  return validateRuntimeNetworkGateEvidence({
+    contract: RUNTIME_NETWORK_GATE.contract,
+    status: "passed",
+    phase: RUNTIME_NETWORK_GATE.phase,
+    argv: [...RUNTIME_NETWORK_GATE.argv],
+    cwd: context.cloneRoot,
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    durationMs: result.durationMs,
+    stdout: streamEvidence(result.stdoutBytes, result.logPaths?.stdout),
+    stderr: streamEvidence(result.stderrBytes, result.logPaths?.stderr),
+    recordPath: result.logPaths?.record,
+  });
 }
 
 async function validateInnerBoundary(requestPath, deps) {
@@ -118,7 +158,9 @@ export async function runInsideDockerBoundary({ requestPath, dependencies = {} }
   const runEvaluation =
     deps.runEvaluation ??
     (await import("./pipeline-eval-orchestrator.mjs")).runFreshAgentPipelineEvaluation;
-  const environment = insideEnvironment();
+  const environment = insideEnvironment(request.environment);
+  let networkGate = null;
+  let networkGateCalls = 0;
   const result = await runEvaluation({
     sourceRoot: request.inner.sourceRoot,
     landingRoot: request.inner.landingRoot,
@@ -128,12 +170,24 @@ export async function runInsideDockerBoundary({ requestPath, dependencies = {} }
     securityEnvironment: environment,
     prNumber: request.inner.prNumber,
     securityBoundary: authorization,
+    beforeCapture: async (context) => {
+      networkGateCalls += 1;
+      if (networkGateCalls !== 1) {
+        throw new Error("Docker runtime network gate may run exactly once");
+      }
+      networkGate = await runRuntimeNetworkGate(context, deps);
+      return networkGate;
+    },
   });
+  if (networkGateCalls !== 1 || !networkGate) {
+    throw new Error("Docker evaluation reached completion without its runtime network gate");
+  }
   const record = {
     contract: "kandev-highlight-docker-boundary-inner-result-v1",
     status: "passed",
     requestDigest: request.requestDigest,
     containerId: authorization.containerId,
+    networkGate,
     result,
   };
   await deps.writeJson("/kandev/eval/boundary-result.json", record);

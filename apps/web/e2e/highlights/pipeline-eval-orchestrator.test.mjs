@@ -8,6 +8,7 @@ import { clearInheritedTrustedSource } from "./pipeline-eval-orchestrator.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TRUSTED_SOURCE_KEY = "KANDEV_HIGHLIGHT_TRUSTED_SOURCE_SHA";
+const ORCHESTRATOR_FILE = "pipeline-eval-orchestrator.mjs";
 
 test("trusted source input is absent until the exact eval commit exists", () => {
   const inherited = { [TRUSTED_SOURCE_KEY]: "f".repeat(40), SAFE: "kept" };
@@ -17,14 +18,14 @@ test("trusted source input is absent until the exact eval commit exists", () => 
 });
 
 test("eval never creates or defaults trusted source authorization", async () => {
-  const source = await fs.readFile(path.join(HERE, "pipeline-eval-orchestrator.mjs"), "utf8");
+  const source = await fs.readFile(path.join(HERE, ORCHESTRATOR_FILE), "utf8");
   assert.doesNotMatch(source, /authorizeTrustedSource|environment\[TRUSTED_SOURCE_KEY\]\s*=/);
   assert.match(source, /clearInheritedTrustedSource/);
   assert.doesNotMatch(source, /commitScenarioAndBindCurrentMain|--source["'],\s*["']current_main/);
 });
 
 test("orchestrator re-verifies ignored dependencies after both runs and dry-runs", async () => {
-  const source = await fs.readFile(path.join(HERE, "pipeline-eval-orchestrator.mjs"), "utf8");
+  const source = await fs.readFile(path.join(HERE, ORCHESTRATOR_FILE), "utf8");
   assert.match(
     source,
     /executeCaptureRuns\(context[\s\S]*executeDryRuns\(context[\s\S]*verifyFrozenOfflineDependencies\(context\.dependencyInstall\)/,
@@ -32,8 +33,16 @@ test("orchestrator re-verifies ignored dependencies after both runs and dry-runs
   assert.match(source, /dependencyVerification/);
 });
 
+test("Docker runtime gate runs after isolated setup and before first capture", async () => {
+  const source = await fs.readFile(path.join(HERE, ORCHESTRATOR_FILE), "utf8");
+  assert.match(
+    source,
+    /setupEvaluation\(input\)[\s\S]*input\.beforeCapture\(context\)[\s\S]*executeCaptureRuns\(context/,
+  );
+});
+
 test("fresh-agent eval selects only the closed host Chromium sandbox policy", async () => {
-  const source = await fs.readFile(path.join(HERE, "pipeline-eval-orchestrator.mjs"), "utf8");
+  const source = await fs.readFile(path.join(HERE, ORCHESTRATOR_FILE), "utf8");
   assert.match(source, /environment\.KANDEV_HIGHLIGHT_CHROMIUM_SANDBOX\s*=\s*"auto"/);
   assert.doesNotMatch(
     source,

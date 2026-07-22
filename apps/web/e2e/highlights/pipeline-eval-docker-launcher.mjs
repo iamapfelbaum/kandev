@@ -20,6 +20,7 @@ import {
   writeTextExclusive,
 } from "./pipeline-eval-docker-boundary.mjs";
 import { prepareDockerInputRepositories } from "./pipeline-eval-docker-input.mjs";
+import { validateRuntimeNetworkGateEvidence } from "./pipeline-eval-docker-network-gate.mjs";
 import { discoverDockerToolchain } from "./pipeline-eval-docker-toolchain.mjs";
 import {
   canonicalDirectory,
@@ -199,6 +200,7 @@ async function waitForContainerResult(state) {
   ) {
     throw new Error("Docker eval worker did not produce request-bound passing result");
   }
+  state.inner.networkGate = validateRuntimeNetworkGateEvidence(state.inner.networkGate);
 }
 
 async function removeContainer(state) {
@@ -288,6 +290,7 @@ function boundaryReceipt(state) {
     authorization: state.authorization,
     exit: state.exit,
     logs: state.logEvidence,
+    networkGate: state.inner?.networkGate ?? null,
     innerResultDigest: state.inner ? digestValue(state.inner) : null,
     error: state.failure?.message ?? null,
   };

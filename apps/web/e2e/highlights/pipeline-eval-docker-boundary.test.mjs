@@ -18,7 +18,6 @@ import {
   prepareDockerInputRepositories,
   runInsideDockerBoundary,
 } from "./pipeline-eval-docker-launcher.mjs";
-
 const DIGEST = "sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48";
 const IMAGE_ID = `sha256:${"8".repeat(64)}`;
 const SOURCE_SHA = "a".repeat(40);
@@ -26,7 +25,10 @@ const BASE_SHA = "b".repeat(40);
 const APPARMOR_PROFILE = "docker-default";
 const INSPECT_CONTAINER_ID = "7".repeat(64);
 const CONTAINER_SOURCE_ROOT = "/kandev/source";
-
+const NETWORK_GATE_PHASE = "docker-boundary-network-gate";
+const NETWORK_GATE_SCRIPT = "scripts/highlights/capture-runtime-network.test.mjs";
+const NETWORK_GATE_ARGV = ["/usr/bin/node", "--test", NETWORK_GATE_SCRIPT];
+const NETWORK_GATE_STDOUT = "TAP version 13\n1..1\n";
 async function execGit(root, args) {
   const { execFile } = await import("node:child_process");
   const { promisify } = await import("node:util");
@@ -89,7 +91,66 @@ function fixtureInput() {
     ],
   };
 }
-
+function boundaryAuthorization(plan, containerId = "6".repeat(64)) {
+  return {
+    contract: "kandev-highlight-docker-boundary-authorization-v1",
+    requestDigest: plan.request.requestDigest,
+    containerId,
+    imageId: IMAGE_ID,
+    sourceSha: SOURCE_SHA,
+    sourceOriginMainSha: BASE_SHA,
+    inspection: {
+      containerId,
+      imageId: IMAGE_ID,
+      appArmorProfile: APPARMOR_PROFILE,
+      networkMode: "none",
+      requestDigest: plan.request.requestDigest,
+    },
+  };
+}
+function networkGateEvidence(evalName = "work") {
+  const evalRoot = `/kandev/eval/${evalName}`;
+  const logRoot = `${evalRoot}/logs`;
+  return {
+    contract: "kandev-highlight-runtime-network-gate-v1",
+    status: "passed",
+    phase: NETWORK_GATE_PHASE,
+    argv: NETWORK_GATE_ARGV,
+    cwd: `${evalRoot}/snapshot`,
+    exitCode: 0,
+    timedOut: false,
+    durationMs: 17,
+    stdout: {
+      bytes: Buffer.byteLength(NETWORK_GATE_STDOUT),
+      sha256: `sha256:${"1".repeat(64)}`,
+      path: `${logRoot}/${NETWORK_GATE_PHASE}.stdout.log`,
+    },
+    stderr: {
+      bytes: 0,
+      sha256: `sha256:${"2".repeat(64)}`,
+      path: `${logRoot}/${NETWORK_GATE_PHASE}.stderr.log`,
+    },
+    recordPath: `${logRoot}/${NETWORK_GATE_PHASE}.json`,
+  };
+}
+function successfulNetworkGateCommand(specification) {
+  const evidence = networkGateEvidence();
+  return {
+    phase: specification.phase,
+    exitCode: 0,
+    timedOut: false,
+    durationMs: evidence.durationMs,
+    stdout: NETWORK_GATE_STDOUT,
+    stderr: "",
+    stdoutBytes: Buffer.from(NETWORK_GATE_STDOUT),
+    stderrBytes: Buffer.alloc(0),
+    logPaths: {
+      stdout: evidence.stdout.path,
+      stderr: evidence.stderr.path,
+      record: evidence.recordPath,
+    },
+  };
+}
 function containerInspection(plan, { id = INSPECT_CONTAINER_ID, pid = 1234 } = {}) {
   return {
     Id: id,
@@ -202,22 +263,11 @@ test("Docker inputs replace linked-worktree git pointers with sanitized self-con
 
 test("inner boundary validates host proof and mounted source before any eval command", async () => {
   const plan = buildDockerCreatePlan(fixtureInput());
-  const authorization = {
-    contract: "kandev-highlight-docker-boundary-authorization-v1",
-    requestDigest: plan.request.requestDigest,
-    containerId: "6".repeat(64),
-    imageId: IMAGE_ID,
-    sourceSha: SOURCE_SHA,
-    sourceOriginMainSha: BASE_SHA,
-    inspection: {
-      containerId: "6".repeat(64),
-      imageId: IMAGE_ID,
-      appArmorProfile: APPARMOR_PROFILE,
-      networkMode: "none",
-      requestDigest: plan.request.requestDigest,
-    },
-  };
+  const authorization = boundaryAuthorization(plan);
   let calls = 0;
+  let evaluationEnvironment;
+  const networkGateCalls = [];
+  const writtenRecords = [];
   const result = await runInsideDockerBoundary({
     requestPath: "/kandev-boundary/request.json",
     dependencies: {
@@ -245,13 +295,47 @@ test("inner boundary validates host proof and mounted source before any eval com
           options.inheritedEnv.KANDEV_HIGHLIGHT_DOCKER_BOUNDARY_AUTHORIZATION,
           "/kandev-boundary/authorization.json",
         );
-        return { status: "passed", resultPath: "/kandev/eval/work/result.json" };
+        evaluationEnvironment = options.inheritedEnv;
+        assert.equal(typeof options.beforeCapture, "function");
+        const networkGate = await options.beforeCapture({
+          cloneRoot: "/kandev/eval/work/snapshot",
+          logRoot: "/kandev/eval/work/logs",
+          environment: options.inheritedEnv,
+        });
+        assert.equal(networkGate.status, "passed");
+        return {
+          status: "passed",
+          resultPath: "/kandev/eval/work/result.json",
+          networkGate,
+        };
       },
-      writeJson: async () => {},
+      runCommand: async (specification) => {
+        networkGateCalls.push(specification);
+        return successfulNetworkGateCommand(specification);
+      },
+      writeJson: async (filePath, value) => writtenRecords.push({ filePath, value }),
     },
   });
   assert.equal(calls, 1);
   assert.equal(result.status, "passed");
+  assert.equal(networkGateCalls.length, 1);
+  assert.deepEqual(networkGateCalls[0], {
+    command: "/usr/bin/node",
+    args: NETWORK_GATE_ARGV.slice(1),
+    cwd: "/kandev/eval/work/snapshot",
+    env: evaluationEnvironment,
+    phase: NETWORK_GATE_PHASE,
+    logRoot: "/kandev/eval/work/logs",
+    deadlineMs: 120_000,
+  });
+  const innerRecord = writtenRecords.find(
+    ({ filePath }) => filePath === "/kandev/eval/boundary-result.json",
+  )?.value;
+  assert.equal(innerRecord.networkGate.contract, "kandev-highlight-runtime-network-gate-v1");
+  assert.deepEqual(innerRecord.networkGate.argv, NETWORK_GATE_ARGV);
+  assert.equal(innerRecord.networkGate.stdout.bytes, 20);
+  assert.match(innerRecord.networkGate.stdout.sha256, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(innerRecord.networkGate.stderr.bytes, 0);
 
   await assert.rejects(
     () =>
@@ -322,6 +406,7 @@ test("host lifecycle records create, inspect, exit, removal, and unchanged sourc
       readJson: async () => ({
         status: "passed",
         requestDigest: plan.request.requestDigest,
+        networkGate: networkGateEvidence("kandev-highlight-pipeline-eval-abc123"),
         result: { status: "passed" },
       }),
     },
@@ -341,6 +426,8 @@ test("host lifecycle records create, inspect, exit, removal, and unchanged sourc
   assert.equal(receipt.source.unchanged, true);
   assert.equal(receipt.landing.unchanged, true);
   assert.equal(receipt.network.mode, "none");
+  assert.equal(receipt.networkGate.status, "passed");
+  assert.deepEqual(receipt.networkGate.argv, NETWORK_GATE_ARGV);
   assert.equal(receipt.exit.code, 0);
   assert.equal(
     await fs.readFile(path.join(evidenceRoot, "outer-container.stdout.log"), "utf8"),
