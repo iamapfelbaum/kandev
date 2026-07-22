@@ -37,7 +37,7 @@
         "target": {
           "testId": "create-task-button"
         },
-        "cursorDurationMs": 1000,
+        "cursorDurationMs": 1800,
         "settleMs": 200,
         "label": "Open task composer"
       },

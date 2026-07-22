@@ -81,6 +81,10 @@ test("checked quick-start scenario is executable, short, semantic, and has no ca
   assert.deepEqual(scenario.profile.viewport, { width: 1920, height: 1200 });
   assert.equal(scenario.profile.deviceScaleFactor, 2);
   assert.equal(scenario.seed.recipe, "kandev.highlight.quick-start");
+  assert.equal(
+    scenario.story.actions.find((action) => action.kind === "click")?.cursorDurationMs,
+    1_800,
+  );
   assert.ok(timeline.totalDurationMs <= 4_000);
   assert.equal(timeline.initialCameraZoom, 1);
   const waits = timeline.events.filter((event) => event.kind === "waitForVisible");
