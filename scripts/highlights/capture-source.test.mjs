@@ -10,12 +10,14 @@ import test from "node:test";
 import { resolveCaptureProfile } from "./camera-compiler.mjs";
 import {
   assertCleanCaptureProgress,
+  assertStableCaptureBuildVerification,
   buildEncoderProbePlan,
   buildFfmpegCapturePlan,
   captureScenario,
   chooseReadyCaptureEncoder,
   collectCaptureReceipt,
   configureCaptureTarget,
+  createTrustedCaptureBuildVerifier,
   createTrustedInputAdapters,
   measureTargetGlyph,
   parseCaptureProgress,
@@ -68,6 +70,24 @@ function buildProvenance(source) {
       },
     },
   };
+}
+
+function trustedBuildVerifier(
+  proof,
+  {
+    manifestPath = "/tmp/highlight-build-provenance.json",
+    repositoryRoot = "/tmp/highlight-repository",
+    onVerify,
+  } = {},
+) {
+  return createTrustedCaptureBuildVerifier({
+    manifestPath,
+    repositoryRoot,
+    verify: async (...args) => {
+      onVerify?.(...args);
+      return structuredClone(proof);
+    },
+  });
 }
 
 function applicationRuntimeProof({
@@ -156,6 +176,7 @@ test("builds silent no-overwrite 25fps native X11 capture commands", () => {
       joined,
       /-progress \/external\/highlight-run\/logs\/ffmpeg\.progress/,
     );
+    assert.match(joined, /-stats_period 0\.040/);
     assert.equal(plan.master.lossless, true);
     assert.equal(plan.master.pixelFormat, "yuv444p");
     assert.equal(plan.master.profile, "high444");
@@ -229,26 +250,39 @@ test("encoder readiness plan proves sustained full-source throughput before stor
   assert.equal(plan.maximumElapsedMs, 1_500);
 });
 
-test("raw frame count aligns with recorder lead plus planned story within one frame", async () => {
+test("story frame alignment uses FFmpeg media samples instead of recorder wall time", async () => {
   const { assertCaptureFrameAlignment } = await import("./capture-source.mjs");
   const aligned = assertCaptureFrameAlignment({
-    frameCount: 63,
     fps: 25,
-    storyStartOffsetMs: 80,
     storyDurationMs: 2_440,
+    storyStart: { frameCount: 3, mediaTimeMs: 80 },
+    storyEnd: { frameCount: 64, mediaTimeMs: 2_520 },
   });
 
-  assert.equal(aligned.expectedFrameCount, 63);
+  assert.equal(aligned.contract, "kandev-highlight-media-frame-alignment-v1");
+  assert.equal(aligned.expectedStoryFrames, 61);
+  assert.equal(aligned.observedStoryFrames, 61);
+  assert.equal(aligned.observedMediaDurationMs, 2_440);
   assert.equal(aligned.frameDelta, 0);
   assert.throws(
     () =>
       assertCaptureFrameAlignment({
-        frameCount: 71,
         fps: 25,
-        storyStartOffsetMs: 80,
         storyDurationMs: 2_440,
+        storyStart: { frameCount: 3, mediaTimeMs: 80 },
+        storyEnd: { frameCount: 72, mediaTimeMs: 2_520 },
       }),
-    /frame alignment.*expected 63.*got 71/i,
+    /media frame alignment.*expected 61.*observed 69/i,
+  );
+  assert.throws(
+    () =>
+      assertCaptureFrameAlignment({
+        fps: 25,
+        storyDurationMs: 2_440,
+        storyStart: { frameCount: 3, mediaTimeMs: 80 },
+        storyEnd: { frameCount: 64, mediaTimeMs: 3_000 },
+      }),
+    /media clock alignment.*expected 2440ms.*observed 2920ms/i,
   );
 });
 
@@ -299,6 +333,7 @@ test("parses final ffmpeg progress and rejects drops, duplicates, and incomplete
     [
       "frame=75",
       "fps=25.0",
+      "out_time_us=3000000",
       "dup_frames=0",
       "drop_frames=0",
       "progress=end",
@@ -307,6 +342,7 @@ test("parses final ffmpeg progress and rejects drops, duplicates, and incomplete
   assert.deepEqual(clean, {
     frameCount: 75,
     fps: 25,
+    mediaTimeMs: 3_000,
     duplicateFrames: 0,
     droppedFrames: 0,
     progress: "end",
@@ -314,6 +350,21 @@ test("parses final ffmpeg progress and rejects drops, duplicates, and incomplete
   assert.deepEqual(
     assertCleanCaptureProgress(clean, { expectedMinimumFrames: 60 }),
     clean,
+  );
+  assert.deepEqual(
+    parseCaptureProgress(
+      [
+        "frame=75",
+        "fps=25.0",
+        "out_time_us=3000000",
+        "dup_frames=0",
+        "drop_frames=0",
+        "progress=continue",
+        "frame=99",
+      ].join("\n"),
+    ),
+    { ...clean, progress: "continue" },
+    "an in-progress partial FFmpeg block cannot mix a new frame with an old media clock",
   );
 
   assert.throws(
@@ -741,37 +792,137 @@ test("target glyph measurement unions every visible icon and text rect clipped t
   assert.deepEqual(measured, { x: 18, y: 18, width: 110, height: 20 });
 });
 
-test("origin-bound navigation defaults to frontend and rejects cross-origin routes", async () => {
-  const { bindCaptureNavigation } = await import("./capture-source.mjs");
-  let current = "about:blank";
-  const calls = [];
-  const page = {
-    url: () => current,
-    async goto(url, options) {
-      calls.push([url, options]);
-      current = `${url}/`;
+function navigationHarness(initialUrl = "about:blank") {
+  let current = initialUrl;
+  const page = new EventEmitter();
+  const context = new EventEmitter();
+  const pages = [page];
+  const frame = { url: () => current };
+  page.url = () => current;
+  page.mainFrame = () => frame;
+  page.goto = async (url, options) => {
+    current = `${url}/`;
+    page.emit("framenavigated", frame);
+    return options;
+  };
+  context.pages = () => [...pages];
+  return {
+    page,
+    context,
+    frame,
+    pages,
+    setUrl(url) {
+      current = url;
+      page.emit("framenavigated", frame);
     },
   };
+}
+
+test("origin guard records the complete primary-page lifecycle", async () => {
+  const { bindCaptureNavigation } = await import("./capture-source.mjs");
+  const calls = [];
+  const harness = navigationHarness();
+  const originalGoto = harness.page.goto;
+  harness.page.goto = async (url, options) => {
+    calls.push([url, options]);
+    return originalGoto(url, options);
+  };
   const noRoute = bindCaptureNavigation({
-    page,
+    page: harness.page,
+    context: harness.context,
     frontendUrl: "http://127.0.0.1:18080",
   });
   await noRoute.navigateDefault();
+  noRoute.checkpoint("story start");
+  noRoute.checkpoint("story end");
   assert.deepEqual(calls, [
     ["http://127.0.0.1:18080", { waitUntil: "domcontentloaded" }],
   ]);
-  assert.equal(noRoute.evidence().finalOrigin, "http://127.0.0.1:18080");
+  const evidence = noRoute.evidence();
+  assert.equal(evidence.contract, "kandev-highlight-navigation-evidence-v1");
+  assert.equal(evidence.finalOrigin, "http://127.0.0.1:18080");
+  assert.deepEqual(
+    evidence.checkpoints.map((checkpoint) => checkpoint.label),
+    ["default navigation", "story start", "story end", "record boundary"],
+  );
+  assert.equal(evidence.events.length, 1);
+  assert.deepEqual(evidence.violations, []);
+});
 
+test("origin guard fails closed on popups and cross-origin top-level navigation", async () => {
+  const { bindCaptureNavigation } = await import("./capture-source.mjs");
+  const popupHarness = navigationHarness("http://127.0.0.1:18080/board");
+  const popupGuard = bindCaptureNavigation({
+    page: popupHarness.page,
+    context: popupHarness.context,
+    frontendUrl: "http://127.0.0.1:18080",
+  });
+  const popup = new EventEmitter();
+  popup.url = () => "about:blank";
+  popup.mainFrame = () => ({ url: () => popup.url() });
+  popupHarness.pages.push(popup);
+  popupHarness.context.emit("page", popup);
+  assert.throws(
+    () => popupGuard.checkpoint("step 0"),
+    /extra top-level page.*step 0/i,
+  );
+  const popupEvidence = popupGuard.snapshot();
+  assert.equal(popupEvidence.violations[0].kind, "extra-top-level-page");
+  assert.equal(
+    popupEvidence.events.some(
+      (event) => event.kind === "top-level-page-opened",
+    ),
+    true,
+  );
+
+  const routeHarness = navigationHarness("http://127.0.0.1:18080/board");
   const routed = bindCaptureNavigation({
-    page,
+    page: routeHarness.page,
+    context: routeHarness.context,
     frontendUrl: "http://127.0.0.1:18080",
     navigateRoute: async () => {
-      current = "https://attacker.invalid/phish";
+      routeHarness.setUrl("https://attacker.invalid/phish");
     },
   });
   await assert.rejects(
-    () => routed.navigateRoute("workspace.board", { page }),
+    () => routed.navigateRoute("workspace.board", { page: routeHarness.page }),
     /allowed frontend origin/i,
+  );
+});
+
+test("build verification rejects any story-end output identity change", () => {
+  const before = {
+    contract: "kandev-highlight-build-boundary-v1",
+    manifestDigest: `sha256:${"a".repeat(64)}`,
+    sourceSha: "1".repeat(40),
+    outputs: {
+      backend: `sha256:${"b".repeat(64)}`,
+      mockAgent: `sha256:${"c".repeat(64)}`,
+      webDist: `sha256:${"d".repeat(64)}`,
+    },
+  };
+  assert.deepEqual(
+    assertStableCaptureBuildVerification({
+      beforeStory: before,
+      afterStory: before,
+    }),
+    {
+      contract: "kandev-highlight-build-verification-v1",
+      stable: true,
+      beforeStory: before,
+      afterStory: before,
+    },
+  );
+  assert.throws(
+    () =>
+      assertStableCaptureBuildVerification({
+        beforeStory: before,
+        afterStory: {
+          ...before,
+          outputs: { ...before.outputs, webDist: `sha256:${"e".repeat(64)}` },
+        },
+      }),
+    /build outputs changed during recorded story.*webDist/i,
   );
 });
 
@@ -795,6 +946,10 @@ test("receipt records exact command, tool identities, source geometry, epochs, h
     sourceDigest: `sha256:${"a".repeat(64)}`,
     captureEpochMs: 10_000,
     storyEpochMs: 10_240,
+    storyMedia: {
+      start: { frameCount: 3, mediaTimeMs: 80 },
+      end: { frameCount: 78, mediaTimeMs: 3_080 },
+    },
     storyDurationMs: 3_000,
     command,
     profile,
@@ -826,8 +981,8 @@ test("receipt records exact command, tool identities, source geometry, epochs, h
   });
 
   assert.equal(receipt.contract, "kandev-highlight-source-capture-v1");
-  assert.equal(receipt.storyOffsetMs, 240);
-  assert.equal(receipt.storyStartOffsetMs, 240);
+  assert.equal(receipt.storyOffsetMs, 80);
+  assert.equal(receipt.storyStartOffsetMs, 80);
   assert.equal(receipt.capture.frameCount, 81);
   assert.equal(receipt.capture.width, 3840);
   assert.equal(receipt.capture.height, 2400);
@@ -1011,14 +1166,24 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     tempRoot: path.join(root, "fixture-temp"),
     sourceSha: sourceProof.selectedSha,
   });
+  const buildVerifications = [];
+  const buildVerifier = trustedBuildVerifier(buildProof, {
+    manifestPath: path.join(root, "build-provenance.json"),
+    repositoryRoot: path.join(root, "repo"),
+    onVerify: (...args) => buildVerifications.push(args),
+  });
   let currentUrl = "about:blank";
-  const page = {
-    url: () => currentUrl,
-    async goto(url) {
-      currentUrl = url;
-      events.push(`goto:${url}`);
-    },
+  const page = new EventEmitter();
+  const context = new EventEmitter();
+  const mainFrame = { url: () => currentUrl };
+  page.url = () => currentUrl;
+  page.mainFrame = () => mainFrame;
+  page.goto = async (url) => {
+    currentUrl = url;
+    page.emit("framenavigated", mainFrame);
+    events.push(`goto:${url}`);
   };
+  context.pages = () => [page];
 
   const result = await captureScenario({
     scenario,
@@ -1052,6 +1217,7 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     },
     sourceDigest: `sha256:${"a".repeat(64)}`,
     frontendUrl: "http://127.0.0.1:18080",
+    buildVerifier,
     artifactRoot,
     repositoryRoots: [path.join(root, "repo")],
     runId: "r01",
@@ -1087,7 +1253,7 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
       },
       connectCaptureBrowser: async () => ({
         browser: {},
-        context: {},
+        context,
         page,
         cdp: {},
         async close() {
@@ -1116,18 +1282,32 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
         await fs.writeFile(paths.rawMasterPath, "capture bytes");
         await fs.writeFile(
           paths.progressPath,
-          "frame=30\nfps=25\ndup_frames=0\ndrop_frames=0\nprogress=end\n",
+          "frame=30\nfps=25\nout_time_us=1200000\ndup_frames=0\ndrop_frames=0\nprogress=end\n",
         );
+        const samples = [
+          { frameCount: 3, mediaTimeMs: 80 },
+          { frameCount: 28, mediaTimeMs: 1_080 },
+        ];
         return {
           captureEpochMs: 1_000,
+          async sample() {
+            return samples.shift();
+          },
           async stop() {
             events.push("recorder:stop");
             return { exitCode: 0, signal: null, processGone: true };
           },
         };
       },
-      executePreparedScenario: async () => {
+      executePreparedScenario: async ({
+        onRecordingStart,
+        onStep,
+        onRecordingEnd,
+      }) => {
         events.push("scenario:execute");
+        await onRecordingStart();
+        await onStep(execution.steps[0]);
+        await onRecordingEnd(execution);
         return execution;
       },
     },
@@ -1161,19 +1341,44 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     sourceSha: sourceProof.selectedSha,
     outputs: buildProof.outputs,
   });
-  assert.deepEqual(result.receipt.navigation, {
-    configuredUrl: "http://127.0.0.1:18080",
-    allowedOrigin: "http://127.0.0.1:18080",
-    finalUrl: "http://127.0.0.1:18080/board",
-    finalOrigin: "http://127.0.0.1:18080",
-  });
+  assert.equal(
+    result.receipt.navigation.contract,
+    "kandev-highlight-navigation-evidence-v1",
+  );
+  assert.equal(
+    result.receipt.navigation.finalUrl,
+    "http://127.0.0.1:18080/board",
+  );
+  assert.deepEqual(result.receipt.navigation.violations, []);
+  assert.deepEqual(
+    result.receipt.navigation.checkpoints.map(({ label }) => label),
+    [
+      "route 'workspace.board'",
+      "prepare complete",
+      "story start",
+      "step 0",
+      "story end",
+      "record boundary",
+    ],
+  );
   assert.deepEqual(result.receipt.trustedInputLedger, []);
   assert.deepEqual(result.receipt.capture.frameAlignment, {
-    expectedFrameCount: 31,
-    frameDelta: -1,
+    contract: "kandev-highlight-media-frame-alignment-v1",
+    expectedStoryFrames: 25,
+    observedStoryFrames: 25,
+    expectedStoryDurationMs: 1_000,
+    observedMediaDurationMs: 1_000,
+    frameDelta: 0,
+    mediaDurationDeltaMs: 0,
     toleranceFrames: 1,
   });
-  assert.equal(result.receipt.storyStartOffsetMs, 240);
+  assert.equal(result.receipt.storyStartOffsetMs, 80);
+  assert.deepEqual(result.receipt.storyMedia, {
+    start: { frameCount: 3, mediaTimeMs: 80 },
+    end: { frameCount: 28, mediaTimeMs: 1_080 },
+  });
+  assert.equal(buildVerifications.length, 2);
+  assert.equal(result.receipt.buildVerification.stable, true);
   assert.equal(result.receipt.runtime.teardown.processesGone, true);
   assert.equal(result.receipt.runtime.teardown.coordinatesReleased, true);
   assert.deepEqual(result.receipt.runtime.teardown.recorder, {
@@ -1247,12 +1452,16 @@ test("capture failure aggregates every cleanup error and persists structured tea
     lockPath: path.join(artifactRoot, "runtime", "capture.lock"),
   };
   let currentUrl = "about:blank";
-  const page = {
-    url: () => currentUrl,
-    async goto(url) {
-      currentUrl = url;
-    },
+  const page = new EventEmitter();
+  const context = new EventEmitter();
+  const mainFrame = { url: () => currentUrl };
+  page.url = () => currentUrl;
+  page.mainFrame = () => mainFrame;
+  page.goto = async (url) => {
+    currentUrl = url;
+    page.emit("framenavigated", mainFrame);
   };
+  context.pages = () => [page];
   const cleanupOrder = [];
   const cleanupSource = {
     contract: "kandev-highlight-source-v1",
@@ -1270,6 +1479,10 @@ test("capture failure aggregates every cleanup error and persists structured tea
         timeline,
         source: cleanupSource,
         buildProvenance: buildProvenance(cleanupSource),
+        buildVerifier: trustedBuildVerifier(buildProvenance(cleanupSource), {
+          manifestPath: path.join(root, "cleanup-build.json"),
+          repositoryRoot: path.join(root, "repo"),
+        }),
         sourceDigest: `sha256:${"a".repeat(64)}`,
         frontendUrl: "http://127.0.0.1:18080",
         artifactRoot,
@@ -1313,7 +1526,7 @@ test("capture failure aggregates every cleanup error and persists structured tea
           },
           connectCaptureBrowser: async () => ({
             page,
-            context: {},
+            context,
             cdp: {},
             async close() {
               cleanupOrder.push("browser");
@@ -1330,6 +1543,9 @@ test("capture failure aggregates every cleanup error and persists structured tea
           },
           startFfmpegRecorder: async () => ({
             captureEpochMs: 1_000,
+            async sample() {
+              return { frameCount: 1, mediaTimeMs: 40 };
+            },
             async stop() {
               cleanupOrder.push("recorder");
               throw new Error("recorder cleanup failed");
@@ -1472,5 +1688,17 @@ test("captureScenario rejects non-exact digests and missing allowlisted navigati
         },
       }),
     /applicationRuntime.*live credentials|provider routing/i,
+  );
+  await assert.rejects(
+    () =>
+      captureScenario({
+        ...common,
+        navigateRoute: async () => {},
+        sourceDigest: `sha256:${"c".repeat(64)}`,
+        buildVerifier: {
+          contract: "kandev-highlight-trusted-build-verifier-v1",
+        },
+      }),
+    /opaque trusted build verifier/i,
   );
 });

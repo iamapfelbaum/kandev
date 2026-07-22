@@ -13,6 +13,54 @@ import { verifySourceGate } from "../../../../scripts/highlights/source-gate.mjs
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_WEB_ROOT = path.resolve(HERE, "../..");
 const DEFAULT_REPO_ROOT = path.resolve(DEFAULT_WEB_ROOT, "../..");
+const CAPTURE_BUILD_TOOLCHAIN_ENV = Object.freeze([
+  "AR",
+  "AS",
+  "CC",
+  "CFLAGS",
+  "CGO_CFLAGS",
+  "CGO_CPPFLAGS",
+  "CGO_CXXFLAGS",
+  "CGO_ENABLED",
+  "CGO_LDFLAGS",
+  "CPPFLAGS",
+  "CXX",
+  "CXXFLAGS",
+  "GOAMD64",
+  "GOARCH",
+  "GOCACHE",
+  "GOFLAGS",
+  "GOMODCACHE",
+  "GOOS",
+  "GOPATH",
+  "GOROOT",
+  "GOTOOLCHAIN",
+  "LD",
+  "LDFLAGS",
+  "MAKEFLAGS",
+  "PKG_CONFIG",
+  "PKG_CONFIG_PATH",
+  "RANLIB",
+  "RUSTC",
+  "RUSTFLAGS",
+  "SOURCE_DATE_EPOCH",
+  "STRIP",
+]);
+const CAPTURE_BUILD_FIXED_ENV = Object.freeze({
+  CI: "1",
+  NODE_ENV: "production",
+  TZ: "UTC",
+  LANG: "C.UTF-8",
+  LC_ALL: "C.UTF-8",
+});
+const CAPTURE_BUILD_BASE_ENV = Object.freeze([
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "XDG_CACHE_HOME",
+  ...Object.keys(CAPTURE_BUILD_FIXED_ENV),
+]);
+const CAPTURE_BUILD_ENV_KEYS = new Set([...CAPTURE_BUILD_BASE_ENV, ...CAPTURE_BUILD_TOOLCHAIN_ENV]);
 
 function activePnpmScript() {
   const script = process.env.npm_execpath;
@@ -46,6 +94,66 @@ function digestBytes(bytes) {
 function isInside(root, candidate) {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
+}
+
+export function createCaptureBuildEnvironment({ artifactRoot, inheritedEnv = process.env } = {}) {
+  if (typeof artifactRoot !== "string" || !path.isAbsolute(artifactRoot)) {
+    throw new Error("capture build environment needs an absolute artifactRoot");
+  }
+  if (!inheritedEnv || typeof inheritedEnv !== "object") {
+    throw new Error("capture build environment inheritedEnv must be an object");
+  }
+  const resolvedArtifactRoot = path.resolve(artifactRoot);
+  const homeRoot = path.join(resolvedArtifactRoot, "build-home");
+  const tempRoot = path.join(resolvedArtifactRoot, "build-tmp");
+  const environment = {
+    PATH: inheritedEnv.PATH || "/usr/local/bin:/usr/bin:/bin",
+    HOME: homeRoot,
+    TMPDIR: tempRoot,
+    XDG_CACHE_HOME: path.join(homeRoot, ".cache"),
+    ...CAPTURE_BUILD_FIXED_ENV,
+  };
+  for (const key of CAPTURE_BUILD_TOOLCHAIN_ENV) {
+    if (typeof inheritedEnv[key] === "string" && inheritedEnv[key] !== "") {
+      environment[key] = inheritedEnv[key];
+    }
+  }
+  return environment;
+}
+
+function validateCaptureBuildEnvironment(environment, artifactRoot) {
+  if (!environment || typeof environment !== "object" || Array.isArray(environment)) {
+    throw new Error("capture buildEnvironment must be an allowlisted object");
+  }
+  for (const [key, value] of Object.entries(environment)) {
+    if (!CAPTURE_BUILD_ENV_KEYS.has(key)) {
+      throw new Error(`capture buildEnvironment key ${key} is not allowlisted`);
+    }
+    if (typeof value !== "string" || value === "") {
+      throw new Error(`capture buildEnvironment ${key} must be a non-empty string`);
+    }
+  }
+  if (typeof environment.PATH !== "string" || environment.PATH === "") {
+    throw new Error("capture buildEnvironment PATH is required");
+  }
+  for (const [key, expected] of Object.entries(CAPTURE_BUILD_FIXED_ENV)) {
+    if (environment[key] !== expected) {
+      throw new Error(`capture buildEnvironment ${key} must equal deterministic value ${expected}`);
+    }
+  }
+  const resolvedArtifactRoot = path.resolve(artifactRoot);
+  for (const key of ["HOME", "TMPDIR", "XDG_CACHE_HOME"]) {
+    const value = environment[key];
+    if (
+      typeof value !== "string" ||
+      !path.isAbsolute(value) ||
+      !isInside(resolvedArtifactRoot, value) ||
+      path.resolve(value) === resolvedArtifactRoot
+    ) {
+      throw new Error(`capture buildEnvironment ${key} must be controlled inside artifactRoot`);
+    }
+  }
+  return { ...environment };
 }
 
 async function executableOnPath(name) {
@@ -169,21 +277,39 @@ export async function resolveIntegrationArtifactRoot({
   return root;
 }
 
-async function regularFileIdentity(filePath, label) {
-  const stat = await fs.lstat(filePath);
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw new Error(`${label} must be a regular non-symlink file: ${filePath}`);
+async function canonicalDirectory(directoryPath, label) {
+  const resolved = path.resolve(directoryPath);
+  const stat = await fs.lstat(resolved);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error(`${label} must be a canonical non-symlink directory: ${resolved}`);
   }
-  const bytes = await fs.readFile(filePath);
+  const canonical = await fs.realpath(resolved);
+  if (canonical !== resolved) {
+    throw new Error(`${label} cannot contain symlink components: ${resolved}`);
+  }
+  return canonical;
+}
+
+async function regularFileIdentity(filePath, label) {
+  const resolved = path.resolve(filePath);
+  const stat = await fs.lstat(resolved);
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(`${label} must be a regular non-symlink file: ${resolved}`);
+  }
+  const canonical = await fs.realpath(resolved);
+  if (canonical !== resolved) {
+    throw new Error(`${label} cannot contain symlink components: ${resolved}`);
+  }
+  const bytes = await fs.readFile(canonical);
   return {
-    path: path.resolve(filePath),
+    path: canonical,
     bytes: stat.size,
     digest: digestBytes(bytes),
   };
 }
 
 async function collectWebDist(root) {
-  const resolvedRoot = path.resolve(root);
+  const resolvedRoot = await canonicalDirectory(root, "web dist output");
   const files = [];
   const visit = async (directory) => {
     const entries = await fs.readdir(directory, { withFileTypes: true });
@@ -225,8 +351,19 @@ function buildOutputPaths(repoRoot, webRoot) {
   };
 }
 
-export async function verifyCaptureBuildProvenance(manifestPath, { expectedSourceSha } = {}) {
-  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+export async function verifyCaptureBuildProvenance(
+  manifestPath,
+  { expectedSourceSha, expectedRepositoryRoot } = {},
+) {
+  if (typeof expectedRepositoryRoot !== "string" || !path.isAbsolute(expectedRepositoryRoot)) {
+    throw new Error("build provenance needs an absolute trusted expectedRepositoryRoot");
+  }
+  const canonicalRepository = await canonicalDirectory(
+    expectedRepositoryRoot,
+    "expected repository root",
+  );
+  const manifestIdentity = await regularFileIdentity(manifestPath, "build provenance manifest");
+  const manifest = JSON.parse(await fs.readFile(manifestIdentity.path, "utf8"));
   if (
     manifest.contract !== "kandev-highlight-build-provenance-v1" ||
     manifest.source?.selectedSha !== expectedSourceSha
@@ -238,10 +375,22 @@ export async function verifyCaptureBuildProvenance(manifestPath, { expectedSourc
   if (manifest.manifestDigest !== digestBytes(canonicalJson(digestInput))) {
     throw new Error("build provenance manifest digest is invalid");
   }
+  const expectedPaths = buildOutputPaths(
+    canonicalRepository,
+    path.join(canonicalRepository, "apps", "web"),
+  );
+  for (const key of ["backend", "mockAgent", "webDist"]) {
+    const actualPath = manifest.outputs?.[key]?.path;
+    if (actualPath !== expectedPaths[key]) {
+      throw new Error(
+        `build provenance ${key} must use canonical expected build output path ${expectedPaths[key]}; got ${actualPath ?? "<missing>"}`,
+      );
+    }
+  }
   const [backend, mockAgent, webDist] = await Promise.all([
-    regularFileIdentity(manifest.outputs.backend.path, "backend build output"),
-    regularFileIdentity(manifest.outputs.mockAgent.path, "mock-agent build output"),
-    collectWebDist(manifest.outputs.webDist.path),
+    regularFileIdentity(expectedPaths.backend, "backend build output"),
+    regularFileIdentity(expectedPaths.mockAgent, "mock-agent build output"),
+    collectWebDist(expectedPaths.webDist),
   ]);
   for (const [label, actual] of Object.entries({ backend, mockAgent, webDist })) {
     const expected = manifest.outputs[label];
@@ -264,9 +413,34 @@ export async function buildCaptureCheckout({
   verifySource = verifySourceGate,
   runCommand = run,
   packageManager = packageManagerSpec(),
+  buildEnvironment,
   now = () => new Date(),
 } = {}) {
-  const resolvedRepository = path.resolve(repoRoot);
+  const resolvedRepository = await canonicalDirectory(repoRoot, "capture repository root");
+  const resolvedArtifactRoot = path.resolve(artifactRoot);
+  const environment = Object.freeze(
+    validateCaptureBuildEnvironment(
+      buildEnvironment ?? createCaptureBuildEnvironment({ artifactRoot: resolvedArtifactRoot }),
+      resolvedArtifactRoot,
+    ),
+  );
+  await Promise.all(
+    [environment.HOME, environment.TMPDIR, environment.XDG_CACHE_HOME].map((directory) =>
+      fs.mkdir(directory, { recursive: true }),
+    ),
+  );
+  await Promise.all(
+    [environment.HOME, environment.TMPDIR, environment.XDG_CACHE_HOME].map((directory) =>
+      canonicalDirectory(directory, "capture build environment directory"),
+    ),
+  );
+  const expectedWebRoot = path.join(resolvedRepository, "apps", "web");
+  const resolvedWebRoot = await canonicalDirectory(webRoot, "capture web root");
+  if (resolvedWebRoot !== expectedWebRoot) {
+    throw new Error(
+      `capture web root must be the canonical repository web app ${expectedWebRoot}; got ${resolvedWebRoot}`,
+    );
+  }
   const before = await verifySource({ repoRoot: resolvedRepository, source });
   if (before?.clean !== true || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(before.selectedSha ?? "")) {
     throw new Error("capture build needs an exact clean source gate before build");
@@ -283,12 +457,12 @@ export async function buildCaptureCheckout({
       cwd: path.join(resolvedRepository, "apps"),
     },
   ];
-  for (const command of commands) await runCommand(command, process.env);
+  for (const command of commands) await runCommand(command, environment);
   const after = await verifySource({ repoRoot: resolvedRepository, source });
   if (after?.clean !== true || after.selectedSha !== before.selectedSha) {
     throw new Error("source checkout changed while producing capture build");
   }
-  const outputPaths = buildOutputPaths(resolvedRepository, path.resolve(webRoot));
+  const outputPaths = buildOutputPaths(resolvedRepository, resolvedWebRoot);
   const [backend, mockAgent, webDist] = await Promise.all([
     regularFileIdentity(outputPaths.backend, "backend build output"),
     regularFileIdentity(outputPaths.mockAgent, "mock-agent build output"),
@@ -299,19 +473,21 @@ export async function buildCaptureCheckout({
     builtAt: now().toISOString(),
     source: structuredClone(after),
     commands: commands.map(({ command, args, cwd }) => ({ command, args, cwd })),
+    environment,
     outputs: { backend, mockAgent, webDist },
   };
   const manifest = {
     ...base,
     manifestDigest: digestBytes(canonicalJson(base)),
   };
-  const manifestPath = path.join(path.resolve(artifactRoot), "evidence", "build-provenance.json");
+  const manifestPath = path.join(resolvedArtifactRoot, "evidence", "build-provenance.json");
   await fs.mkdir(path.dirname(manifestPath), { recursive: true });
   await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, {
     flag: "wx",
   });
   await verifyCaptureBuildProvenance(manifestPath, {
     expectedSourceSha: after.selectedSha,
+    expectedRepositoryRoot: resolvedRepository,
   });
   return { manifestPath, manifest };
 }
@@ -383,6 +559,7 @@ export async function runCaptureIntegration() {
   await preflightCaptureIntegration();
   await verifyCaptureBuildProvenance(build.manifestPath, {
     expectedSourceSha: build.manifest.source.selectedSha,
+    expectedRepositoryRoot: DEFAULT_REPO_ROOT,
   });
   const port = await selectIntegrationPortOffset();
   const command = buildIntegrationCommand();

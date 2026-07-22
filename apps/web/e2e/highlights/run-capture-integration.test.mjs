@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { compileTimeline, readScenario } from "../../../../scripts/highlights/scenario.mjs";
 import {
   buildIntegrationCommand,
+  createCaptureBuildEnvironment,
   preflightCaptureIntegration,
   resolveIntegrationArtifactRoot,
   selectIntegrationPortOffset,
@@ -16,6 +18,57 @@ import {
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = path.resolve(HERE, "../..");
 const REPO_ROOT = path.resolve(WEB_ROOT, "../..");
+
+test("capture build environment allowlists toolchain inputs and strips ambient credentials", () => {
+  const artifactRoot = "/external/highlight-build";
+  const environment = createCaptureBuildEnvironment({
+    artifactRoot,
+    inheritedEnv: {
+      PATH: "/usr/local/bin:/usr/bin",
+      CC: "/usr/bin/clang",
+      CXX: "/usr/bin/clang++",
+      GOFLAGS: "-trimpath",
+      GH_TOKEN: "github-secret",
+      GITHUB_TOKEN: "github-secret-2",
+      OPENAI_API_KEY: "openai-secret",
+      AWS_SECRET_ACCESS_KEY: "aws-secret",
+      CLOUD_TOKEN: "cloud-secret",
+      DATABASE_PASSWORD: "database-secret",
+      NODE_OPTIONS: "--require=/tmp/ambient-hook.js",
+    },
+  });
+
+  assert.deepEqual(environment, {
+    PATH: "/usr/local/bin:/usr/bin",
+    HOME: path.join(artifactRoot, "build-home"),
+    TMPDIR: path.join(artifactRoot, "build-tmp"),
+    XDG_CACHE_HOME: path.join(artifactRoot, "build-home", ".cache"),
+    CI: "1",
+    NODE_ENV: "production",
+    TZ: "UTC",
+    LANG: "C.UTF-8",
+    LC_ALL: "C.UTF-8",
+    CC: "/usr/bin/clang",
+    CXX: "/usr/bin/clang++",
+    GOFLAGS: "-trimpath",
+  });
+  assert.doesNotMatch(JSON.stringify(environment), /secret|NODE_OPTIONS/);
+});
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function digestValue(value) {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
 
 test("checked quick-start scenario is executable, short, semantic, and has no camera zoom", async () => {
   const scenario = await readScenario(path.join(HERE, "quick-start.scenario.json"));
@@ -172,6 +225,16 @@ test("integration rebuilds clean checkout and attests exact backend, agent, and 
     status: "",
   };
   const commands = [];
+  const commandEnvironments = [];
+  const buildEnvironment = createCaptureBuildEnvironment({
+    artifactRoot,
+    inheritedEnv: {
+      PATH: "/usr/bin:/bin",
+      GOFLAGS: "-trimpath",
+      GITHUB_TOKEN: "must-not-reach-build",
+      NODE_OPTIONS: "--require=/tmp/ambient-hook.js",
+    },
+  });
   let gateCalls = 0;
   const result = await buildCaptureCheckout({
     repoRoot,
@@ -181,13 +244,19 @@ test("integration rebuilds clean checkout and attests exact backend, agent, and 
       gateCalls += 1;
       return source;
     },
-    runCommand: async (command) => commands.push(command),
+    runCommand: async (command, environment) => {
+      commands.push(command);
+      commandEnvironments.push(environment);
+    },
     packageManager: { command: "/usr/bin/node", args: ["/opt/pnpm.js"] },
+    buildEnvironment,
     now: () => new Date("2026-07-22T12:00:00.000Z"),
   });
 
   assert.equal(gateCalls, 2, "source gate runs before and after build");
   assert.equal(commands.length, 2);
+  assert.deepEqual(commandEnvironments, [buildEnvironment, buildEnvironment]);
+  assert.doesNotMatch(JSON.stringify(commandEnvironments), /must-not-reach-build|NODE_OPTIONS/);
   assert.deepEqual(commands[0], {
     command: "make",
     args: ["-C", "apps/backend", "build"],
@@ -199,6 +268,25 @@ test("integration rebuilds clean checkout and attests exact backend, agent, and 
     cwd: path.join(repoRoot, "apps"),
   });
   assert.equal(result.manifest.source.selectedSha, source.selectedSha);
+  assert.deepEqual(result.manifest.environment, buildEnvironment);
+  assert.doesNotMatch(JSON.stringify(result.manifest.environment), /must-not-reach-build/);
+  await assert.rejects(
+    () =>
+      buildCaptureCheckout({
+        repoRoot,
+        webRoot,
+        artifactRoot: path.join(root, "rejected-build-artifacts"),
+        buildEnvironment: {
+          ...buildEnvironment,
+          GITHUB_TOKEN: "must-be-rejected",
+        },
+        verifySource: async () => source,
+        runCommand: async () => {
+          throw new Error("build command must not launch");
+        },
+      }),
+    /buildEnvironment key GITHUB_TOKEN is not allowlisted/,
+  );
   assert.match(result.manifest.manifestDigest, /^sha256:[a-f0-9]{64}$/);
   assert.match(result.manifest.outputs.backend.digest, /^sha256:[a-f0-9]{64}$/);
   assert.match(result.manifest.outputs.mockAgent.digest, /^sha256:[a-f0-9]{64}$/);
@@ -207,15 +295,68 @@ test("integration rebuilds clean checkout and attests exact backend, agent, and 
   assert.deepEqual(
     await verifyCaptureBuildProvenance(result.manifestPath, {
       expectedSourceSha: source.selectedSha,
+      expectedRepositoryRoot: repoRoot,
     }),
     result.manifest,
   );
+
+  const attackerRoot = path.join(root, "attacker-build");
+  await fs.mkdir(path.join(attackerRoot, "dist", "assets"), { recursive: true });
+  await Promise.all([
+    fs.writeFile(path.join(attackerRoot, "kandev"), "backend-current-sha"),
+    fs.writeFile(path.join(attackerRoot, "mock-agent"), "agent-current-sha"),
+    fs.writeFile(path.join(attackerRoot, "dist", "index.html"), "<main>current sha</main>"),
+    fs.writeFile(path.join(attackerRoot, "dist", "assets", "app.js"), "current-sha-js"),
+  ]);
+  const attackerManifest = structuredClone(result.manifest);
+  attackerManifest.outputs.backend.path = path.join(attackerRoot, "kandev");
+  attackerManifest.outputs.mockAgent.path = path.join(attackerRoot, "mock-agent");
+  attackerManifest.outputs.webDist.path = path.join(attackerRoot, "dist");
+  delete attackerManifest.manifestDigest;
+  attackerManifest.manifestDigest = digestValue(canonicalJson(attackerManifest));
+  const attackerManifestPath = path.join(artifactRoot, "evidence", "attacker-build.json");
+  await fs.writeFile(attackerManifestPath, `${JSON.stringify(attackerManifest, null, 2)}\n`);
+  await assert.rejects(
+    () =>
+      verifyCaptureBuildProvenance(attackerManifestPath, {
+        expectedSourceSha: source.selectedSha,
+        expectedRepositoryRoot: repoRoot,
+      }),
+    /canonical.*backend|expected build output path/i,
+  );
+
+  const repositoryLink = path.join(root, "repository-link");
+  await fs.symlink(repoRoot, repositoryLink, "dir");
+  await assert.rejects(
+    () =>
+      verifyCaptureBuildProvenance(result.manifestPath, {
+        expectedSourceSha: source.selectedSha,
+        expectedRepositoryRoot: repositoryLink,
+      }),
+    /repository root.*symlink/i,
+  );
+
+  const backendPath = path.join(backendDir, "kandev");
+  const backendRealPath = path.join(backendDir, "kandev.real");
+  await fs.rename(backendPath, backendRealPath);
+  await fs.symlink(backendRealPath, backendPath, "file");
+  await assert.rejects(
+    () =>
+      verifyCaptureBuildProvenance(result.manifestPath, {
+        expectedSourceSha: source.selectedSha,
+        expectedRepositoryRoot: repoRoot,
+      }),
+    /backend build output.*non-symlink|symlink/i,
+  );
+  await fs.unlink(backendPath);
+  await fs.rename(backendRealPath, backendPath);
 
   await fs.writeFile(path.join(webDist, "index.html"), "tampered");
   await assert.rejects(
     () =>
       verifyCaptureBuildProvenance(result.manifestPath, {
         expectedSourceSha: source.selectedSha,
+        expectedRepositoryRoot: repoRoot,
       }),
     /web dist.*digest|build output.*changed/i,
   );

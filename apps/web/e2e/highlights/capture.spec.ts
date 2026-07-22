@@ -9,7 +9,10 @@ import { expect, test } from "../fixtures/test-base";
 import { createHighlightRegistries } from "./registry";
 import { verifyCaptureBuildProvenance } from "./run-capture-integration.mjs";
 
-import { captureScenario } from "../../../../scripts/highlights/capture-source.mjs";
+import {
+  captureScenario,
+  createTrustedCaptureBuildVerifier,
+} from "../../../../scripts/highlights/capture-source.mjs";
 import { compileTimeline, readScenario } from "../../../../scripts/highlights/scenario.mjs";
 import { verifySourceGate } from "../../../../scripts/highlights/source-gate.mjs";
 
@@ -92,6 +95,12 @@ test("captures deterministic declarative quick-start source master", async ({
   const source = await verifySourceGate({ repoRoot: REPOSITORY_ROOT, source: "pr_head" });
   const buildProof = await verifyCaptureBuildProvenance(buildProofPath, {
     expectedSourceSha: source.selectedSha,
+    expectedRepositoryRoot: REPOSITORY_ROOT,
+  });
+  const buildVerifier = createTrustedCaptureBuildVerifier({
+    manifestPath: buildProofPath,
+    repositoryRoot: REPOSITORY_ROOT,
+    verify: verifyCaptureBuildProvenance,
   });
   const runId = `e2e-${process.pid}-${testInfo.workerIndex}`;
   const artifactRoot = path.join(artifactParent, runId);
@@ -103,6 +112,7 @@ test("captures deterministic declarative quick-start source master", async ({
     source,
     sourceDigest: sourceDigest(source),
     buildProvenance: buildProof,
+    buildVerifier,
     frontendUrl: backend.frontendUrl,
     artifactRoot,
     repositoryRoots: [REPOSITORY_ROOT],

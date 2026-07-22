@@ -37,6 +37,7 @@ const REPOSITORY_ROOT = path.resolve(MODULE_DIR, "../..");
 const WEB_ROOT = path.join(REPOSITORY_ROOT, "apps", "web");
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SOURCE_SHA_PATTERN = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
+const TRUSTED_CAPTURE_BUILD_VERIFIERS = new WeakMap();
 const CAPTURE_CONTENT_BOUNDS = Object.freeze({
   maxVisibleDomTextRecords: 512,
   maxVisibleDomTextBytes: 65_536,
@@ -159,6 +160,8 @@ export function buildFfmpegCapturePlan({
     ...encoding.args,
     "-movflags",
     "+faststart",
+    "-stats_period",
+    (1 / captureProfile.fps).toFixed(3),
     "-progress",
     runtime.progressPath,
     "-nostats",
@@ -254,13 +257,19 @@ export async function chooseReadyCaptureEncoder({
 }
 
 function lastProgressValues(contents) {
-  const values = new Map();
+  let values = new Map();
+  let lastComplete = null;
   for (const line of contents.split(/\r?\n/)) {
     const separator = line.indexOf("=");
-    if (separator > 0)
-      values.set(line.slice(0, separator), line.slice(separator + 1).trim());
+    if (separator <= 0) continue;
+    const key = line.slice(0, separator);
+    values.set(key, line.slice(separator + 1).trim());
+    if (key === "progress") {
+      lastComplete = values;
+      values = new Map();
+    }
   }
-  return values;
+  return lastComplete ?? new Map();
 }
 
 function progressNumber(values, key, { integer = false } = {}) {
@@ -275,9 +284,13 @@ export function parseCaptureProgress(contents) {
   if (typeof contents !== "string" || contents.trim() === "")
     throw new Error("ffmpeg progress is empty");
   const values = lastProgressValues(contents);
+  const mediaTimeUs = progressNumber(values, "out_time_us", {
+    integer: true,
+  });
   return {
     frameCount: progressNumber(values, "frame", { integer: true }),
     fps: progressNumber(values, "fps"),
+    mediaTimeMs: mediaTimeUs / 1_000,
     duplicateFrames: progressNumber(values, "dup_frames", { integer: true }),
     droppedFrames: progressNumber(values, "drop_frames", { integer: true }),
     progress: values.get("progress") ?? null,
@@ -305,16 +318,14 @@ export function assertCleanCaptureProgress(
 }
 
 export function assertCaptureFrameAlignment({
-  frameCount,
   fps,
-  storyStartOffsetMs,
   storyDurationMs,
+  storyStart,
+  storyEnd,
   toleranceFrames = 1,
 } = {}) {
   for (const [label, value] of Object.entries({
-    frameCount,
     fps,
-    storyStartOffsetMs,
     storyDurationMs,
     toleranceFrames,
   })) {
@@ -322,21 +333,56 @@ export function assertCaptureFrameAlignment({
       throw new Error(`capture frame alignment needs non-negative ${label}`);
     }
   }
-  if (!Number.isInteger(frameCount) || !Number.isInteger(toleranceFrames)) {
+  if (!Number.isInteger(toleranceFrames)) {
     throw new Error(
-      "capture frame alignment frameCount and toleranceFrames must be integers",
+      "capture frame alignment toleranceFrames must be an integer",
     );
   }
-  const expectedFrameCount = Math.round(
-    ((storyStartOffsetMs + storyDurationMs) * fps) / 1_000,
-  );
-  const frameDelta = frameCount - expectedFrameCount;
+  if (fps === 0) {
+    throw new Error("capture frame alignment fps must be greater than zero");
+  }
+  for (const [label, sample] of Object.entries({ storyStart, storyEnd })) {
+    if (
+      !isRecord(sample) ||
+      !Number.isInteger(sample.frameCount) ||
+      sample.frameCount < 0 ||
+      !Number.isFinite(sample.mediaTimeMs) ||
+      sample.mediaTimeMs < 0
+    ) {
+      throw new Error(
+        `capture media frame alignment needs ${label} {frameCount, mediaTimeMs}`,
+      );
+    }
+  }
+  const expectedStoryFrames = Math.round((storyDurationMs * fps) / 1_000);
+  const observedStoryFrames = storyEnd.frameCount - storyStart.frameCount;
+  const observedMediaDurationMs = storyEnd.mediaTimeMs - storyStart.mediaTimeMs;
+  if (observedStoryFrames < 0 || observedMediaDurationMs < 0) {
+    throw new Error("capture media frame alignment samples must be monotonic");
+  }
+  const frameDelta = observedStoryFrames - expectedStoryFrames;
+  const mediaDurationDeltaMs = observedMediaDurationMs - storyDurationMs;
+  const frameDurationMs = 1_000 / fps;
   if (Math.abs(frameDelta) > toleranceFrames) {
     throw new Error(
-      `capture frame alignment failed: expected ${expectedFrameCount} frames (±${toleranceFrames}), got ${frameCount}`,
+      `capture media frame alignment failed: expected ${expectedStoryFrames} story frames (±${toleranceFrames}), observed ${observedStoryFrames}`,
     );
   }
-  return { expectedFrameCount, frameDelta, toleranceFrames };
+  if (Math.abs(mediaDurationDeltaMs) > toleranceFrames * frameDurationMs) {
+    throw new Error(
+      `capture media clock alignment failed: expected ${storyDurationMs}ms (±${Math.round(toleranceFrames * frameDurationMs)}ms), observed ${observedMediaDurationMs}ms`,
+    );
+  }
+  return {
+    contract: "kandev-highlight-media-frame-alignment-v1",
+    expectedStoryFrames,
+    observedStoryFrames,
+    expectedStoryDurationMs: storyDurationMs,
+    observedMediaDurationMs,
+    frameDelta,
+    mediaDurationDeltaMs,
+    toleranceFrames,
+  };
 }
 
 export async function configureCaptureTarget({ page, cdp, profile } = {}) {
@@ -612,11 +658,66 @@ async function waitForRecorderProgress(child, progressPath) {
   );
 }
 
+async function waitForRecorderMediaSample(
+  child,
+  progressPath,
+  { minimumFrameCount = 0, minimumMediaTimeMs = 0, timeoutMs = 8_000 } = {},
+) {
+  for (const [label, value] of Object.entries({
+    minimumFrameCount,
+    minimumMediaTimeMs,
+    timeoutMs,
+  })) {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`recorder media sample needs non-negative ${label}`);
+    }
+  }
+  if (!Number.isInteger(minimumFrameCount)) {
+    throw new Error(
+      "recorder media sample minimumFrameCount must be an integer",
+    );
+  }
+  const deadline = Date.now() + timeoutMs;
+  let latest = null;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(
+        `ffmpeg exited before requested media sample (${child.exitCode ?? child.signalCode})`,
+      );
+    }
+    try {
+      latest = parseCaptureProgress(await fs.readFile(progressPath, "utf8"));
+      if (
+        latest.frameCount >= minimumFrameCount &&
+        latest.mediaTimeMs >= minimumMediaTimeMs
+      ) {
+        return {
+          frameCount: latest.frameCount,
+          mediaTimeMs: latest.mediaTimeMs,
+        };
+      }
+    } catch (error) {
+      if (
+        error.code !== "ENOENT" &&
+        !/ffmpeg progress is (?:empty|missing numeric)/.test(error.message)
+      ) {
+        throw error;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(
+    `ffmpeg media clock did not reach frame ${minimumFrameCount} / ${minimumMediaTimeMs}ms within ${timeoutMs}ms; ` +
+      `latest ${latest ? `frame ${latest.frameCount} / ${latest.mediaTimeMs}ms` : "sample unavailable"}; inspect ${progressPath}`,
+  );
+}
+
 export async function startFfmpegRecorder({
   command,
   now = () => performance.now(),
   spawnProcess = spawn,
   waitForProgress = waitForRecorderProgress,
+  waitForMediaSample = waitForRecorderMediaSample,
   waitForChildExit = childExited,
 } = {}) {
   for (const destination of [
@@ -640,6 +741,8 @@ export async function startFfmpegRecorder({
     await childSpawned(child, "ffmpeg x11 capture");
     const captureEpochMs = now();
     await waitForProgress(child, command.progressPath);
+    const sample = (options) =>
+      waitForMediaSample(child, command.progressPath, options);
     let stopping = null;
     const stop = async () => {
       if (stopping) return stopping;
@@ -669,7 +772,7 @@ export async function startFfmpegRecorder({
       })();
       return stopping;
     };
-    return { captureEpochMs, pid: child.pid, stop };
+    return { captureEpochMs, pid: child.pid, sample, stop };
   } catch (error) {
     let cleanupError;
     if (child.exitCode === null && child.signalCode === null) {
@@ -717,6 +820,7 @@ export async function collectCaptureReceipt({
   sourceDigest,
   captureEpochMs,
   storyEpochMs,
+  storyMedia,
   storyDurationMs,
   command,
   profile,
@@ -732,23 +836,39 @@ export async function collectCaptureReceipt({
   trustedInputLedger = [],
   frameAlignment,
   build,
+  buildVerification,
   applicationRuntime,
   captureEvidence,
 } = {}) {
   const stat = await fs.stat(rawMasterPath);
-  const storyStartOffsetMs = storyEpochMs - captureEpochMs;
+  if (
+    !isRecord(storyMedia) ||
+    !isRecord(storyMedia.start) ||
+    !isRecord(storyMedia.end) ||
+    !Number.isFinite(storyMedia.start.mediaTimeMs) ||
+    storyMedia.start.mediaTimeMs < 0
+  ) {
+    throw new Error(
+      "capture receipt needs FFmpeg storyMedia start/end frame samples",
+    );
+  }
+  const storyStartOffsetMs = storyMedia.start.mediaTimeMs;
   return {
     contract: "kandev-highlight-source-capture-v1",
     scenarioDigest,
     sourceDigest,
     source: source ? structuredClone(source) : null,
     build: build ? structuredClone(build) : null,
+    buildVerification: buildVerification
+      ? structuredClone(buildVerification)
+      : null,
     navigation: navigation ? structuredClone(navigation) : null,
     captureEpochMs,
     storyEpochMs,
     storyStartOffsetMs,
     storyOffsetMs: storyStartOffsetMs,
     storyDurationMs,
+    storyMedia: structuredClone(storyMedia),
     capture: {
       width: profile.sourceWidth,
       height: profile.sourceHeight,
@@ -895,6 +1015,128 @@ function compactBuildProvenance(proof, sourceProof) {
     manifestDigest: proof.manifestDigest,
     sourceSha: proof.source.selectedSha,
     outputs,
+  };
+}
+
+export function createTrustedCaptureBuildVerifier({
+  manifestPath,
+  repositoryRoot,
+  verify,
+} = {}) {
+  if (typeof manifestPath !== "string" || !path.isAbsolute(manifestPath)) {
+    throw new Error(
+      "trusted capture build verifier needs an absolute manifestPath",
+    );
+  }
+  if (typeof repositoryRoot !== "string" || !path.isAbsolute(repositoryRoot)) {
+    throw new Error(
+      "trusted capture build verifier needs an absolute repositoryRoot",
+    );
+  }
+  if (typeof verify !== "function") {
+    throw new Error("trusted capture build verifier needs verify function");
+  }
+  const token = Object.freeze({
+    contract: "kandev-highlight-trusted-build-verifier-v1",
+  });
+  TRUSTED_CAPTURE_BUILD_VERIFIERS.set(token, (expectedSourceSha) =>
+    verify(path.resolve(manifestPath), {
+      expectedSourceSha,
+      expectedRepositoryRoot: path.resolve(repositoryRoot),
+    }),
+  );
+  return token;
+}
+
+function captureBuildBoundary(proof, sourceProof, expectedBuild) {
+  const compact = compactBuildProvenance(proof, sourceProof);
+  for (const [label, actual, expected] of [
+    ["manifest", compact.manifestDigest, expectedBuild.manifestDigest],
+    ["source", compact.sourceSha, expectedBuild.sourceSha],
+    ...["backend", "mockAgent", "webDist"].map((key) => [
+      key,
+      compact.outputs[key].digest,
+      expectedBuild.outputs[key].digest,
+    ]),
+  ]) {
+    if (actual !== expected) {
+      throw new Error(
+        `capture build verification ${label} identity does not match the served application build`,
+      );
+    }
+  }
+  return {
+    contract: "kandev-highlight-build-boundary-v1",
+    manifestDigest: compact.manifestDigest,
+    sourceSha: compact.sourceSha,
+    outputs: Object.fromEntries(
+      ["backend", "mockAgent", "webDist"].map((key) => [
+        key,
+        compact.outputs[key].digest,
+      ]),
+    ),
+  };
+}
+
+async function verifyCaptureBuildBoundary(
+  verifierToken,
+  sourceProof,
+  expectedBuild,
+) {
+  const verify = TRUSTED_CAPTURE_BUILD_VERIFIERS.get(verifierToken);
+  if (!verify) {
+    throw new Error(
+      "captureScenario needs an opaque trusted build verifier from createTrustedCaptureBuildVerifier",
+    );
+  }
+  return captureBuildBoundary(
+    await verify(sourceProof.selectedSha),
+    sourceProof,
+    expectedBuild,
+  );
+}
+
+function validateCaptureBuildBoundary(boundary, label) {
+  if (
+    !isRecord(boundary) ||
+    boundary.contract !== "kandev-highlight-build-boundary-v1" ||
+    !DIGEST_PATTERN.test(boundary.manifestDigest ?? "") ||
+    !SOURCE_SHA_PATTERN.test(boundary.sourceSha ?? "")
+  ) {
+    throw new Error(`${label} capture build boundary is invalid`);
+  }
+  for (const key of ["backend", "mockAgent", "webDist"]) {
+    if (!DIGEST_PATTERN.test(boundary.outputs?.[key] ?? "")) {
+      throw new Error(`${label} capture build boundary ${key} is invalid`);
+    }
+  }
+  return boundary;
+}
+
+export function assertStableCaptureBuildVerification({
+  beforeStory,
+  afterStory,
+} = {}) {
+  validateCaptureBuildBoundary(beforeStory, "before-story");
+  validateCaptureBuildBoundary(afterStory, "after-story");
+  if (beforeStory.sourceSha !== afterStory.sourceSha) {
+    throw new Error("capture source identity changed during recorded story");
+  }
+  for (const key of ["backend", "mockAgent", "webDist"]) {
+    if (beforeStory.outputs[key] !== afterStory.outputs[key]) {
+      throw new Error(
+        `capture build outputs changed during recorded story: ${key}`,
+      );
+    }
+  }
+  if (beforeStory.manifestDigest !== afterStory.manifestDigest) {
+    throw new Error("capture build manifest changed during recorded story");
+  }
+  return {
+    contract: "kandev-highlight-build-verification-v1",
+    stable: true,
+    beforeStory: structuredClone(beforeStory),
+    afterStory: structuredClone(afterStory),
   };
 }
 
@@ -1183,7 +1425,7 @@ function evidenceSeedRegistry(seedRegistry, recipe, onProof) {
   };
 }
 
-async function writeFailureEvidence(plan, phase, error, teardown) {
+async function writeFailureEvidence(plan, phase, error, teardown, navigation) {
   if (!plan?.evidenceDir) return;
   const destination = path.join(plan.evidenceDir, "capture.failure.json");
   const evidence = {
@@ -1193,6 +1435,7 @@ async function writeFailureEvidence(plan, phase, error, teardown) {
     stack: error instanceof Error ? error.stack : undefined,
     teardown: teardown ? structuredClone(teardown) : null,
     runtime: runtimeEvidence(plan, teardown ?? null),
+    navigation: navigation ? structuredClone(navigation) : null,
   };
   await writeCaptureEvidence(destination, evidence);
 }
@@ -1241,6 +1484,7 @@ export async function captureScenario({
   source,
   sourceDigest,
   buildProvenance,
+  buildVerifier,
   applicationRuntime,
   collectCaptureEvidence,
   frontendUrl,
@@ -1287,6 +1531,11 @@ export async function captureScenario({
   if (scenario.setup?.route && typeof navigateRoute !== "function") {
     throw new Error(
       "captureScenario requires an allowlisted navigateRoute adapter for scenario.setup.route",
+    );
+  }
+  if (!TRUSTED_CAPTURE_BUILD_VERIFIERS.has(buildVerifier)) {
+    throw new Error(
+      "captureScenario needs an opaque trusted build verifier from createTrustedCaptureBuildVerifier",
     );
   }
   const timeline = suppliedTimeline ?? compileTimeline(scenario);
@@ -1336,8 +1585,14 @@ export async function captureScenario({
   let recorderEvidence;
   let captureEpochMs;
   let seedProof;
+  let navigation;
   let navigationEvidence;
   let captureEvidence;
+  let beforeStoryBuild;
+  let afterStoryBuild;
+  let buildVerification;
+  let storyMediaStart;
+  let storyMediaEnd;
   try {
     liveRuntime = await deps.startCaptureRuntime(plan);
     phase = "browser";
@@ -1348,13 +1603,14 @@ export async function captureScenario({
     const { page, context, cdp } = browserConnection;
     await deps.configureCaptureTarget({ page, cdp, profile });
     await deps.installCaptureOverlay({ context, page });
-    if (typeof preparePage === "function")
-      await preparePage({ page, context, cdp, profile, plan });
-    const navigation = bindCaptureNavigation({
+    navigation = bindCaptureNavigation({
       page,
+      context,
       frontendUrl,
       navigateRoute,
     });
+    if (typeof preparePage === "function")
+      await preparePage({ page, context, cdp, profile, plan });
     if (!scenario.setup?.route) await navigation.navigateDefault();
     const adapters = createTrustedInputAdapters({
       page,
@@ -1392,8 +1648,14 @@ export async function captureScenario({
         `seed recipe '${scenario.seed.recipe}' completed without exact seed evidence`,
       );
     }
-    navigationEvidence = navigation.evidence();
+    navigation.checkpoint("prepare complete");
     await deps.configureCaptureTarget({ page, cdp, profile });
+    phase = "build-before-story";
+    beforeStoryBuild = await verifyCaptureBuildBoundary(
+      buildVerifier,
+      sourceProof,
+      buildProof,
+    );
     const command = buildFfmpegCapturePlan({
       runtime: plan,
       profile,
@@ -1404,12 +1666,54 @@ export async function captureScenario({
     adapters.ledger.length = 0;
     recorder = await deps.startFfmpegRecorder({ command, now });
     captureEpochMs = recorder.captureEpochMs;
+    if (typeof recorder.sample !== "function") {
+      throw new Error(
+        "capture recorder must expose FFmpeg media-clock sample()",
+      );
+    }
     phase = "execute";
     const execution = await deps.executePreparedScenario({
       prepared,
       timeline,
       now,
+      onRecordingStart: async () => {
+        navigation.checkpoint("story start");
+        storyMediaStart = await recorder.sample();
+      },
+      onStep: async (step) => {
+        navigation.checkpoint(`step ${step.index}`);
+      },
+      onRecordingEnd: async (result) => {
+        navigation.checkpoint("story end");
+        const expectedStoryFrames = Math.round(
+          (result.storyDurationMs * profile.fps) / 1_000,
+        );
+        storyMediaEnd = await recorder.sample({
+          minimumFrameCount:
+            storyMediaStart.frameCount + Math.max(0, expectedStoryFrames - 1),
+          minimumMediaTimeMs:
+            storyMediaStart.mediaTimeMs +
+            Math.max(0, result.storyDurationMs - 1_000 / profile.fps),
+        });
+        afterStoryBuild = await verifyCaptureBuildBoundary(
+          buildVerifier,
+          sourceProof,
+          buildProof,
+        );
+      },
     });
+    if (!storyMediaStart || !storyMediaEnd || !afterStoryBuild) {
+      throw new Error(
+        "prepared scenario executor did not run capture boundary callbacks",
+      );
+    }
+    buildVerification = assertStableCaptureBuildVerification({
+      beforeStory: beforeStoryBuild,
+      afterStory: afterStoryBuild,
+    });
+    navigationEvidence = navigation.evidence();
+    navigation.dispose();
+    navigation = null;
     phase = "recorder-teardown";
     recorderEvidence = await recorder.stop();
     recorder = null;
@@ -1435,10 +1739,10 @@ export async function captureScenario({
     );
     assertCleanCaptureProgress(progress, { expectedMinimumFrames });
     const frameAlignment = assertCaptureFrameAlignment({
-      frameCount: progress.frameCount,
       fps: profile.fps,
-      storyStartOffsetMs: execution.storyEpochMs - captureEpochMs,
       storyDurationMs: execution.storyDurationMs,
+      storyStart: storyMediaStart,
+      storyEnd: storyMediaEnd,
     });
     phase = "browser-teardown";
     await browserConnection.close();
@@ -1459,6 +1763,7 @@ export async function captureScenario({
       source: sourceProof,
       captureEpochMs,
       storyEpochMs: execution.storyEpochMs,
+      storyMedia: { start: storyMediaStart, end: storyMediaEnd },
       storyDurationMs: execution.storyDurationMs,
       command,
       profile,
@@ -1476,6 +1781,7 @@ export async function captureScenario({
       trustedInputLedger: adapters.ledger,
       frameAlignment,
       build: buildProof,
+      buildVerification,
       applicationRuntime: applicationRuntimeProof,
       captureEvidence,
     });
@@ -1490,6 +1796,8 @@ export async function captureScenario({
       timeline,
     };
   } catch (error) {
+    const failureNavigation = navigation?.snapshot();
+    navigation?.dispose();
     const cleanup = await cleanupCaptureResources({
       recorder,
       browserConnection,
@@ -1501,7 +1809,13 @@ export async function captureScenario({
     };
     let evidenceError;
     try {
-      await writeFailureEvidence(plan, phase, error, evidenceTeardown);
+      await writeFailureEvidence(
+        plan,
+        phase,
+        error,
+        evidenceTeardown,
+        failureNavigation,
+      );
     } catch (failureEvidenceError) {
       evidenceError = new Error(
         `cannot persist capture failure evidence: ${failureEvidenceError.message}`,

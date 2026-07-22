@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { runDeclarativeHighlightCommand } from "../../../../scripts/highlights/pipeline.mjs";
+import { createTrustedCaptureBuildVerifier } from "../../../../scripts/highlights/capture-source.mjs";
 import {
   validateRuntimeWorkerRequest,
   writeRuntimeWorkerResult,
@@ -52,6 +53,7 @@ test("captures one closed declarative Highlight runtime request", async ({
   expect(source).toEqual(request.sourceProof);
   const buildProof = await verifyCaptureBuildProvenance(request.buildManifestPath, {
     expectedSourceSha: source.selectedSha,
+    expectedRepositoryRoot: request.repositoryRoot,
   });
   expect(buildProof.manifestDigest).toBe(request.build.manifestDigest);
   const tools = await preflightCaptureIntegration({
@@ -106,6 +108,11 @@ test("captures one closed declarative Highlight runtime request", async ({
   const captureBindings = {
     ...registries,
     buildProvenance: buildProof,
+    buildVerifier: createTrustedCaptureBuildVerifier({
+      manifestPath: request.buildManifestPath,
+      repositoryRoot: request.repositoryRoot,
+      verify: verifyCaptureBuildProvenance,
+    }),
     applicationRuntime,
     browserExecutable: request.tools.chromium,
     ffmpegExecutable: request.tools.ffmpeg,

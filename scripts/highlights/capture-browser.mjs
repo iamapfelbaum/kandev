@@ -412,39 +412,212 @@ export async function measureTargetGlyph(locator) {
 
 export function bindCaptureNavigation({
   page,
+  context,
   frontendUrl,
   navigateRoute,
 } = {}) {
   if (
     !page ||
     typeof page.url !== "function" ||
-    typeof page.goto !== "function"
+    typeof page.goto !== "function" ||
+    typeof page.on !== "function" ||
+    typeof page.off !== "function" ||
+    typeof page.mainFrame !== "function"
   ) {
     throw new Error(
-      "capture navigation needs a Playwright page with url() and goto()",
+      "capture navigation needs an observable Playwright page with url(), goto(), and mainFrame()",
+    );
+  }
+  if (
+    !context ||
+    typeof context.pages !== "function" ||
+    typeof context.on !== "function" ||
+    typeof context.off !== "function"
+  ) {
+    throw new Error(
+      "capture navigation needs an observable Playwright browser context to guard top-level pages",
     );
   }
   const configuredUrl = frontendUrl;
   const configured = new URL(configuredUrl);
-  const assertAllowed = (phase) => {
-    const current = page.url();
+  const events = [];
+  const checkpoints = [];
+  const violations = [];
+  const pageListeners = new Map();
+  const pageIds = new Map([[page, "primary"]]);
+  let sequence = 0;
+  let disposed = false;
+
+  const record = (collection, value) => {
+    const entry = { sequence: (sequence += 1), ...value };
+    collection.push(entry);
+    return entry;
+  };
+  const parseUrl = (current, phase) => {
     let parsed;
     try {
       parsed = new URL(current);
     } catch {
-      throw new Error(`capture ${phase} URL is invalid: ${current}`);
+      const message = `capture ${phase} URL is invalid: ${current}`;
+      record(violations, { kind: "invalid-url", phase, url: current, message });
+      return null;
     }
-    if (parsed.origin !== configured.origin) {
+    return parsed;
+  };
+  const recordViolation = (violation) => {
+    if (
+      violations.some(
+        (entry) =>
+          entry.kind === violation.kind &&
+          entry.page === violation.page &&
+          entry.url === violation.url,
+      )
+    ) {
+      return;
+    }
+    record(violations, violation);
+  };
+  const observeNavigation = (observedPage, frame, phase) => {
+    if (frame && frame !== observedPage.mainFrame()) return;
+    const pageId = pageIds.get(observedPage) ?? "extra";
+    const current = frame?.url?.() ?? observedPage.url();
+    const parsed = parseUrl(current, phase);
+    const event = {
+      kind: "top-level-navigation",
+      page: pageId,
+      phase,
+      url: current,
+      origin: parsed?.origin ?? null,
+      allowed: pageId === "primary" && parsed?.origin === configured.origin,
+    };
+    const previous = events.at(-1);
+    if (
+      !previous ||
+      previous.kind !== event.kind ||
+      previous.page !== event.page ||
+      previous.url !== event.url
+    ) {
+      record(events, event);
+    }
+    if (pageId !== "primary") return;
+    if (parsed && parsed.origin !== configured.origin) {
+      recordViolation({
+        kind: "cross-origin-navigation",
+        page: pageId,
+        phase,
+        url: current,
+        origin: parsed.origin,
+        message:
+          `capture ${phase} must remain on allowed frontend origin ${configured.origin}; ` +
+          `got ${current}`,
+      });
+    }
+  };
+  const attachPage = (observedPage, pageId) => {
+    pageIds.set(observedPage, pageId);
+    if (
+      typeof observedPage.on !== "function" ||
+      typeof observedPage.off !== "function" ||
+      typeof observedPage.mainFrame !== "function" ||
+      typeof observedPage.url !== "function"
+    ) {
+      recordViolation({
+        kind: "unobservable-top-level-page",
+        page: pageId,
+        url: null,
+        message: `capture opened unobservable extra top-level page ${pageId}`,
+      });
+      return;
+    }
+    const listener = (frame) =>
+      observeNavigation(observedPage, frame, `${pageId} navigation`);
+    observedPage.on("framenavigated", listener);
+    pageListeners.set(observedPage, listener);
+  };
+  const onPage = (openedPage) => {
+    const pageId = `extra-${pageIds.size}`;
+    attachPage(openedPage, pageId);
+    const current = openedPage.url?.() ?? null;
+    record(events, {
+      kind: "top-level-page-opened",
+      page: pageId,
+      url: current,
+    });
+    recordViolation({
+      kind: "extra-top-level-page",
+      page: pageId,
+      url: current,
+      message: `capture opened extra top-level page ${pageId}${current ? ` at ${current}` : ""}`,
+    });
+  };
+  attachPage(page, "primary");
+  context.on("page", onPage);
+
+  const snapshot = () => {
+    const finalUrl = page.url();
+    let finalOrigin = null;
+    try {
+      finalOrigin = new URL(finalUrl).origin;
+    } catch {
+      // The invalid URL violation is captured by the nearest checkpoint.
+    }
+    return {
+      contract: "kandev-highlight-navigation-evidence-v1",
+      version: 1,
+      configuredUrl,
+      allowedOrigin: configured.origin,
+      finalUrl,
+      finalOrigin,
+      events: structuredClone(events),
+      checkpoints: structuredClone(checkpoints),
+      violations: structuredClone(violations),
+    };
+  };
+
+  const checkpoint = (label) => {
+    if (disposed)
+      throw new Error("capture navigation guard is already disposed");
+    const pages = context.pages();
+    if (pages.length !== 1 || pages[0] !== page) {
+      recordViolation({
+        kind: "extra-top-level-page",
+        page: "context",
+        url: null,
+        message: `capture has ${pages.length} top-level pages instead of exactly the primary page`,
+      });
+    }
+    observeNavigation(page, page.mainFrame(), label);
+    const current = page.url();
+    const parsed = parseUrl(current, label);
+    if (parsed && parsed.origin !== configured.origin) {
+      recordViolation({
+        kind: "cross-origin-navigation",
+        page: "primary",
+        phase: label,
+        url: current,
+        origin: parsed.origin,
+        message:
+          `capture ${label} must remain on allowed frontend origin ${configured.origin}; ` +
+          `got ${current}`,
+      });
+    }
+    if (violations.length > 0) {
       throw new Error(
-        `capture ${phase} must remain on allowed frontend origin ${configured.origin}; got ${current}`,
+        `${violations[0].message}; detected at deterministic checkpoint '${label}'`,
       );
     }
+    record(checkpoints, {
+      label,
+      url: parsed.href,
+      origin: parsed.origin,
+      topLevelPageCount: pages.length,
+    });
     return parsed;
   };
   return {
     async navigateDefault() {
       await page.goto(configuredUrl, { waitUntil: "domcontentloaded" });
-      return assertAllowed("default navigation");
+      return checkpoint("default navigation");
     },
     async navigateRoute(route, context) {
       if (typeof navigateRoute !== "function") {
@@ -453,16 +626,22 @@ export function bindCaptureNavigation({
         );
       }
       await navigateRoute(route, context);
-      return assertAllowed(`route '${route}'`);
+      return checkpoint(`route '${route}'`);
+    },
+    checkpoint,
+    snapshot,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      context.off("page", onPage);
+      for (const [observedPage, listener] of pageListeners) {
+        observedPage.off("framenavigated", listener);
+      }
+      pageListeners.clear();
     },
     evidence() {
-      const final = assertAllowed("record boundary");
-      return {
-        configuredUrl,
-        allowedOrigin: configured.origin,
-        finalUrl: final.href,
-        finalOrigin: final.origin,
-      };
+      checkpoint("record boundary");
+      return snapshot();
     },
   };
 }
