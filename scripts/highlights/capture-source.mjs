@@ -46,6 +46,8 @@ const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SOURCE_SHA_PATTERN = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 const TRUSTED_CAPTURE_BUILD_VERIFIERS = new WeakMap();
 const CAPTURE_INPUT_QUEUE_FRAMES = 16;
+const ENCODER_PROBE_DURATION_MS = 3_000;
+const ENCODER_PROBE_STARTUP_ALLOWANCE_MS = 750;
 const CAPTURE_CONTENT_BOUNDS = Object.freeze({
   maxVisibleDomTextRecords: 512,
   maxVisibleDomTextBytes: 65_536,
@@ -196,8 +198,8 @@ export function buildEncoderProbePlan({
   ffmpegExecutable = "ffmpeg",
 } = {}) {
   const encoding = encoderContract(encoder);
-  const sourceDurationMs = 1_000;
-  const frameCount = profile.fps;
+  const sourceDurationMs = ENCODER_PROBE_DURATION_MS;
+  const frameCount = profile.fps * (ENCODER_PROBE_DURATION_MS / 1_000);
   return {
     command: ffmpegExecutable,
     args: [
@@ -219,7 +221,9 @@ export function buildEncoderProbePlan({
     encoder: { ...encoder },
     master: encoding.master,
     sourceDurationMs,
-    maximumElapsedMs: 1_500,
+    startupAllowanceMs: ENCODER_PROBE_STARTUP_ALLOWANCE_MS,
+    maximumElapsedMs:
+      sourceDurationMs + ENCODER_PROBE_STARTUP_ALLOWANCE_MS,
   };
 }
 
@@ -597,6 +601,8 @@ export async function probeCaptureEncoder(
   return {
     elapsedMs,
     command: [plan.command, ...plan.args],
+    sourceDurationMs: plan.sourceDurationMs,
+    startupAllowanceMs: plan.startupAllowanceMs,
     maximumElapsedMs: plan.maximumElapsedMs,
   };
 }

@@ -260,7 +260,7 @@ test("resolves Chromium from native ESM or Playwright CommonJS default interop",
   );
 });
 
-test("encoder readiness plan proves sustained full-source throughput before story", () => {
+test("encoder readiness plan amortizes cold startup while proving sustained full-source throughput", () => {
   const profile = resolveCaptureProfile(DESKTOP_SCENARIO_PROFILE);
   const plan = buildEncoderProbePlan({
     encoder: { name: "libx264", source: "portable-fallback" },
@@ -271,10 +271,11 @@ test("encoder readiness plan proves sustained full-source throughput before stor
 
   assert.match(joined, /testsrc2=.*3840x2400.*25/);
   assert.doesNotMatch(joined, /color=c=black/);
-  assert.match(joined, /-frames:v 25/);
+  assert.match(joined, /-frames:v 75/);
   assert.match(joined, /-qp 0/);
-  assert.equal(plan.sourceDurationMs, 1_000);
-  assert.equal(plan.maximumElapsedMs, 1_500);
+  assert.equal(plan.sourceDurationMs, 3_000);
+  assert.equal(plan.startupAllowanceMs, 750);
+  assert.equal(plan.maximumElapsedMs, 3_750);
 });
 
 test("story frame alignment uses FFmpeg media samples instead of recorder wall time", async () => {
