@@ -1,11 +1,28 @@
 ---
 name: product-video-capture
-description: Record, camera-process, encode, stage, and validate polished Kandev product films, landing-page loops, screenshots, and alternate framing from isolated demo data. Use when the user asks for product videos, GIF-like feature demos, cursor-follow camera motion, desktop/mobile captures, recaptures, landing media, or different framing; always invoke product-demo-seeding first.
+description: Record, camera-process, encode, stage, and validate polished Kandev long-form product films, landing-page loops, screenshots, and alternate framing from isolated demo data. Use for manual media outside the declarative Highlight DSL; short Highlights default to feature-highlight. Always invoke product-demo-seeding first.
 ---
 
 # Product Video Capture
 
 Produce reusable clean masters first; derive presentation from them later. Preserve the raw master and camera config so every camera choice is reversible.
+
+## Highlights Default
+
+For short Highlights, default route uses `/feature-highlight` and one checked-in
+schema-v1 scenario. It replaces temporary Playwright harnesses, hand-authored
+camera JSON, encoder wrappers, and manual promotion. Review storyboard before
+capture, then use:
+
+```bash
+node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --source pr_head
+node scripts/highlights.mjs promote /external/highlights/my-highlight/<stage-digest>/stage.json --dry-run
+node scripts/highlights.mjs promote /external/highlights/my-highlight/<stage-digest>/stage.json
+```
+
+Raw and QA stay outside repositories in content-addressed staging. Promotion is
+separate and collision-refusing. Continue below for long-form, exploratory, or
+unmodeled capture work that cannot fit the validated Highlight action DSL.
 
 ## Prerequisites And Repo Discovery
 
@@ -18,13 +35,17 @@ Produce reusable clean masters first; derive presentation from them later. Prese
 
 | Request | Path |
 | --- | --- |
-| New feature/story | Seed with `/product-demo-seeding`, then capture desktop and mobile masters |
+| Short release Highlight | Seed with `/product-demo-seeding`, then use `/feature-highlight` |
+| New long-form feature/story | Seed with `/product-demo-seeding`, then capture desktop and mobile masters manually |
 | Different zoom/crop/pacing | Invoke `/product-demo-seeding` to re-prove source/isolation/provenance, then reuse an approved raw master and change camera config only |
 | New poster/static image | Extract a settled pointer-free frame from approved master or recapture native screenshot |
 | Longer walkthrough | Keep continuous 1x source; add a tested delivery profile instead of speed ramps |
 | Actual GIF required | Derive from approved video last; retain WebM/MP4 as primary web formats |
 
 ## Pipeline
+
+This pipeline is the manual long-form fallback. Do not recreate it per Highlight;
+the permanent `/feature-highlight` executor and landing adapter consolidate it.
 
 1. Always invoke `/product-demo-seeding` before this skill. For alternate framing, it validates provenance and isolation instead of manufacturing new visible state. An approved raw is reusable only when its source SHA still equals freshly fetched `origin/main`; otherwise recapture. Then resolve and verify `KANDEV_REPO` and `LANDING_REPO` as described above. Do not assume task-specific absolute paths.
 2. Create a unique writable `CAPTURE_ROOT`, for example with `mktemp -d "${TMPDIR:-/tmp}/kandev-product-capture.XXXXXX"`. Use it for every raw, proof, config, and staged delivery path; do not write candidates into production assets.
@@ -54,6 +75,11 @@ Read [capture-pipeline.md](references/capture-pipeline.md) before recording and 
 ## Camera And Delivery
 
 Use `$LANDING_REPO/scripts/product-loop-camera.mjs` and `$LANDING_REPO/scripts/product-loop-encoder.mjs`. Their tests define dimensions, frame rate, maximum zoom, smoothness, loop reset, codecs, and poster quality. For semantic landing desktop stories, use `formFactor: "landing"` with `cameraProfile: "landing-editorial"` and cap maximum zoom at 2.0x. The `landing-editorial` profile requires both `focusTrack` and `pointerTrack`; configs without either are invalid. Native mobile stays native-size and uses the tested mobile cap, never more than 2.0x. Change these contracts test-first when the user requests a genuinely different delivery format.
+
+Declarative Highlights instead compile focus/zoom/hold/return intent through
+landing `scripts/product-loop-highlight.mjs`; no camera directive means identity
+1x. Its tested caps are 1.5x desktop and 1.18x native mobile. Do not apply this
+manual 2.0x editorial example to schema-v1 Highlights.
 
 Do not remove waits with cuts or speed changes. Improve the source choreography or recapture. One trim at the beginning/end is acceptable; time skips are not.
 

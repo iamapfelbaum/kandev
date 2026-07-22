@@ -1,0 +1,48 @@
+{
+  "skill_name": "feature-highlight",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Act as a fresh agent. Scaffold and render a deterministic eight-second desktop Highlight that creates one task. Show me the scenario shape, cheap storyboard review, dry-run, external stage review, and separate promotion command. I do not want custom capture, camera, or encoder scripts.",
+      "expected_output": "A schema-v1 scenario flow using stable semantic selectors, deterministic seed/setup, exact desktop profile, no zoom by default, storyboard before capture, one run command through accepted QA and content-addressed staging, then a separate collision-refusing promotion dry-run and promotion.",
+      "files": [
+        "scripts/highlights/examples/quick-start.scenario.json",
+        "apps/web/e2e/highlights/quick-start.scenario.json"
+      ],
+      "expectations": [
+        "Uses node scripts/highlights.mjs scaffold, validate, storyboard, run, and promote",
+        "Uses testId or role plus exact accessible name and no arbitrary JavaScript or shell",
+        "States that default camera is centered 1x with no zoom by default",
+        "Keeps raw masters and QA outside the repository",
+        "Requires automatic media, containment, motion, sensitive-data, contact-sheet, browser, hash, and byte QA",
+        "Promotes only after accepted review and refuses an existing immutable revision"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Author native-phone and desktop Highlight scenarios for the same board story. Zoom should stay calm, cursor motion must remain smooth, and mobile must not be a crop.",
+      "expected_output": "Two native scenario routes with exact CSS/DPR/source profiles, deterministic shared seed intent, independent semantic actions, identity camera unless explicit focus is useful, bounded 1.5x desktop and 1.18x mobile motion, containment, and settled bookends.",
+      "files": [],
+      "expectations": [
+        "Uses 1920x1200 DPR2 to 3840x2400 desktop source and 1920x1200 delivery at 25 fps",
+        "Uses 430x932 DPR3 native-mobile context and 1290x2796 source/delivery at 25 fps",
+        "Never crops desktop into mobile",
+        "Rejects hover and middle/right click on native mobile and uses trusted touch tap/drag",
+        "Separates cursor control from focus/zoom/hold/return camera directives",
+        "Requires camera motion, safe-margin, target-glyph, cursor, and opening/ending settle QA"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Migrate an accepted old pilot that has a hand-written Playwright script, camera JSON, encoder script, contact sheet, and manual asset copy. Only poster and framing need to change.",
+      "expected_output": "A migration map from bespoke artifacts to scenario actions, registered seed/setup, shared landing adapter, automatic QA, external stage, and immutable promotion; it reuses the clean raw when provenance/source digest and semantic evidence pass instead of recapturing solely for migration.",
+      "files": [],
+      "expectations": [
+        "Does not recapture merely for migration",
+        "Reuses clean raw for framing/poster/pacing only when source digest and QA permit",
+        "Maps hand-authored camera and encoder code to scripts/product-loop-highlight.mjs",
+        "Preserves prior accepted revision and promotes a new immutable revision without overwrite"
+      ]
+    }
+  ]
+}

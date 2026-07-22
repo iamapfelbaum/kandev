@@ -39,6 +39,18 @@
         "Rejects DOM or CSS theme patches and proves dark mode in an exact-profile rehearsal frame",
         "Measures recorder capacity at the exact source profile and requires the full FFmpeg log to show zero duplicated and dropped frames"
       ]
+    },
+    {
+      "id": 4,
+      "prompt": "Make a short checked-in Kandev Highlight. I expect one command through QA and review staging, then explicit promotion; do not create another capture harness or camera JSON.",
+      "expected_output": "The skill routes the request to /feature-highlight, validates and storyboards before capture, runs schema-v1 capture/render/automatic QA into external content-addressed staging, and keeps immutable collision-refusing promotion separate.",
+      "files": [],
+      "expectations": [
+        "Uses node scripts/highlights.mjs run for a short Highlight",
+        "Uses node scripts/highlights.mjs promote only after review",
+        "Keeps raw and QA outside repositories",
+        "Does not use manual landing-editorial camera JSON for declarative Highlights"
+      ]
     }
   ]
 }

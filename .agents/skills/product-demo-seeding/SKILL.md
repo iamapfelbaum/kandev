@@ -1,11 +1,32 @@
 ---
 name: product-demo-seeding
-description: Seed coherent, disposable Kandev demo scenarios for screenshots, product films, landing-page media, and reproducible UI captures. Use when media needs believable tasks, workflows, agents, executors, integrations, plans, sessions, diffs, reviews, or native-mobile states; invoke before product-video-capture and never use a developer's main instance or data.
+description: Seed coherent, disposable Kandev demo scenarios for declarative Highlights, screenshots, product films, landing-page media, and reproducible UI captures. Use when media needs believable tasks, workflows, agents, executors, integrations, plans, sessions, diffs, reviews, or native-mobile states; invoke before feature-highlight or product-video-capture and never use a developer's main instance or data.
 ---
 
 # Product Demo Seeding
 
 Build a truthful product state before recording pixels. Treat narrative, data, and UI route as one artifact.
+
+## Highlights Default
+
+For Highlights, default path starts with `/feature-highlight`: author one durable
+schema-v1 scenario, not a temporary bespoke harness. Use
+`scripts/highlights/scenario.schema.json` and scaffold example
+`scripts/highlights/examples/quick-start.scenario.json`; use
+`apps/web/e2e/highlights/quick-start.scenario.json` as executable fixture.
+Express deterministic state as `seed.recipe` plus allowlisted
+`setup.primitives`, and visible work as stable semantic selectors in
+`story.actions`.
+
+This skill supplies seed design and isolation. `/feature-highlight` owns
+validation, storyboard, capture, render, automatic QA, external staging, and
+immutable promotion. Continue with manual handoff to `/product-video-capture`
+only for long-form or currently unmodeled media outside the short Highlight DSL.
+
+Feature-PR Highlights use exact clean `pr_head` provenance so scenario and media
+ship with reviewed code. The current-main gate below applies to deliberate
+backfill and manual current-product media; `current_main` requires a clean
+checkout equal to freshly fetched `origin/main`.
 
 ## Current-Main Source Gate
 
@@ -21,7 +42,9 @@ Reject stale UI, selector, script, or capture choreography until current source 
 
 ## Workflow
 
-1. Read `/e2e` and the relevant existing specs/page objects under `apps/web/e2e/`.
+1. For a Highlight, load `/feature-highlight`, scaffold the scenario, and review
+   its storyboard before capture. For manual long-form media, read `/e2e` and
+   relevant existing specs/page objects under `apps/web/e2e/`.
 2. Write a one-sentence story: user goal, visible action, visible result.
 3. Identify separate desktop and native-mobile routes. Mobile must use native mobile surfaces, not a desktop crop.
 4. Explore manually with `scripts/dev-isolated --web` when needed. For reproducible capture, use the worker-scoped E2E fixture and `ApiClient`.
@@ -29,7 +52,10 @@ Reject stale UI, selector, script, or capture choreography until current source 
 6. Seed only enough state to make the story legible. Dense believable data beats empty fixtures; excessive data hides the action.
 7. Open the intended UI and verify every visible label, control, and transition before recording.
 8. Rehearse without a recorder, discard rehearsal mutations, then reseed an identical pristine baseline for each take.
-9. Hand the scenario, routes, selectors, semantic target bounds, complete intentional pointer journeys, provenance, and cleanup command to `/product-video-capture`.
+9. For Highlights, keep recipe/setup/actions in the checked-in scenario and run
+   `/feature-highlight`. For manual long-form media, hand routes, selectors,
+   semantic target bounds, complete pointer journeys, provenance, and cleanup
+   command to `/product-video-capture`.
 
 ## Safety Contract
 
@@ -38,7 +64,13 @@ Reject stale UI, selector, script, or capture choreography until current source 
 - No credentials or network access to real provider services is permitted. Unset provider tokens and fail closed if mock routing cannot be proven in backend logs.
 - Never copy the developer's database for marketing capture. `scripts/dev-isolated --copy-db` is outside this workflow.
 - Never query, mutate, stop, or reuse the developer's instance, DB, or data.
-- Keep temporary capture specs or harness code under `CAPTURE_ROOT`, outside the source worktree. If the runner requires an in-worktree file, write only its exact path to a take-owned excludes file under `CAPTURE_ROOT` and pass it through command-local `core.excludesFile` configuration inherited by the capture process. Prove the clean-worktree status gate still returns an empty `git status --porcelain`, stage a source copy, then remove the file and exclusion during teardown. Never mutate the shared `.git/info/exclude`; linked worktrees and sibling agents may depend on it.
+- Declarative Highlights use the permanent `scripts/highlights` runner and a
+  checked-in scenario; never generate a temporary Highlight capture harness.
+  For manual long-form work only, keep temporary capture specs or harness code
+  under `CAPTURE_ROOT`, outside the source worktree. If its runner requires an
+  in-worktree file, use an exact take-owned command-local `core.excludesFile`
+  whitelist while proving the clean-worktree status gate; never mutate shared
+  `.git/info/exclude`.
 - Stop if isolation cannot be proven from process args, ports, paths, and logs.
 
 Read [isolation-and-seeding.md](references/isolation-and-seeding.md) before starting an instance.
@@ -77,5 +109,7 @@ Before capture, verify:
 - Current build and all story-critical routes passed a recorder-free rehearsal; rehearsal state was reset or discarded.
 - Exact baseline record counts prove no duplicate fixture accumulation before RECORD.
 - Seed teardown removes temporary profiles, specs, processes, ports, database, and repository.
+- Highlight scenario validates, uses stable semantic selectors, and produces a
+  human-readable storyboard before any capture starts.
 
-Report seed name, story, source SHA, seed hash, fixed provider fixture version, separate desktop/native-mobile routes, process args, ports, display, browser profile, database/temp/artifact roots, mock-routing proof, any sanitation, and teardown result. This provenance must map every delivered take to its isolated baseline and current-main source.
+Report seed name, story, source SHA, seed hash, fixed provider fixture version, separate desktop/native-mobile routes, process args, ports, display, browser profile, database/temp/artifact roots, mock-routing proof, any sanitation, and teardown result. This provenance must map every delivered take to its isolated baseline and selected eligible source.

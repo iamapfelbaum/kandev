@@ -2,6 +2,11 @@
 
 Each story needs: stable opening, one understandable action chain, visible payoff, settled ending. Keep copy natural and domain-specific.
 
+For Highlights, encode recipe choice in `seed.recipe`, pre-record state in
+allowlisted `setup.primitives`, and visible choreography in schema-v1
+`story.actions`. Use stable semantic selectors and inspect generated storyboard
+before capture. Recipes below describe intent, not Playwright harness templates.
+
 ## Plan
 
 Show planning as collaboration, not a static artifact:
@@ -71,3 +76,7 @@ Use the same seeding and truthfulness rules. Capture a settled pointer-free fram
 ## Alternate Versions
 
 When only framing, zoom, poster, or pacing changes, reuse the approved clean raw master. Re-seed and recapture when visible data, UI behavior, viewport, story route, or feature state changes.
+
+For a Highlight, rerun render and QA through `/feature-highlight`; do not fork a
+camera JSON or encoder script. Reuse still requires matching source digest and
+accepted raw provenance.

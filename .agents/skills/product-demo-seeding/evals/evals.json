@@ -38,6 +38,22 @@
         "Records per-take database, ports, display, browser profile, seed hash, and teardown evidence",
         "Keeps temporary capture harness code under the external artifact root or uses an exact take-owned command-local core.excludesFile whitelist while proving clean git status and never mutating shared .git/info/exclude"
       ]
+    },
+    {
+      "id": 4,
+      "prompt": "Prepare deterministic seed and setup for a short release Highlight. I want a fresh agent to author one checked-in scenario and review its storyboard, not write another temporary Playwright harness.",
+      "expected_output": "A /feature-highlight handoff using the schema-v1 scenario, registered seed.recipe, allowlisted setup.primitives, stable semantic selectors, external artifacts, current-source proof, reset, and teardown.",
+      "files": [
+        "scripts/highlights/examples/quick-start.scenario.json",
+        "apps/web/e2e/highlights/quick-start.scenario.json"
+      ],
+      "expectations": [
+        "Uses /feature-highlight as the default Highlights route",
+        "Links scripts/highlights/scenario.schema.json, scaffold example, and executable E2E fixture",
+        "Keeps deterministic seed and setup intent in the scenario",
+        "Does not create a temporary bespoke Highlight harness",
+        "Requires storyboard review before capture"
+      ]
     }
   ]
 }

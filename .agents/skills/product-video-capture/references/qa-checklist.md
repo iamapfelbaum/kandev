@@ -1,5 +1,9 @@
 # Product Media QA
 
+For schema-v1 Highlights, `/feature-highlight` runs this evidence as automatic
+QA and stages reports externally. Use this checklist directly for manual
+long-form review and as human acceptance over generated Highlight evidence.
+
 ## 1. Source And Isolation Contract
 
 - [ ] Proven clean worktree SHA equals the freshly fetched `origin/main`; no alternate revision is eligible for product capture.

@@ -10,8 +10,15 @@ Run the contract locally from the Kandev repository:
 ```bash
 # Author and inspect a deterministic declarative story.
 node scripts/highlights.mjs scaffold ./my-highlight.scenario.json --id my-highlight
-node scripts/highlights.mjs validate ./my-highlight.scenario.json
+node scripts/highlights.mjs validate ./my-highlight.scenario.json --dry-run
 node scripts/highlights.mjs storyboard ./my-highlight.scenario.json --format markdown --dry-run
+
+# Recover individual phases or run the fixed pipeline into external staging.
+node scripts/highlights.mjs capture ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --source pr_head --dry-run
+node scripts/highlights.mjs render ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --dry-run
+node scripts/highlights.mjs qa ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --dry-run
+node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --source pr_head --dry-run
+node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --source pr_head
 
 # Validate the checked-in delivery catalog and inspect lifecycle digests.
 node scripts/highlights.mjs validate
@@ -34,6 +41,15 @@ raw-capture digest, and delivery bytes before a copy-validate-swap transaction.
 Only WebM/MP4/WebP deliveries, `scenario.json`, and compact `provenance.json`
 enter an immutable revision. Existing revision names are never overwritten.
 
+`run` order is fixed: validate, storyboard, capture, render, automatic QA, then
+content-addressed stage. Missing capture prerequisites fail; command does not
+silently substitute a crop, stale bundle, untrusted selector, or custom script.
+Review generated keyframes, contact sheet, full browser playback, and accepted QA
+report before separate promotion.
+
+Use `pr_head` for feature work. Reserve `current_main` for deliberate backfill
+from a clean checkout proven equal to freshly fetched `origin/main`.
+
 `queued` entries become `active` only when their declared `release_version`
 matches the release being activated. Withdrawal requires a reason and appends
 an event to that Highlight's `published-history.json`; history is never
@@ -42,3 +58,7 @@ rewritten or capped.
 Use `_scaffold/highlight.json` only for migrating older hand-authored delivery
 directories. New declarative captures should let stage promotion build and hash
 the descriptor. The scaffold directory is ignored and must never be published.
+
+For full authoring, troubleshooting, and old-pilot migration guidance, see
+`docs/specs/highlights/authoring.md` and
+`.agents/skills/feature-highlight/references/`.

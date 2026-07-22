@@ -54,3 +54,12 @@ test("keeps temporary capture harness code out of clean source status", () => {
   assert.match(bundle, /command-local[^\n]{0,100}core\.excludesFile/i);
   assert.match(bundle, /never[^\n]{0,100}(?:shared )?\.git\/info\/exclude/i);
 });
+
+test("uses declarative feature-highlight scenarios as the Highlights default", () => {
+  assert.match(bundle, /Highlights?[^\n]{0,140}(?:default|start)[^\n]{0,120}feature-highlight/i);
+  assert.match(bundle, /scripts\/highlights\/scenario\.schema\.json/);
+  assert.match(bundle, /scripts\/highlights\/examples\/quick-start\.scenario\.json/);
+  assert.match(bundle, /seed\.recipe|seed recipe/i);
+  assert.match(bundle, /setup\.primitives|setup primitives/i);
+  assert.match(bundle, /stable[^\n]{0,80}(?:semantic )?selectors/i);
+});

@@ -1,5 +1,10 @@
 # Capture Pipeline
 
+This reference is manual long-form fallback. Short Highlights default to
+`/feature-highlight`, which stores actions in one schema-v1 scenario, generates
+storyboard before capture, and runs the permanent executor. Do not create a
+temporary bespoke Highlight spec or recorder harness.
+
 ## Source Gate And Isolation
 
 Record only from a clean worktree at the fetched `origin/main` commit. A product capture is evidence of current Kandev; another branch, tag, or historical revision is not an eligible substitute. Before build or rehearsal:
@@ -159,6 +164,9 @@ capture-root/
 ```
 
 Provenance records seed identity, Kandev and landing commit SHAs, form factor, CSS/DPR/source/delivery dimensions, frame rate, ports and X display, isolated browser profile, temp database/home, story start/duration, semantic events, capture and encode commands, hashes, and visual audit results. `SHA256SUMS` covers raw, metadata, camera config, actual-size proofs, contact sheets, browser evidence, and WebM/MP4/WebP candidates.
+
+Declarative Highlights produce the equivalent bundle automatically in external,
+content-addressed staging and add canonical scenario/capture/stage digests.
 
 ## Teardown Evidence
 

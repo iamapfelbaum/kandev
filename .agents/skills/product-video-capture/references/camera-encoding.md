@@ -1,5 +1,11 @@
 # Camera And Encoding
 
+Schema-v1 Highlights do not hand-author examples below. They compile explicit
+`cameraFocus`, `cameraZoom`, `cameraHold`, and `cameraReturn` through landing
+`scripts/product-loop-highlight.mjs`; default is centered identity 1x. Desktop
+cap is 1.5x and native-mobile cap is 1.18x. Keep this manual reference for
+long-form and legacy editorial deliveries.
+
 ## Keep Camera Reversible
 
 Keep camera motion out of raw capture. An unzoomed, full-frame native master supports alternate focus, different pacing, new poster timing, and future encoders without reseeding. Bake only the intentional pointer/touch treatment into raw pixels.

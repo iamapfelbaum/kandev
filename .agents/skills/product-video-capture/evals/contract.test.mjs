@@ -207,3 +207,12 @@ test("requires measured realtime recorder capacity and zero cadence loss", () =>
   assert.match(bundle, /(?:best_effort_timestamp|pkt_dts|pkt_pts)(?!_time)/i);
   assert.match(bundle, /integer[^\n]{0,100}(?:timestamp|tick)/i);
 });
+
+test("routes short Highlights through the declarative feature-highlight workflow", () => {
+  assert.match(bundle, /Highlights?[^\n]{0,140}(?:default|use)[^\n]{0,120}feature-highlight/i);
+  assert.match(bundle, /node scripts\/highlights\.mjs run/);
+  assert.match(bundle, /node scripts\/highlights\.mjs promote/);
+  assert.match(bundle, /storyboard[^\n]{0,120}before[^\n]{0,80}capture/i);
+  assert.match(bundle, /raw[^\n]{0,100}(?:and|\/)[^\n]{0,40}QA[^\n]{0,120}(?:outside|external)/i);
+  assert.match(bundle, /promotion[^\n]{0,100}separate/i);
+});

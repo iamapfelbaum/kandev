@@ -52,6 +52,27 @@ on the same immutable media, provenance, release state, and review gate.
 - Promoted revisions include only WebM/MP4/WebP, `scenario.json`, and compact
   `provenance.json`. Raw masters and full QA artifacts remain outside Git.
 
+See [authoring.md](authoring.md) for scenario, CLI, review, troubleshooting, and
+migration workflow. Agent instructions live in
+`.agents/skills/feature-highlight/SKILL.md`.
+
+## Declarative scenario contract
+
+Schema v1 is defined by `scripts/highlights/scenario.schema.json`, typed in
+`scripts/highlights/scenario.d.ts`, and exercised by
+`scripts/highlights/examples/quick-start.scenario.json`. Executable capture
+fixture lives at `apps/web/e2e/highlights/quick-start.scenario.json`. Schema
+allows only JSON data, stable `testId` or role plus exact accessible-name
+targets, registered seed recipes, allowlisted setup/extensions, bounded actions,
+and sequential camera intent. Inline shell, JavaScript, CSS, XPath, raw
+coordinates, and unregistered callbacks are outside contract.
+
+No camera directive means centered 1x identity. `cameraFocus` pans at current
+depth; `cameraZoom` is the only depth change; `cameraHold` preserves state;
+`cameraReturn` restores identity. Camera and cursor timelines are independent.
+Landing's `scripts/product-loop-highlight.mjs` owns tested keyframe generation,
+motion audit, and encoding contracts; Kandev does not duplicate that engine.
+
 ## Descriptor contract
 
 `highlight.json` is JSON with this shape (additional fields are ignored only
@@ -101,20 +122,46 @@ source reference.
 The active revision path is immutable in meaning: assets live below
 `revisions/<revision>/` and may not escape the Highlight directory. Desktop
 media is always required. Declarative production capture uses 1920x1200;
-legacy 960x600 docs backfills remain valid for migration. Mobile media is required exactly when
-`mobile.available` is true. Clips are 1–15 seconds, 25 FPS, silent, and use
+legacy 960x600 docs backfills remain valid for migration. Mobile media is
+required exactly when `mobile.available` is true. Clips are 1–15 seconds, 25
+FPS, silent, and use
 VP9/H.264 video; posters are WebP. Each asset is at most 25 MiB and each
 Highlight is at most 100 MiB. The validator rejects files in the Highlight
 directory that are not part of the descriptor, revision, or history contract.
 
+Declarative desktop capture uses CSS 1920x1200 at DPR2, a 3840x2400 25 FPS raw
+master, and 1920x1200 25 FPS delivery. Native mobile uses CSS 430x932 at DPR3
+with real mobile/touch context and native 1290x2796 25 FPS source/delivery.
+Mobile is never a crop of desktop. Camera caps are 1.5x desktop and 1.18x
+native mobile; opening/ending settles, safe margin, glyph containment, velocity,
+acceleration, jerk, and zoom rate are validated.
+
+## Media workflow
+
+`run` executes validate, storyboard, capture, render, QA, then external stage in
+that order. Storyboard and `--dry-run` are cheap gates before recording. Raw
+masters, logs, keyframes, contact sheets, browser evidence, and full QA remain
+under a content-addressed artifact root outside repository. `stage.json` pins
+scenario, source, seed, capture, report, stage, and delivery hashes/bytes.
+
+Promotion is a separate explicit operation. It requires accepted QA, rechecks
+all bytes and digests, refuses existing revision/destination collisions, copies
+to a temporary destination, validates catalog, and swaps only after success.
+Only accepted delivery media, scenario, and compact provenance enter Git.
+
 ## Tooling
 
-The repository tools are executable in CI and locally:
+The stable CLI contract is:
 
 ```bash
 node scripts/highlights.mjs scaffold ./my-highlight.scenario.json --id my-highlight
-node scripts/highlights.mjs validate ./my-highlight.scenario.json
+node scripts/highlights.mjs validate ./my-highlight.scenario.json --dry-run
 node scripts/highlights.mjs storyboard ./my-highlight.scenario.json --dry-run
+node scripts/highlights.mjs capture ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --source pr_head --dry-run
+node scripts/highlights.mjs render ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --dry-run
+node scripts/highlights.mjs qa ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --dry-run
+node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --source pr_head --dry-run
+node scripts/highlights.mjs run ./my-highlight.scenario.json --artifact-root /external/highlights/my-highlight --source pr_head
 node scripts/highlights.mjs promote /external/stages/<digest>/stage.json --dry-run
 node scripts/highlights.mjs promote /external/stages/<digest>/stage.json
 node scripts/validate-highlights.mjs
@@ -129,9 +176,22 @@ node scripts/highlight-pr-snippet.mjs docs/public/media/highlights/my-highlight 
 The opt-in GitHub workflow runs the PR gate on pull-request label and head
 changes. Release tooling never rewrites prior history entries.
 
+## Implementation status
+
+Content lifecycle, scenario schema/validation/storyboard, execution contracts,
+landing adapter boundary, QA/staging contracts, and immutable promotion live in
+checked-in modules under `scripts/highlights`. Runtime capture still depends on
+a clean eligible Kandev source, isolated app fixture, Chrome/Xvfb, FFmpeg,
+Playwright, and a clean compatible landing checkout. Documentation does not
+assert a successful capture: each run must pass its source gate, dry-run,
+executable integration/eval, automatic QA, and human review.
+
+Use `pr_head` for feature-PR delivery. `current_main` exists only for deliberate
+backfill from a clean checkout proven equal to freshly fetched `origin/main`.
+
 ## Out of scope
 
-This contract does not implement app UI, backend seen state, landing-site
-publication, Playwright execution, camera rendering, ffmpeg QA, or pilot
-Highlight videos. Those consumers read the checked-in contracts and own their
-presentation or runtime state separately.
+This utility does not implement Highlight browsing UI, backend seen-state,
+landing-site publication, or pilot delivery videos. It does not permit arbitrary
+scenario code or replace manual long-form filmmaking. Release activation and
+consumer presentation remain separate lifecycle concerns.
