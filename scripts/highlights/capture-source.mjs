@@ -1846,13 +1846,16 @@ export async function captureScenario({
         const expectedStoryFrames = Math.round(
           (result.storyDurationMs * profile.fps) / 1_000,
         );
-        storyMediaEnd = await recorder.sample({
-          minimumFrameCount:
-            storyMediaStart.frameCount + Math.max(0, expectedStoryFrames - 1),
-          minimumMediaTimeMs:
-            storyMediaStart.mediaTimeMs +
-            Math.max(0, result.storyDurationMs - 1_000 / profile.fps),
+        const scheduledEnd = {
+          frameCount: storyMediaStart.frameCount + expectedStoryFrames,
+          mediaTimeMs:
+            storyMediaStart.mediaTimeMs + result.storyDurationMs,
+        };
+        await recorder.sample({
+          minimumFrameCount: scheduledEnd.frameCount,
+          minimumMediaTimeMs: scheduledEnd.mediaTimeMs,
         });
+        storyMediaEnd = scheduledEnd;
         afterStoryBuild = await verifyCaptureBuildBoundary(
           buildVerifier,
           sourceProof,

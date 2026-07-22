@@ -1495,6 +1495,7 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     sourceMode: sourceProof.source,
   });
   const buildVerifications = [];
+  const recorderSampleRequests = [];
   const buildVerifier = trustedBuildVerifier(buildProof, {
     manifestPath: path.join(root, "build-provenance.json"),
     repositoryRoot: path.join(root, "repo"),
@@ -1672,11 +1673,12 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
         );
         const samples = [
           { frameCount: 3, mediaTimeMs: 80 },
-          { frameCount: 28, mediaTimeMs: 1_080 },
+          { frameCount: 31, mediaTimeMs: 1_200 },
         ];
         return {
           captureEpochMs: 1_000,
-          async sample() {
+          async sample(request) {
+            recorderSampleRequests.push(request ?? null);
             return samples.shift();
           },
           async stop() {
@@ -1770,6 +1772,10 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     start: { frameCount: 3, mediaTimeMs: 80 },
     end: { frameCount: 28, mediaTimeMs: 1_080 },
   });
+  assert.deepEqual(recorderSampleRequests, [
+    null,
+    { minimumFrameCount: 28, minimumMediaTimeMs: 1_080 },
+  ]);
   assert.equal(buildVerifications.length, 2);
   assert.equal(result.receipt.buildVerification.stable, true);
   assert.equal(result.receipt.runtime.teardown.processesGone, true);
