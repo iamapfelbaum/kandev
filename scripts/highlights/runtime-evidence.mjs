@@ -765,6 +765,84 @@ function validateBuildBoundary(value, label) {
   return value;
 }
 
+function validateOriginIsolationControls(controls) {
+  const keys = [
+    "httpRoute",
+    "webSocketRoute",
+    "popupGuard",
+    "subframeGuard",
+    "serviceWorkerBypass",
+    "serviceWorkerRegistrationBlocked",
+  ];
+  requireExactKeys(controls, keys, "capture origin isolation controls");
+  if (keys.some((key) => controls[key] !== true)) {
+    throw new Error("capture origin isolation controls are incomplete");
+  }
+}
+
+function validateOriginIsolationTraffic(traffic) {
+  const keys = [
+    "httpAllowed",
+    "httpBlocked",
+    "webSocketAllowed",
+    "webSocketBlocked",
+  ];
+  requireExactKeys(traffic, keys, "capture origin isolation traffic");
+  if (keys.some((key) => !Number.isInteger(traffic[key]) || traffic[key] < 0)) {
+    throw new Error("capture origin isolation traffic counts are invalid");
+  }
+  if (traffic.httpBlocked !== 0 || traffic.webSocketBlocked !== 0) {
+    throw new Error("capture origin isolation recorded blocked traffic");
+  }
+}
+
+function validateOriginIsolationEvidence(value, allowedOrigin) {
+  requireExactKeys(
+    value,
+    [
+      "contract",
+      "version",
+      "allowedOrigin",
+      "controls",
+      "traffic",
+      "violations",
+    ],
+    "capture origin isolation evidence",
+  );
+  if (
+    value.contract !== "kandev-highlight-origin-isolation-v1" ||
+    value.version !== 1 ||
+    value.allowedOrigin !== allowedOrigin
+  ) {
+    throw new Error(
+      "capture origin isolation evidence does not match navigation origin",
+    );
+  }
+  validateOriginIsolationControls(value.controls);
+  validateOriginIsolationTraffic(value.traffic);
+  if (!Array.isArray(value.violations) || value.violations.length !== 0) {
+    throw new Error("capture origin isolation has typed policy violations");
+  }
+}
+
+function validateCaptureOriginRequestBoundary(receipt, request) {
+  const expectedOrigin = `http://localhost:${request.ports.backend}`;
+  if (receipt.navigation.allowedOrigin !== expectedOrigin) {
+    throw new Error("capture origin does not match the runtime request");
+  }
+  if (
+    request.chromiumSandbox.mode === "disabled" &&
+    (request.chromiumSandbox.authorization.allowedOrigin !==
+      receipt.navigation.isolation.allowedOrigin ||
+      request.chromiumSandbox.authorization.sourceSha !==
+        receipt.source.selectedSha)
+  ) {
+    throw new Error(
+      "capture origin isolation does not match sandbox authorization",
+    );
+  }
+}
+
 function validateCaptureReceiptAttestations(receipt) {
   const captureBuild = validateCompactBuildProof(
     receipt.build,
@@ -859,12 +937,13 @@ function validateCaptureReceiptAttestations(receipt) {
       "events",
       "checkpoints",
       "violations",
+      "isolation",
     ],
     "capture navigation evidence",
   );
   if (
     receipt.navigation.contract !== "kandev-highlight-navigation-evidence-v1" ||
-    receipt.navigation.version !== 1 ||
+    receipt.navigation.version !== 2 ||
     receipt.navigation.finalOrigin !== receipt.navigation.allowedOrigin ||
     !Array.isArray(receipt.navigation.events) ||
     !Array.isArray(receipt.navigation.checkpoints) ||
@@ -874,6 +953,10 @@ function validateCaptureReceiptAttestations(receipt) {
   ) {
     throw new Error("capture navigation evidence did not remain in origin");
   }
+  validateOriginIsolationEvidence(
+    receipt.navigation.isolation,
+    receipt.navigation.allowedOrigin,
+  );
   if (!Array.isArray(receipt.trustedInputLedger)) {
     throw new Error("capture trusted input ledger must be an array");
   }
@@ -1295,6 +1378,7 @@ export async function loadVerifiedRuntimeEvidence({
     );
   }
   validateCaptureReceiptAttestations(captureReceipt);
+  validateCaptureOriginRequestBoundary(captureReceipt, request);
   if (
     rawRecord.identity.bytes !== captureReceipt.rawMaster.bytes ||
     rawRecord.identity.digest !== captureReceipt.rawMaster.digest ||

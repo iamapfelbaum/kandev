@@ -116,6 +116,7 @@ test("captures one closed declarative Highlight runtime request", async ({
     applicationRuntime,
     browserExecutable: request.tools.chromium,
     chromiumSandbox: request.chromiumSandbox,
+    coordinateLockRoot: request.workerTempRoot,
     ffmpegExecutable: request.tools.ffmpeg,
     xvfbExecutable: request.tools.xvfb,
   };

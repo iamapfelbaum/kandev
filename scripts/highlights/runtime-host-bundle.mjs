@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 
 import {
@@ -275,6 +274,23 @@ export async function writeRuntimeWorkerResult(
   return validated;
 }
 
+function validateRuntimeCaptureOrigin(receipt, workerRequest) {
+  const expectedOrigin = `http://localhost:${workerRequest.ports.backend}`;
+  if (
+    receipt.navigation?.allowedOrigin !== expectedOrigin ||
+    receipt.navigation?.isolation?.allowedOrigin !== expectedOrigin
+  ) {
+    throw new Error("capture origin evidence does not match worker request");
+  }
+  if (
+    workerRequest.chromiumSandbox.mode === "disabled" &&
+    workerRequest.chromiumSandbox.authorization.allowedOrigin !==
+      receipt.navigation.isolation.allowedOrigin
+  ) {
+    throw new Error("capture origin does not match sandbox authorization");
+  }
+}
+
 export async function verifyRuntimeCaptureArtifacts(
   workerResult,
   workerRequest,
@@ -362,6 +378,7 @@ export async function verifyRuntimeCaptureArtifacts(
       "source capture receipt is not linked to runtime, source, build, or raw master",
     );
   }
+  validateRuntimeCaptureOrigin(receipt, workerRequest);
   if (
     evidenceSnapshot.bytes !== workerResult.capture.captureEvidence.bytes ||
     evidenceSnapshot.digest !== workerResult.capture.captureEvidence.digest
@@ -414,10 +431,16 @@ export async function verifyRuntimeCaptureTeardown(
       "artifactRoot",
       "profileDir",
       "lockPath",
+      "coordinateLockRoot",
+      "coordinateLockPath",
     ],
     "capture runtime allocation",
   );
   const expected = expectedRuntimeCapturePaths(workerRequest, scenarioId);
+  const expectedCoordinateLockPath = path.join(
+    workerRequest.workerTempRoot,
+    `kandev-highlight-${runtime.allocation.displayNumber}-${runtime.allocation.cdpPort}.lock`,
+  );
   if (
     !Number.isInteger(runtime.allocation.displayNumber) ||
     runtime.allocation.display !== `:${runtime.allocation.displayNumber}.0` ||
@@ -428,7 +451,9 @@ export async function verifyRuntimeCaptureTeardown(
       canonicalJson(workerRequest.chromiumSandbox) ||
     runtime.allocation.artifactRoot !== expected.captureRoot ||
     runtime.allocation.profileDir !== expected.captureProfileDir ||
-    runtime.allocation.lockPath !== expected.captureLockPath
+    runtime.allocation.lockPath !== expected.captureLockPath ||
+    runtime.allocation.coordinateLockRoot !== workerRequest.workerTempRoot ||
+    runtime.allocation.coordinateLockPath !== expectedCoordinateLockPath
   ) {
     throw new Error(
       "capture runtime allocation does not match fixed attempt paths",
@@ -495,10 +520,10 @@ export async function verifyRuntimeCaptureTeardown(
   if (!processes.has("xvfb") || !processes.has("chromium")) {
     throw new Error("capture runtime teardown omitted Xvfb or Chromium");
   }
-  const coordinateLockPath = path.join(
-    os.tmpdir(),
-    `kandev-highlight-${runtime.allocation.displayNumber}-${runtime.allocation.cdpPort}.lock`,
-  );
+  await requireCanonicalPath(workerRequest.workerTempRoot, {
+    kind: "directory",
+    label: "host-owned worker temp root",
+  });
   const [
     cdpPortReleased,
     displayReleased,
@@ -511,7 +536,7 @@ export async function verifyRuntimeCaptureTeardown(
     deps.isDisplayReleased(runtime.allocation.displayNumber),
     runtimePathRemoved(expected.captureProfileDir),
     runtimePathRemoved(expected.captureLockPath),
-    runtimePathRemoved(coordinateLockPath),
+    runtimePathRemoved(runtime.allocation.coordinateLockPath),
     ...[...processes.values()].map((record) => deps.isProcessGone(record.pid)),
   ]);
   return {
@@ -633,6 +658,7 @@ export async function reserveRuntimeHostBundle(request) {
     bundleRoot,
     homeRoot: path.join(bundleRoot, "runner-home"),
     fixtureRoot: path.join(bundleRoot, "fixture-root"),
+    workerTempRoot: path.join(bundleRoot, "worker-tmp"),
     requestPath: path.join(bundleRoot, "request.json"),
     workerResultPath: path.join(bundleRoot, "worker-result.json"),
     logPath: path.join(bundleRoot, "playwright.log"),
@@ -642,13 +668,22 @@ export async function reserveRuntimeHostBundle(request) {
 }
 
 export async function prepareRuntimeHostBundle(paths) {
-  await Promise.all([fs.mkdir(paths.homeRoot), fs.mkdir(paths.fixtureRoot)]);
-  const fixtureIdentity = await requireCanonicalPath(paths.fixtureRoot, {
-    kind: "directory",
-    label: "host-owned fixture root",
-  });
-  if (!Number.isInteger(fixtureIdentity.ino) || fixtureIdentity.ino <= 0) {
-    throw new Error("host-owned fixture root identity is invalid");
+  await Promise.all([
+    fs.mkdir(paths.homeRoot),
+    fs.mkdir(paths.fixtureRoot),
+    fs.mkdir(paths.workerTempRoot),
+  ]);
+  for (const [root, label] of [
+    [paths.fixtureRoot, "host-owned fixture root"],
+    [paths.workerTempRoot, "host-owned worker temp root"],
+  ]) {
+    const identity = await requireCanonicalPath(root, {
+      kind: "directory",
+      label,
+    });
+    if (!Number.isInteger(identity.ino) || identity.ino <= 0) {
+      throw new Error(`${label} identity is invalid`);
+    }
   }
 }
 

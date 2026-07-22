@@ -9,8 +9,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveCaptureProfile } from "./camera-compiler.mjs";
 import {
   defaultChromiumSandboxPolicy,
-  validateChromiumSandboxPolicy,
+  validateChromiumSandboxCaptureBoundary,
 } from "./chromium-sandbox-contract.mjs";
+import { installCaptureOriginIsolation } from "./capture-origin-isolation.mjs";
 import { createCursorController } from "./cursor.mjs";
 import {
   bindCaptureNavigation,
@@ -35,6 +36,7 @@ export {
   measureTargetGlyph,
   overlayBootstrap,
 } from "./capture-browser.mjs";
+export { installCaptureOriginIsolation } from "./capture-origin-isolation.mjs";
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = path.resolve(MODULE_DIR, "../..");
@@ -934,6 +936,8 @@ function runtimeEvidence(plan, teardown) {
       artifactRoot: plan.artifactRoot,
       profileDir: plan.profileDir,
       lockPath: plan.lockPath,
+      coordinateLockRoot: plan.coordinateLockRoot,
+      coordinateLockPath: plan.coordinateLockPath,
     },
     teardown: teardown ?? null,
   };
@@ -1469,6 +1473,59 @@ async function cleanupCaptureResources({
   return { complete: errors.length === 0, components, errors };
 }
 
+function isolationBoundaryConfirmed(components) {
+  return components.some(
+    ({ component, ok }) =>
+      ok && (component === "browser" || component === "runtime"),
+  );
+}
+
+function disposeFailedCaptureIsolation(originIsolation, cleanup) {
+  if (!originIsolation || !isolationBoundaryConfirmed(cleanup.components)) {
+    return;
+  }
+  try {
+    originIsolation.dispose();
+    cleanup.components.push({
+      component: "origin-isolation",
+      ok: true,
+      result: null,
+    });
+  } catch (error) {
+    cleanup.components.push({
+      component: "origin-isolation",
+      ok: false,
+      error: error.message,
+    });
+    cleanup.errors.push(error);
+    cleanup.complete = false;
+  }
+}
+
+export async function closeCaptureBrowserWithIsolation({
+  browserConnection,
+  navigation,
+  originIsolation,
+} = {}) {
+  if (
+    typeof browserConnection?.close !== "function" ||
+    typeof navigation?.evidence !== "function" ||
+    typeof navigation?.dispose !== "function" ||
+    typeof originIsolation?.assertClean !== "function" ||
+    typeof originIsolation?.dispose !== "function"
+  ) {
+    throw new Error(
+      "browser teardown needs the live browser, navigation, and origin isolation owners",
+    );
+  }
+  const navigationEvidence = navigation.evidence();
+  await browserConnection.close();
+  const finalIsolation = originIsolation.assertClean("browser teardown");
+  navigation.dispose();
+  originIsolation.dispose();
+  return { ...navigationEvidence, isolation: finalIsolation };
+}
+
 const DEFAULT_DEPENDENCIES = Object.freeze({
   resolveCaptureTools,
   chooseReadyCaptureEncoder,
@@ -1476,6 +1533,7 @@ const DEFAULT_DEPENDENCIES = Object.freeze({
   startCaptureRuntime,
   connectCaptureBrowser,
   configureCaptureTarget,
+  installCaptureOriginIsolation,
   installCaptureOverlay,
   createCaptureCursor,
   prepareScenario,
@@ -1498,6 +1556,7 @@ export async function captureScenario({
   runId,
   displayNumber,
   cdpPort,
+  coordinateLockRoot,
   browserExecutable,
   chromiumSandbox = defaultChromiumSandboxPolicy(),
   ffmpegExecutable = "ffmpeg",
@@ -1555,12 +1614,16 @@ export async function captureScenario({
     );
   }
   const profile = resolveCaptureProfile(scenario.profile);
-  const sandboxPolicy = validateChromiumSandboxPolicy(chromiumSandbox);
+  const frontendOrigin = new URL(frontendUrl).origin;
+  const sandboxPolicy = validateChromiumSandboxCaptureBoundary(
+    chromiumSandbox,
+    { sourceProof, allowedOrigin: frontendOrigin },
+  );
   const deps = { ...DEFAULT_DEPENDENCIES, ...dependencies };
   const coordinates =
     displayNumber && cdpPort
       ? { displayNumber, cdpPort }
-      : await allocateRuntimeCoordinates();
+      : await allocateRuntimeCoordinates({ coordinateLockRoot });
   const resolution = await deps.resolveCaptureTools({
     browserExecutable,
     ffmpegExecutable,
@@ -1581,6 +1644,7 @@ export async function captureScenario({
     artifactRoot,
     repositoryRoots,
     runId,
+    coordinateLockRoot,
     ...coordinates,
     browserExecutable: tools.chromium.executable,
     chromiumSandbox: sandboxPolicy,
@@ -1589,6 +1653,7 @@ export async function captureScenario({
   let phase = "runtime";
   let liveRuntime;
   let browserConnection;
+  let originIsolation;
   let recorder;
   let recorderEvidence;
   let captureEpochMs;
@@ -1609,6 +1674,12 @@ export async function captureScenario({
       endpoint: plan.cdpEndpoint,
     });
     const { page, context, cdp } = browserConnection;
+    originIsolation = await deps.installCaptureOriginIsolation({
+      page,
+      context,
+      cdp,
+      allowedOrigin: frontendOrigin,
+    });
     await deps.configureCaptureTarget({ page, cdp, profile });
     await deps.installCaptureOverlay({ context, page });
     navigation = bindCaptureNavigation({
@@ -1616,6 +1687,7 @@ export async function captureScenario({
       context,
       frontendUrl,
       navigateRoute,
+      originIsolation,
     });
     if (typeof preparePage === "function")
       await preparePage({ page, context, cdp, profile, plan });
@@ -1719,9 +1791,6 @@ export async function captureScenario({
       beforeStory: beforeStoryBuild,
       afterStory: afterStoryBuild,
     });
-    navigationEvidence = navigation.evidence();
-    navigation.dispose();
-    navigation = null;
     phase = "recorder-teardown";
     recorderEvidence = await recorder.stop();
     recorder = null;
@@ -1753,8 +1822,14 @@ export async function captureScenario({
       storyEnd: storyMediaEnd,
     });
     phase = "browser-teardown";
-    await browserConnection.close();
+    navigationEvidence = await closeCaptureBrowserWithIsolation({
+      browserConnection,
+      navigation,
+      originIsolation,
+    });
+    navigation = null;
     browserConnection = null;
+    originIsolation = null;
     phase = "runtime-teardown";
     const teardown = await liveRuntime.stop();
     liveRuntime = null;
@@ -1811,6 +1886,7 @@ export async function captureScenario({
       browserConnection,
       liveRuntime,
     });
+    disposeFailedCaptureIsolation(originIsolation, cleanup);
     const evidenceTeardown = {
       complete: cleanup.complete,
       components: cleanup.components,

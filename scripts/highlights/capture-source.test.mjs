@@ -15,6 +15,7 @@ import {
   buildFfmpegCapturePlan,
   captureScenario,
   chooseReadyCaptureEncoder,
+  closeCaptureBrowserWithIsolation,
   collectCaptureReceipt,
   configureCaptureTarget,
   createTrustedCaptureBuildVerifier,
@@ -94,6 +95,7 @@ function applicationRuntimeProof({
   port = 18_080,
   tempRoot = "/tmp/kandev-highlight-app-runtime",
   sourceSha = "1".repeat(40),
+  sourceMode = "pr_head",
 } = {}) {
   return {
     contract: "kandev-highlight-application-runtime-pre-teardown-v1",
@@ -117,7 +119,7 @@ function applicationRuntimeProof({
     },
     source: {
       contract: "kandev-highlight-source-v1",
-      mode: "pr_head",
+      mode: sourceMode,
       selectedSha: sourceSha,
     },
     build: {
@@ -897,11 +899,39 @@ function navigationHarness(initialUrl = "about:blank") {
     return options;
   };
   context.pages = () => [...pages];
+  const isolationEvidence = {
+    contract: "kandev-highlight-origin-isolation-v1",
+    version: 1,
+    allowedOrigin: "http://127.0.0.1:18080",
+    controls: {
+      httpRoute: true,
+      webSocketRoute: true,
+      popupGuard: true,
+      subframeGuard: true,
+      serviceWorkerBypass: true,
+      serviceWorkerRegistrationBlocked: true,
+    },
+    traffic: {
+      httpAllowed: 1,
+      httpBlocked: 0,
+      webSocketAllowed: 0,
+      webSocketBlocked: 0,
+    },
+    violations: [],
+  };
   return {
     page,
     context,
     frame,
     pages,
+    originIsolation: {
+      assertClean() {
+        return isolationEvidence;
+      },
+      snapshot() {
+        return isolationEvidence;
+      },
+    },
     setUrl(url) {
       current = url;
       page.emit("framenavigated", frame);
@@ -922,6 +952,7 @@ test("origin guard records the complete primary-page lifecycle", async () => {
     page: harness.page,
     context: harness.context,
     frontendUrl: "http://127.0.0.1:18080",
+    originIsolation: harness.originIsolation,
   });
   await noRoute.navigateDefault();
   noRoute.checkpoint("story start");
@@ -938,6 +969,7 @@ test("origin guard records the complete primary-page lifecycle", async () => {
   );
   assert.equal(evidence.events.length, 1);
   assert.deepEqual(evidence.violations, []);
+  assert.deepEqual(evidence.isolation, harness.originIsolation.snapshot());
 });
 
 test("origin guard fails closed on popups and cross-origin top-level navigation", async () => {
@@ -947,6 +979,7 @@ test("origin guard fails closed on popups and cross-origin top-level navigation"
     page: popupHarness.page,
     context: popupHarness.context,
     frontendUrl: "http://127.0.0.1:18080",
+    originIsolation: popupHarness.originIsolation,
   });
   const popup = new EventEmitter();
   popup.url = () => "about:blank";
@@ -971,6 +1004,7 @@ test("origin guard fails closed on popups and cross-origin top-level navigation"
     page: routeHarness.page,
     context: routeHarness.context,
     frontendUrl: "http://127.0.0.1:18080",
+    originIsolation: routeHarness.originIsolation,
     navigateRoute: async () => {
       routeHarness.setUrl("https://attacker.invalid/phish");
     },
@@ -979,6 +1013,52 @@ test("origin guard fails closed on popups and cross-origin top-level navigation"
     () => routed.navigateRoute("workspace.board", { page: routeHarness.page }),
     /allowed frontend origin/i,
   );
+});
+
+test("browser teardown rejects a request attempted during close while isolation stays installed", async () => {
+  const events = [];
+  const violations = [];
+  const navigation = {
+    evidence() {
+      events.push("navigation:evidence");
+      return { isolation: { violations: [] } };
+    },
+    dispose() {
+      events.push("navigation:dispose");
+    },
+  };
+  const originIsolation = {
+    assertClean(label) {
+      events.push(`origin:check:${label}`);
+      if (violations.length > 0) {
+        throw new Error("close-time cross-origin-request");
+      }
+      return { violations: [] };
+    },
+    dispose() {
+      events.push("origin:dispose");
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      closeCaptureBrowserWithIsolation({
+        browserConnection: {
+          async close() {
+            events.push("browser:close");
+            violations.push("cross-origin-request");
+          },
+        },
+        navigation,
+        originIsolation,
+      }),
+    /close-time cross-origin-request/i,
+  );
+  assert.deepEqual(events, [
+    "navigation:evidence",
+    "browser:close",
+    "origin:check:browser teardown",
+  ]);
 });
 
 test("build verification rejects any story-end output identity change", () => {
@@ -1199,6 +1279,12 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     cdpEndpoint: "http://127.0.0.1:49261",
     profileDir: path.join(artifactRoot, "runtime", "browser-profile"),
     lockPath: path.join(artifactRoot, "runtime", "capture.lock"),
+    coordinateLockRoot: path.join(root, "worker-tmp"),
+    coordinateLockPath: path.join(
+      root,
+      "worker-tmp",
+      "kandev-highlight-261-49261.lock",
+    ),
   };
   const tools = {
     ffmpeg: {
@@ -1245,10 +1331,10 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
   };
   const sourceProof = {
     contract: "kandev-highlight-source-v1",
-    source: "pr_head",
+    source: "current_main",
     selectedSha: "1".repeat(40),
     headSha: "1".repeat(40),
-    currentMainSha: "2".repeat(40),
+    currentMainSha: "1".repeat(40),
     clean: true,
     status: "",
   };
@@ -1256,6 +1342,7 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
   const appRuntime = applicationRuntimeProof({
     tempRoot: path.join(root, "fixture-temp"),
     sourceSha: sourceProof.selectedSha,
+    sourceMode: sourceProof.source,
   });
   const buildVerifications = [];
   const buildVerifier = trustedBuildVerifier(buildProof, {
@@ -1264,8 +1351,37 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     onVerify: (...args) => buildVerifications.push(args),
   });
   const chromiumSandbox = {
+    contract: "kandev-highlight-chromium-sandbox-policy-v1",
+    version: 1,
     mode: "disabled",
     proof: { status: "unavailable", reason: "AppArmor restriction" },
+    authorization: {
+      contract: "kandev-highlight-disabled-sandbox-authorization-v1",
+      sourceMode: "current_main",
+      sourceSha: sourceProof.selectedSha,
+      allowedOrigin: "http://127.0.0.1:18080",
+      guardContract: "kandev-highlight-origin-isolation-v1",
+    },
+  };
+  const originIsolationEvidence = {
+    contract: "kandev-highlight-origin-isolation-v1",
+    version: 1,
+    allowedOrigin: "http://127.0.0.1:18080",
+    controls: {
+      httpRoute: true,
+      webSocketRoute: true,
+      popupGuard: true,
+      subframeGuard: true,
+      serviceWorkerBypass: true,
+      serviceWorkerRegistrationBlocked: true,
+    },
+    traffic: {
+      httpAllowed: 3,
+      httpBlocked: 0,
+      webSocketAllowed: 1,
+      webSocketBlocked: 0,
+    },
+    violations: [],
   };
   let plannedRuntimeOptions;
   let currentUrl = "about:blank";
@@ -1319,6 +1435,7 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     runId: "r01",
     displayNumber: 261,
     cdpPort: 49_261,
+    coordinateLockRoot: path.join(root, "worker-tmp"),
     chromiumSandbox,
     navigateRoute: async (route) => {
       events.push(`route:${route}`);
@@ -1360,6 +1477,24 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
           events.push("browser:close");
         },
       }),
+      installCaptureOriginIsolation: async ({ allowedOrigin }) => {
+        assert.equal(allowedOrigin, "http://127.0.0.1:18080");
+        events.push("origin:install");
+        return {
+          assertClean(label) {
+            if (label === "browser teardown") {
+              events.push("origin:check:browser teardown");
+            }
+            return originIsolationEvidence;
+          },
+          snapshot() {
+            return originIsolationEvidence;
+          },
+          dispose() {
+            events.push("origin:dispose");
+          },
+        };
+      },
       configureCaptureTarget: async () => {
         events.push("target:configure");
       },
@@ -1415,6 +1550,7 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
 
   assert.deepEqual(events, [
     "runtime:start",
+    "origin:install",
     "target:configure",
     "overlay:install",
     "route:workspace.board",
@@ -1425,6 +1561,8 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     "recorder:stop",
     "capture:evidence",
     "browser:close",
+    "origin:check:browser teardown",
+    "origin:dispose",
     "runtime:stop",
   ]);
   assert.equal(result.contract, "kandev-highlight-capture-result-v1");
@@ -1450,6 +1588,10 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
     "http://127.0.0.1:18080/board",
   );
   assert.deepEqual(result.receipt.navigation.violations, []);
+  assert.deepEqual(
+    result.receipt.navigation.isolation,
+    originIsolationEvidence,
+  );
   assert.deepEqual(
     result.receipt.navigation.checkpoints.map(({ label }) => label),
     [
@@ -1482,6 +1624,10 @@ test("captureScenario owns preparation, recording, execution, teardown, and immu
   assert.equal(result.receipt.runtime.teardown.processesGone, true);
   assert.equal(result.receipt.runtime.teardown.coordinatesReleased, true);
   assert.deepEqual(plannedRuntimeOptions.chromiumSandbox, chromiumSandbox);
+  assert.equal(
+    plannedRuntimeOptions.coordinateLockRoot,
+    path.join(root, "worker-tmp"),
+  );
   assert.deepEqual(
     result.receipt.runtime.allocation.chromiumSandbox,
     chromiumSandbox,
@@ -1636,6 +1782,34 @@ test("capture failure aggregates every cleanup error and persists structured tea
             async close() {
               cleanupOrder.push("browser");
               throw new Error("browser cleanup failed");
+            },
+          }),
+          installCaptureOriginIsolation: async () => ({
+            assertClean() {},
+            snapshot() {
+              return {
+                contract: "kandev-highlight-origin-isolation-v1",
+                version: 1,
+                allowedOrigin: "http://127.0.0.1:18080",
+                controls: {
+                  httpRoute: true,
+                  webSocketRoute: true,
+                  popupGuard: true,
+                  subframeGuard: true,
+                  serviceWorkerBypass: true,
+                  serviceWorkerRegistrationBlocked: true,
+                },
+                traffic: {
+                  httpAllowed: 0,
+                  httpBlocked: 0,
+                  webSocketAllowed: 0,
+                  webSocketBlocked: 0,
+                },
+                violations: [],
+              };
+            },
+            dispose() {
+              cleanupOrder.push("origin-isolation");
             },
           }),
           configureCaptureTarget: async () => {},

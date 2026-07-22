@@ -382,11 +382,24 @@ export async function measureTargetGlyph(locator) {
   });
 }
 
+function requireOriginIsolation(originIsolation) {
+  if (
+    typeof originIsolation?.assertClean !== "function" ||
+    typeof originIsolation?.snapshot !== "function"
+  ) {
+    throw new Error(
+      "capture navigation needs preinstalled origin isolation evidence",
+    );
+  }
+  return originIsolation;
+}
+
 export function bindCaptureNavigation({
   page,
   context,
   frontendUrl,
   navigateRoute,
+  originIsolation,
 } = {}) {
   if (
     !page ||
@@ -400,6 +413,7 @@ export function bindCaptureNavigation({
       "capture navigation needs an observable Playwright page with url(), goto(), and mainFrame()",
     );
   }
+  const isolation = requireOriginIsolation(originIsolation);
   if (
     !context ||
     typeof context.pages !== "function" ||
@@ -535,7 +549,7 @@ export function bindCaptureNavigation({
     }
     return {
       contract: "kandev-highlight-navigation-evidence-v1",
-      version: 1,
+      version: 2,
       configuredUrl,
       allowedOrigin: configured.origin,
       finalUrl,
@@ -543,12 +557,14 @@ export function bindCaptureNavigation({
       events: structuredClone(events),
       checkpoints: structuredClone(checkpoints),
       violations: structuredClone(violations),
+      isolation: isolation.snapshot(),
     };
   };
 
   const checkpoint = (label) => {
     if (disposed)
       throw new Error("capture navigation guard is already disposed");
+    isolation.assertClean(label);
     const pages = context.pages();
     if (pages.length !== 1 || pages[0] !== page) {
       recordViolation({

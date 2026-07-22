@@ -285,6 +285,11 @@ async function writeSuccessfulWorkerResult({
           "browser-profile",
         ),
         lockPath: path.join(captureRoot, "capture", "runtime", "capture.lock"),
+        coordinateLockRoot: workerRequest.workerTempRoot,
+        coordinateLockPath: path.join(
+          workerRequest.workerTempRoot,
+          "kandev-highlight-240-50001.lock",
+        ),
       },
       teardown: {
         processesGone: true,
@@ -301,6 +306,12 @@ async function writeSuccessfulWorkerResult({
       },
     },
     applicationRuntime: preTeardown,
+    navigation: {
+      allowedOrigin: `http://localhost:${workerRequest.ports.backend}`,
+      isolation: {
+        allowedOrigin: `http://localhost:${workerRequest.ports.backend}`,
+      },
+    },
     captureEvidence,
   };
   const captureReceipt = receiptTransform
@@ -409,8 +420,11 @@ function dependencies(buildManifestPath, overrides = {}) {
         };
       },
       resolveChromiumSandboxPolicy: async () => ({
+        contract: "kandev-highlight-chromium-sandbox-policy-v1",
+        version: 1,
         mode: "native",
         proof: { status: "available", reason: "test native sandbox" },
+        authorization: null,
       }),
       selectIntegrationPortOffset: async () => {
         events.push("port");
@@ -462,10 +476,12 @@ test("child environment is an allowlist with no provider, cloud, API, or GitHub 
       KANDEV_PROVIDER_TOKEN: "secret-provider",
       ARBITRARY_PASSWORD: "secret-password",
       NODE_OPTIONS: "--require=/tmp/evil.cjs",
+      KANDEV_HIGHLIGHT_TRUSTED_SOURCE_SHA: SHA,
     },
     {
       homeRoot: "/external/host-home",
       fixtureRoot: "/external/fixture-root",
+      tempRoot: "/external/worker-tmp",
       requestPath: "/external/request.json",
       workerResultPath: "/external/worker-result.json",
       portOffset: 7,
@@ -478,6 +494,9 @@ test("child environment is an allowlist with no provider, cloud, API, or GitHub 
     LANG: "C.UTF-8",
     TZ: "UTC",
     HOME: "/external/host-home",
+    TMPDIR: "/external/worker-tmp",
+    TMP: "/external/worker-tmp",
+    TEMP: "/external/worker-tmp",
     KANDEV_HIGHLIGHT_FIXTURE_ROOT: "/external/fixture-root",
     CI: "1",
     E2E_PORT_OFFSET: "7",
@@ -489,6 +508,10 @@ test("child environment is an allowlist with no provider, cloud, API, or GitHub 
     JSON.stringify(clean),
     /secret|TOKEN|API_KEY|PASSWORD|CREDENTIAL/i,
   );
+  assert.equal(
+    Object.hasOwn(clean, "KANDEV_HIGHLIGHT_TRUSTED_SOURCE_SHA"),
+    false,
+  );
 });
 
 test("generated worker request has an exact non-extensible contract", async (t) => {
@@ -498,6 +521,11 @@ test("generated worker request has an exact non-extensible contract", async (t) 
     "runtime-host",
     value.request.runId,
   );
+  const currentMainSource = {
+    ...sourceProof(),
+    source: "current_main",
+    currentMainSha: SHA,
+  };
   const workerRequest = {
     contract: "kandev-highlight-runtime-worker-request-v1",
     version: 1,
@@ -506,11 +534,12 @@ test("generated worker request has an exact non-extensible contract", async (t) 
     artifactRoot: value.request.artifactRoot,
     repositoryRoot: value.request.repositoryRoot,
     buildManifestPath: value.request.buildManifestPath,
-    source: value.request.source,
+    source: "current_main",
     runId: value.request.runId,
-    pullRequest: value.request.pullRequest,
+    pullRequest: null,
     bundleRoot,
-    sourceProof: sourceProof(),
+    workerTempRoot: path.join(bundleRoot, "worker-tmp"),
+    sourceProof: currentMainSource,
     build: {
       contract: "kandev-highlight-build-provenance-v1",
       manifestDigest: `sha256:${"d".repeat(64)}`,
@@ -534,12 +563,57 @@ test("generated worker request has an exact non-extensible contract", async (t) 
       webBuild: "/verified/dist/index.html",
     },
     chromiumSandbox: {
+      contract: "kandev-highlight-chromium-sandbox-policy-v1",
+      version: 1,
       mode: "disabled",
       proof: { status: "unavailable", reason: "AppArmor restriction" },
+      authorization: {
+        contract: "kandev-highlight-disabled-sandbox-authorization-v1",
+        sourceMode: "current_main",
+        sourceSha: SHA,
+        allowedOrigin: "http://localhost:18087",
+        guardContract: "kandev-highlight-origin-isolation-v1",
+      },
     },
     ports: { offset: 7, backend: 18_087 },
   };
   assert.deepEqual(validateRuntimeWorkerRequest(workerRequest), workerRequest);
+  assert.throws(
+    () =>
+      validateRuntimeWorkerRequest({
+        ...workerRequest,
+        workerTempRoot: path.join(bundleRoot, "other-tmp"),
+      }),
+    /workerTempRoot.*fixed.*bundle/i,
+  );
+  assert.throws(
+    () =>
+      validateRuntimeWorkerRequest({
+        ...workerRequest,
+        chromiumSandbox: {
+          ...workerRequest.chromiumSandbox,
+          authorization: {
+            ...workerRequest.chromiumSandbox.authorization,
+            allowedOrigin: "http://localhost:18088",
+          },
+        },
+      }),
+    /authorization.*exact capture source and origin/i,
+  );
+  assert.throws(
+    () =>
+      validateRuntimeWorkerRequest({
+        ...workerRequest,
+        chromiumSandbox: {
+          ...workerRequest.chromiumSandbox,
+          authorization: {
+            ...workerRequest.chromiumSandbox.authorization,
+            sourceSha: "9".repeat(40),
+          },
+        },
+      }),
+    /authorization.*exact capture source and origin/i,
+  );
   assert.throws(
     () =>
       validateRuntimeWorkerRequest({
@@ -561,8 +635,11 @@ test("generated worker request has an exact non-extensible contract", async (t) 
       validateRuntimeWorkerRequest({
         ...workerRequest,
         chromiumSandbox: {
+          contract: "kandev-highlight-chromium-sandbox-policy-v1",
+          version: 1,
           mode: "--no-sandbox --disable-web-security",
           proof: { status: "unavailable", reason: "untrusted" },
+          authorization: null,
         },
       }),
     /chromiumSandbox mode must be native or disabled/,
@@ -596,8 +673,11 @@ test("closed host preflights then writes an immutable digest-linked post-teardow
     resolveChromiumSandboxPolicy: async (input) => {
       sandboxInput = input;
       return {
-        mode: "disabled",
-        proof: { status: "unavailable", reason: "AppArmor restriction" },
+        contract: "kandev-highlight-chromium-sandbox-policy-v1",
+        version: 1,
+        mode: "native",
+        proof: { status: "available", reason: "test native sandbox" },
+        authorization: null,
       };
     },
   });
@@ -607,7 +687,8 @@ test("closed host preflights then writes an immutable digest-linked post-teardow
       PATH: "/usr/bin",
       GH_TOKEN: "must-not-leak",
       OPENAI_API_KEY: "must-not-leak",
-      KANDEV_HIGHLIGHT_CHROMIUM_SANDBOX: "disabled",
+      KANDEV_HIGHLIGHT_CHROMIUM_SANDBOX: "native",
+      KANDEV_HIGHLIGHT_TRUSTED_SOURCE_SHA: SHA,
     },
     dependencies: deps.value,
   });
@@ -642,15 +723,21 @@ test("closed host preflights then writes an immutable digest-linked post-teardow
   assert.equal(result.execution.signal, null);
   assert.equal(
     sandboxInput.inheritedEnv.KANDEV_HIGHLIGHT_CHROMIUM_SANDBOX,
-    "disabled",
+    "native",
   );
   assert.match(sandboxInput.chromiumExecutable, /chrome$/);
+  assert.deepEqual(sandboxInput.sourceProof, sourceProof());
+  assert.equal(sandboxInput.trustedSourceSha, SHA);
+  assert.equal(sandboxInput.allowedOrigin, "http://localhost:18087");
   const workerRequest = JSON.parse(
     await fs.readFile(result.bundle.requestPath, "utf8"),
   );
   assert.deepEqual(workerRequest.chromiumSandbox, {
-    mode: "disabled",
-    proof: { status: "unavailable", reason: "AppArmor restriction" },
+    contract: "kandev-highlight-chromium-sandbox-policy-v1",
+    version: 1,
+    mode: "native",
+    proof: { status: "available", reason: "test native sandbox" },
+    authorization: null,
   });
   assert.deepEqual(Object.keys(result.bundle).sort(), [
     "failurePath",
@@ -941,6 +1028,65 @@ test("runtime host rejects Chromium sandbox provenance that differs from its wor
       dependencies: deps.value,
     }),
     /worker-result-invalid|sandbox|capture runtime allocation/i,
+  );
+});
+
+test("runtime host rejects a tampered coordinate-lock path", async (t) => {
+  const value = await fixture(t);
+  const deps = dependencies(value.buildManifestPath, {
+    processRunner: ({ env, logPath }) =>
+      writeSuccessfulWorkerResult({
+        env,
+        logPath,
+        receiptTransform: (receipt) => ({
+          ...receipt,
+          runtime: {
+            ...receipt.runtime,
+            allocation: {
+              ...receipt.runtime.allocation,
+              coordinateLockPath: path.join(
+                value.root,
+                "attacker-selected.lock",
+              ),
+            },
+          },
+        }),
+      }),
+  });
+
+  await assert.rejects(
+    runHighlightRuntimeHost({
+      request: value.request,
+      dependencies: deps.value,
+    }),
+    /worker-result-invalid|coordinate.*lock|capture runtime allocation/i,
+  );
+});
+
+test("runtime host binds capture origin evidence to its worker request", async (t) => {
+  const value = await fixture(t);
+  const deps = dependencies(value.buildManifestPath, {
+    processRunner: ({ env, logPath }) =>
+      writeSuccessfulWorkerResult({
+        env,
+        logPath,
+        receiptTransform: (receipt) => ({
+          ...receipt,
+          navigation: {
+            ...receipt.navigation,
+            allowedOrigin: "http://localhost:18088",
+            isolation: { allowedOrigin: "http://localhost:18088" },
+          },
+        }),
+      }),
+  });
+
+  await assert.rejects(
+    runHighlightRuntimeHost({
+      request: value.request,
+      dependencies: deps.value,
+    }),
+    /worker-result-invalid|capture origin|sandbox authorization/i,
   );
 });
 

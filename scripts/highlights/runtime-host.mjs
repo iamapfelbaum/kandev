@@ -10,7 +10,10 @@ import {
 import { preflightHighlightRuntime } from "./runtime-catalog.mjs";
 import { computeScenarioDigest, readScenario } from "./scenario.mjs";
 import { isDisplayAvailable } from "./capture-runtime.mjs";
-import { resolveChromiumSandboxPolicy } from "./chromium-sandbox.mjs";
+import {
+  CHROMIUM_TRUSTED_SOURCE_SHA_ENV,
+  resolveChromiumSandboxPolicy,
+} from "./chromium-sandbox.mjs";
 import { verifySourceGate } from "./source-gate.mjs";
 import {
   canonicalJson,
@@ -73,6 +76,7 @@ export function sanitizeRuntimeHostEnvironment(
     options,
     [
       "homeRoot",
+      "tempRoot",
       "requestPath",
       "workerResultPath",
       "fixtureRoot",
@@ -97,6 +101,9 @@ export function sanitizeRuntimeHostEnvironment(
   return {
     ...clean,
     HOME: requireAbsolute(options.homeRoot, "runtime host HOME"),
+    TMPDIR: requireAbsolute(options.tempRoot, "runtime host TMPDIR"),
+    TMP: requireAbsolute(options.tempRoot, "runtime host TMP"),
+    TEMP: requireAbsolute(options.tempRoot, "runtime host TEMP"),
     CI: "1",
     E2E_PORT_OFFSET: String(options.portOffset),
     PLAYWRIGHT_BROWSERS_PATH: requireAbsolute(
@@ -199,6 +206,7 @@ function buildWorkerRequest({
   chromiumSandbox,
   port,
   bundleRoot,
+  workerTempRoot,
 }) {
   return validateRuntimeWorkerRequest({
     contract: "kandev-highlight-runtime-worker-request-v1",
@@ -212,6 +220,7 @@ function buildWorkerRequest({
     runId: request.runId,
     pullRequest: request.pullRequest,
     bundleRoot,
+    workerTempRoot,
     sourceProof,
     build,
     tools,
@@ -262,10 +271,6 @@ export async function runHighlightRuntimeHost({
       webRoot: path.join(request.repositoryRoot, "apps", "web"),
     }),
   );
-  const chromiumSandbox = await deps.resolveChromiumSandboxPolicy({
-    inheritedEnv,
-    chromiumExecutable: tools.chromium,
-  });
   const port = await deps.selectIntegrationPortOffset();
   if (
     !Number.isInteger(port?.offset) ||
@@ -277,6 +282,13 @@ export async function runHighlightRuntimeHost({
       "runtime host port allocator returned an invalid fixed E2E port",
     );
   }
+  const chromiumSandbox = await deps.resolveChromiumSandboxPolicy({
+    inheritedEnv,
+    chromiumExecutable: tools.chromium,
+    sourceProof: sourceProofBefore,
+    trustedSourceSha: inheritedEnv[CHROMIUM_TRUSTED_SOURCE_SHA_ENV],
+    allowedOrigin: `http://localhost:${port.backendPort}`,
+  });
 
   const paths = await reserveRuntimeHostBundle(request);
   let phase = "bundle-setup";
@@ -304,11 +316,13 @@ export async function runHighlightRuntimeHost({
       chromiumSandbox,
       port,
       bundleRoot: paths.bundleRoot,
+      workerTempRoot: paths.workerTempRoot,
     });
     phase = "request";
     requestIdentity = await initializeRuntimeHostBundle(paths, workerRequest);
     const env = sanitizeRuntimeHostEnvironment(inheritedEnv, {
       homeRoot: paths.homeRoot,
+      tempRoot: paths.workerTempRoot,
       fixtureRoot: paths.fixtureRoot,
       requestPath: paths.requestPath,
       workerResultPath: paths.workerResultPath,

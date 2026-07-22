@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 
-import { validateChromiumSandboxPolicy } from "./chromium-sandbox-contract.mjs";
+import { validateChromiumSandboxCaptureBoundary } from "./chromium-sandbox-contract.mjs";
 import { resolveHighlightRuntime } from "./runtime-catalog.mjs";
 import { assertExternalArtifactRoot } from "./source-gate.mjs";
 
@@ -37,6 +37,7 @@ const WORKER_REQUEST_KEYS = Object.freeze([
   "runId",
   "pullRequest",
   "bundleRoot",
+  "workerTempRoot",
   "sourceProof",
   "build",
   "tools",
@@ -291,11 +292,20 @@ export function validateRuntimeWorkerRequest(value) {
     value.bundleRoot,
     "runtime worker bundleRoot",
   );
+  const workerTempRoot = requireAbsolute(
+    value.workerTempRoot,
+    "runtime worker workerTempRoot",
+  );
   if (
     !isInside(repositoryRoot, scenarioPath) ||
     scenarioPath === repositoryRoot
   ) {
     throw new Error("runtime worker scenarioPath is outside repositoryRoot");
+  }
+  if (workerTempRoot !== path.join(bundleRoot, "worker-tmp")) {
+    throw new Error(
+      "runtime worker workerTempRoot must be the fixed worker-tmp directory inside bundleRoot",
+    );
   }
   if (
     !isInside(artifactRoot, buildManifestPath) ||
@@ -378,7 +388,6 @@ export function validateRuntimeWorkerRequest(value) {
       "runtime worker tools",
     ),
   );
-  const chromiumSandbox = validateChromiumSandboxPolicy(value.chromiumSandbox);
   requireExactKeys(value.ports, ["offset", "backend"], "runtime worker ports");
   if (
     !Number.isInteger(value.ports.offset) ||
@@ -390,6 +399,13 @@ export function validateRuntimeWorkerRequest(value) {
       "runtime worker ports do not match the fixed E2E allocation",
     );
   }
+  const chromiumSandbox = validateChromiumSandboxCaptureBoundary(
+    value.chromiumSandbox,
+    {
+      sourceProof,
+      allowedOrigin: `http://localhost:${value.ports.backend}`,
+    },
+  );
   return {
     contract: value.contract,
     version: value.version,
@@ -402,6 +418,7 @@ export function validateRuntimeWorkerRequest(value) {
     runId: value.runId,
     pullRequest: validatePullRequest(value.pullRequest, value.source),
     bundleRoot,
+    workerTempRoot,
     sourceProof: structuredClone(sourceProof),
     build: structuredClone(value.build),
     tools,

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import fsSync from "node:fs";
+import fsSync, { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -16,9 +16,13 @@ const SAFE_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const DEFAULT_DISPLAY_RANGE = Object.freeze([220, 399]);
 const DEFAULT_PORT_RANGE = Object.freeze([49_000, 49_999]);
 
-function captureCoordinateLockPath(displayNumber, cdpPort) {
+export function captureCoordinateLockPath(
+  coordinateLockRoot,
+  displayNumber,
+  cdpPort,
+) {
   return path.join(
-    os.tmpdir(),
+    coordinateLockRoot,
     `kandev-highlight-${displayNumber}-${cdpPort}.lock`,
   );
 }
@@ -40,38 +44,65 @@ export async function processStartToken(pid) {
   }
 }
 
-async function openedCoordinateLock(lockPath) {
-  let handle;
-  try {
-    handle = await fs.open(lockPath, "r");
-  } catch (error) {
+async function openCoordinateLockHandle(lockPath) {
+  const pathStat = await fs.lstat(lockPath).catch((error) => {
     if (error.code === "ENOENT") return null;
     throw error;
+  });
+  if (!pathStat) return null;
+  if (pathStat.isSymbolicLink() || !pathStat.isFile()) {
+    throw new Error(`coordinate lock must be a non-symlink file: ${lockPath}`);
   }
+  let handle;
+  try {
+    handle = await fs.open(
+      lockPath,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+    );
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw new Error(
+      `cannot open coordinate lock without following symlinks: ${lockPath}`,
+      { cause: error },
+    );
+  }
+  return { handle, pathStat };
+}
+
+function parseCoordinateLock(contents, lockPath) {
+  let lock;
+  try {
+    lock = JSON.parse(contents);
+  } catch {
+    throw new Error(`malformed coordinate lock: ${lockPath}`);
+  }
+  if (
+    lock?.contract !== "kandev-highlight-coordinate-lock-v1" ||
+    !Number.isInteger(lock.owner?.pid) ||
+    lock.owner.pid <= 0 ||
+    typeof lock.owner?.startToken !== "string" ||
+    lock.owner.startToken === "" ||
+    typeof lock.artifactRoot !== "string"
+  ) {
+    throw new Error(`malformed coordinate lock: ${lockPath}`);
+  }
+  return lock;
+}
+
+async function openedCoordinateLock(lockPath) {
+  const opened = await openCoordinateLockHandle(lockPath);
+  if (!opened) return null;
   try {
     const [contents, stat] = await Promise.all([
-      handle.readFile("utf8"),
-      handle.stat(),
+      opened.handle.readFile("utf8"),
+      opened.handle.stat(),
     ]);
-    let lock;
-    try {
-      lock = JSON.parse(contents);
-    } catch {
-      throw new Error(`malformed coordinate lock: ${lockPath}`);
+    if (stat.dev !== opened.pathStat.dev || stat.ino !== opened.pathStat.ino) {
+      throw new Error(`coordinate lock changed while opening: ${lockPath}`);
     }
-    if (
-      lock?.contract !== "kandev-highlight-coordinate-lock-v1" ||
-      !Number.isInteger(lock.owner?.pid) ||
-      lock.owner.pid <= 0 ||
-      typeof lock.owner?.startToken !== "string" ||
-      lock.owner.startToken === "" ||
-      typeof lock.artifactRoot !== "string"
-    ) {
-      throw new Error(`malformed coordinate lock: ${lockPath}`);
-    }
-    return { lock, stat };
+    return { lock: parseCoordinateLock(contents, lockPath), stat };
   } finally {
-    await handle.close();
+    await opened.handle.close();
   }
 }
 
@@ -112,10 +143,14 @@ async function reclaimDeadCoordinateLock(
   return true;
 }
 
-async function defaultCoordinateAvailable(displayNumber, cdpPort) {
+async function defaultCoordinateAvailableInRoot(
+  coordinateLockRoot,
+  displayNumber,
+  cdpPort,
+) {
   try {
     return await reclaimDeadCoordinateLock(
-      captureCoordinateLockPath(displayNumber, cdpPort),
+      captureCoordinateLockPath(coordinateLockRoot, displayNumber, cdpPort),
       { displayNumber, cdpPort },
     );
   } catch (error) {
@@ -149,6 +184,13 @@ function inside(candidate, root) {
   );
 }
 
+function requireAbsoluteCoordinateLockRoot(value) {
+  if (typeof value !== "string" || !path.isAbsolute(value)) {
+    throw new Error("coordinateLockRoot must be an absolute controlled path");
+  }
+  return path.resolve(value);
+}
+
 function assertExternalArtifactRoot(artifactRoot, repositoryRoots) {
   for (const repositoryRoot of repositoryRoots) {
     if (inside(artifactRoot, repositoryRoot)) {
@@ -179,6 +221,39 @@ async function assertCanonicalExternalRoot(plan) {
         `capture artifactRoot must stay outside every repository root after symlink resolution: ${plan.artifactRoot}`,
       );
     }
+  }
+}
+
+async function assertCanonicalCoordinateLockDirectory(coordinateLockRoot) {
+  const rootStat = await fs.lstat(coordinateLockRoot).catch((error) => {
+    if (error.code === "ENOENT") {
+      throw new Error(
+        `coordinateLockRoot does not exist: ${coordinateLockRoot}`,
+      );
+    }
+    throw error;
+  });
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new Error(
+      `coordinateLockRoot must be a non-symlink directory: ${coordinateLockRoot}`,
+    );
+  }
+  if ((await fs.realpath(coordinateLockRoot)) !== coordinateLockRoot) {
+    throw new Error(
+      `coordinateLockRoot cannot resolve through symlinks: ${coordinateLockRoot}`,
+    );
+  }
+}
+
+async function assertCanonicalCoordinateLockRoot(plan) {
+  await assertCanonicalCoordinateLockDirectory(plan.coordinateLockRoot);
+  const expected = captureCoordinateLockPath(
+    plan.coordinateLockRoot,
+    plan.displayNumber,
+    plan.cdpPort,
+  );
+  if (plan.coordinateLockPath !== expected) {
+    throw new Error("coordinateLockPath does not match its controlled root");
   }
 }
 
@@ -247,10 +322,21 @@ export async function isTcpPortAvailable(port) {
 export async function allocateRuntimeCoordinates({
   displayRange,
   portRange,
+  coordinateLockRoot = os.tmpdir(),
   isDisplayFree = isDisplayAvailable,
   isPortFree = isTcpPortAvailable,
-  isCoordinateAvailable = defaultCoordinateAvailable,
+  isCoordinateAvailable,
 } = {}) {
+  const resolvedLockRoot = requireAbsoluteCoordinateLockRoot(coordinateLockRoot);
+  await assertCanonicalCoordinateLockDirectory(resolvedLockRoot);
+  const coordinateAvailable =
+    isCoordinateAvailable ??
+    ((displayNumber, cdpPort) =>
+      defaultCoordinateAvailableInRoot(
+        resolvedLockRoot,
+        displayNumber,
+        cdpPort,
+      ));
   const [displayStart, displayEnd] = normalizeRange(
     displayRange,
     DEFAULT_DISPLAY_RANGE,
@@ -275,7 +361,7 @@ export async function allocateRuntimeCoordinates({
     sawFreeDisplay = true;
     for (let cdpPort = portStart; cdpPort <= portEnd; cdpPort += 1) {
       if (!(await isPortFree(cdpPort))) continue;
-      if (!(await isCoordinateAvailable(displayNumber, cdpPort))) continue;
+      if (!(await coordinateAvailable(displayNumber, cdpPort))) continue;
       return { displayNumber, cdpPort };
     }
   }
@@ -294,6 +380,7 @@ export function planCaptureRuntime({
   runId,
   displayNumber,
   cdpPort,
+  coordinateLockRoot = os.tmpdir(),
   browserExecutable,
   chromiumSandbox = defaultChromiumSandboxPolicy(),
   xvfbExecutable = "Xvfb",
@@ -324,6 +411,8 @@ export function planCaptureRuntime({
   const sandboxPolicy = validateChromiumSandboxPolicy(chromiumSandbox);
   const captureProfile = normalizeProfile(profile);
   const resolvedRoot = path.resolve(artifactRoot);
+  const resolvedCoordinateLockRoot =
+    requireAbsoluteCoordinateLockRoot(coordinateLockRoot);
   const resolvedRepositories = repositoryRoots.map((entry) =>
     path.resolve(entry),
   );
@@ -335,7 +424,11 @@ export function planCaptureRuntime({
   const logsDir = path.join(resolvedRoot, "logs");
   const display = `:${displayNumber}.0`;
   const sourceGeometry = `${captureProfile.sourceWidth}x${captureProfile.sourceHeight}`;
-  const coordinateLockPath = captureCoordinateLockPath(displayNumber, cdpPort);
+  const coordinateLockPath = captureCoordinateLockPath(
+    resolvedCoordinateLockRoot,
+    displayNumber,
+    cdpPort,
+  );
   return {
     contract: "kandev-highlight-capture-runtime-v1",
     scenarioId,
@@ -350,6 +443,7 @@ export function planCaptureRuntime({
     evidenceDir: path.join(resolvedRoot, "evidence"),
     rawMasterPath: path.join(resolvedRoot, "raw", `${scenarioId}.source.mp4`),
     lockPath: path.join(runtimeDir, "capture.lock"),
+    coordinateLockRoot: resolvedCoordinateLockRoot,
     coordinateLockPath,
     xvfbLogPath: path.join(logsDir, "xvfb.log"),
     chromiumLogPath: path.join(logsDir, "chromium.log"),
@@ -487,7 +581,10 @@ export async function reserveCaptureRuntime(
   if (plan?.contract !== "kandev-highlight-capture-runtime-v1")
     throw new Error("invalid capture runtime plan");
   await fs.mkdir(path.dirname(plan.artifactRoot), { recursive: true });
-  await assertCanonicalExternalRoot(plan);
+  await Promise.all([
+    assertCanonicalExternalRoot(plan),
+    assertCanonicalCoordinateLockRoot(plan),
+  ]);
   try {
     await fs.access(plan.artifactRoot);
     throw new Error(

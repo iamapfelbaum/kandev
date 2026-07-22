@@ -42,9 +42,11 @@ async function fixture() {
   );
   const repositoryRoot = path.join(root, "repo");
   const artifactParent = path.join(root, "artifacts");
+  const coordinateLockRoot = path.join(root, "worker-tmp");
   await fs.mkdir(repositoryRoot);
   await fs.mkdir(artifactParent);
-  return { root, repositoryRoot, artifactParent };
+  await fs.mkdir(coordinateLockRoot);
+  return { root, repositoryRoot, artifactParent, coordinateLockRoot };
 }
 
 function runtimeOptions(paths, overrides = {}) {
@@ -57,6 +59,7 @@ function runtimeOptions(paths, overrides = {}) {
     displayNumber: 261,
     cdpPort: 49_261,
     browserExecutable: "/opt/playwright/chromium",
+    coordinateLockRoot: paths.coordinateLockRoot,
     ...overrides,
   };
 }
@@ -77,6 +80,11 @@ test("plans an external collision-free desktop runtime at native source dimensio
   assert.equal(
     plan.lockPath,
     path.join(plan.artifactRoot, "runtime", "capture.lock"),
+  );
+  assert.equal(plan.coordinateLockRoot, paths.coordinateLockRoot);
+  assert.equal(
+    plan.coordinateLockPath,
+    path.join(paths.coordinateLockRoot, "kandev-highlight-261-49261.lock"),
   );
   assert.equal(
     plan.rawMasterPath,
@@ -105,25 +113,46 @@ test("keeps native Chromium sandboxing by default and only disables it through t
 
   const nativePlan = planCaptureRuntime(runtimeOptions(paths));
   assert.deepEqual(nativePlan.chromiumSandbox, {
+    contract: "kandev-highlight-chromium-sandbox-policy-v1",
+    version: 1,
     mode: "native",
     proof: {
       status: "unknown",
       reason: "native Chromium sandbox is required by default",
     },
+    authorization: null,
   });
   assert.ok(!nativePlan.chromium.args.includes("--no-sandbox"));
 
   const disabledPlan = planCaptureRuntime(
     runtimeOptions(paths, {
       chromiumSandbox: {
+        contract: "kandev-highlight-chromium-sandbox-policy-v1",
+        version: 1,
         mode: "disabled",
         proof: { status: "unavailable", reason: "AppArmor restriction" },
+        authorization: {
+          contract: "kandev-highlight-disabled-sandbox-authorization-v1",
+          sourceMode: "current_main",
+          sourceSha: "1".repeat(40),
+          allowedOrigin: "http://localhost:18087",
+          guardContract: "kandev-highlight-origin-isolation-v1",
+        },
       },
     }),
   );
   assert.deepEqual(disabledPlan.chromiumSandbox, {
+    contract: "kandev-highlight-chromium-sandbox-policy-v1",
+    version: 1,
     mode: "disabled",
     proof: { status: "unavailable", reason: "AppArmor restriction" },
+    authorization: {
+      contract: "kandev-highlight-disabled-sandbox-authorization-v1",
+      sourceMode: "current_main",
+      sourceSha: "1".repeat(40),
+      allowedOrigin: "http://localhost:18087",
+      guardContract: "kandev-highlight-origin-isolation-v1",
+    },
   });
   assert.ok(disabledPlan.chromium.args.includes("--no-sandbox"));
 
@@ -132,8 +161,11 @@ test("keeps native Chromium sandboxing by default and only disables it through t
       planCaptureRuntime(
         runtimeOptions(paths, {
           chromiumSandbox: {
+            contract: "kandev-highlight-chromium-sandbox-policy-v1",
+            version: 1,
             mode: "arbitrary-args",
             proof: { status: "unavailable", reason: "untrusted" },
+            authorization: null,
           },
         }),
       ),
@@ -144,8 +176,18 @@ test("keeps native Chromium sandboxing by default and only disables it through t
       planCaptureRuntime(
         runtimeOptions(paths, {
           chromiumSandbox: {
+            contract: "kandev-highlight-chromium-sandbox-policy-v1",
+            version: 1,
             mode: "disabled",
             proof: { status: "available", reason: "native works" },
+            authorization: {
+              contract:
+                "kandev-highlight-disabled-sandbox-authorization-v1",
+              sourceMode: "current_main",
+              sourceSha: "1".repeat(40),
+              allowedOrigin: "http://localhost:18087",
+              guardContract: "kandev-highlight-origin-isolation-v1",
+            },
           },
         }),
       ),
@@ -256,6 +298,29 @@ test("allocation skips a live coordinate lock and retries another pair", async (
   ]);
 });
 
+test("allocation rejects a symlinked coordinate-lock root before scanning", async (t) => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "highlight-lock-root-test-"),
+  );
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const target = path.join(root, "target");
+  const link = path.join(root, "worker-tmp");
+  await fs.mkdir(target);
+  await fs.symlink(target, link);
+
+  await assert.rejects(
+    () =>
+      allocateRuntimeCoordinates({
+        coordinateLockRoot: link,
+        displayRange: [250, 250],
+        portRange: [49_250, 49_250],
+        isDisplayFree: async () => true,
+        isPortFree: async () => true,
+      }),
+    /coordinateLockRoot.*symlink/i,
+  );
+});
+
 test("reservation reclaims only a proven-dead PID/start-token coordinate lock", async (t) => {
   const paths = await fixture();
   t.after(() => fs.rm(paths.root, { recursive: true, force: true }));
@@ -331,6 +396,44 @@ test("reservation never unlinks malformed or live coordinate locks", async (t) =
     await fs.readFile(malformedPlan.coordinateLockPath, "utf8"),
     /live-token/,
   );
+});
+
+test("reservation rejects a coordinate-lock symlink without touching its target", async (t) => {
+  const paths = await fixture();
+  t.after(() => fs.rm(paths.root, { recursive: true, force: true }));
+  const plan = planCaptureRuntime(
+    runtimeOptions(paths, { displayNumber: 264, cdpPort: 49_264 }),
+  );
+  const target = path.join(paths.root, "attacker-target");
+  await fs.writeFile(target, "do-not-touch\n", { flag: "wx" });
+  await fs.symlink(target, plan.coordinateLockPath);
+
+  await assert.rejects(
+    () =>
+      reserveCaptureRuntime(plan, {
+        processStartToken: async () => "current-start-token",
+        isDisplayFree: async () => true,
+        isPortFree: async () => true,
+      }),
+    /coordinate lock.*symlink/i,
+  );
+  assert.equal(await fs.readFile(target, "utf8"), "do-not-touch\n");
+  await assert.rejects(fs.lstat(plan.artifactRoot), { code: "ENOENT" });
+});
+
+test("reservation rejects a tampered coordinate-lock path", async (t) => {
+  const paths = await fixture();
+  t.after(() => fs.rm(paths.root, { recursive: true, force: true }));
+  const plan = planCaptureRuntime(
+    runtimeOptions(paths, { displayNumber: 265, cdpPort: 49_265 }),
+  );
+  plan.coordinateLockPath = path.join(paths.coordinateLockRoot, "other.lock");
+
+  await assert.rejects(
+    () => reserveCaptureRuntime(plan),
+    /coordinateLockPath.*controlled root/i,
+  );
+  await assert.rejects(fs.lstat(plan.artifactRoot), { code: "ENOENT" });
 });
 
 test("managed process waits for SIGKILL exit and rejects a surviving child", async (t) => {

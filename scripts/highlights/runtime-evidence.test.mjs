@@ -263,6 +263,7 @@ async function evidenceFixture(
     runId,
     pullRequest: { number: 42, baseSha: BASE_SHA },
     bundleRoot: hostRoot,
+    workerTempRoot: path.join(hostRoot, "worker-tmp"),
     sourceProof,
     build,
     tools: {
@@ -274,8 +275,11 @@ async function evidenceFixture(
       webBuild: "/verified/index.html",
     },
     chromiumSandbox: {
+      contract: "kandev-highlight-chromium-sandbox-policy-v1",
+      version: 1,
       mode: "native",
       proof: { status: "available", reason: "test native sandbox" },
+      authorization: null,
     },
     ports: { offset: 7, backend: 18_087 },
   };
@@ -355,7 +359,7 @@ async function evidenceFixture(
     },
     navigation: {
       contract: "kandev-highlight-navigation-evidence-v1",
-      version: 1,
+      version: 2,
       configuredUrl: "http://localhost:18087/board",
       allowedOrigin: "http://localhost:18087",
       finalUrl: "http://localhost:18087/board",
@@ -363,6 +367,26 @@ async function evidenceFixture(
       events: [],
       checkpoints: [{ label: "story end" }],
       violations: [],
+      isolation: {
+        contract: "kandev-highlight-origin-isolation-v1",
+        version: 1,
+        allowedOrigin: "http://localhost:18087",
+        controls: {
+          httpRoute: true,
+          webSocketRoute: true,
+          popupGuard: true,
+          subframeGuard: true,
+          serviceWorkerBypass: true,
+          serviceWorkerRegistrationBlocked: true,
+        },
+        traffic: {
+          httpAllowed: 4,
+          httpBlocked: 0,
+          webSocketAllowed: 1,
+          webSocketBlocked: 0,
+        },
+        violations: [],
+      },
     },
     captureEpochMs: 1_000,
     storyEpochMs: 1_080,
@@ -915,5 +939,39 @@ test("verified loader requires stable build, media alignment, and host input att
   await assert.rejects(
     loader()(untrustedInput.options),
     /trusted input ledger.*(?:invalid|required)|host-cdp/i,
+  );
+
+  const strippedIsolationViolation = await evidenceFixture(t, {
+    mutateCaptureReceipt(receipt) {
+      receipt.navigation.isolation.traffic.httpBlocked = 1;
+      receipt.navigation.isolation.violations = [];
+    },
+  });
+  await assert.rejects(
+    loader()(strippedIsolationViolation.options),
+    /origin isolation.*blocked traffic/i,
+  );
+
+  const strippedWebSocketViolation = await evidenceFixture(t, {
+    mutateCaptureReceipt(receipt) {
+      receipt.navigation.isolation.traffic.webSocketBlocked = 1;
+      receipt.navigation.isolation.violations = [];
+    },
+  });
+  await assert.rejects(
+    loader()(strippedWebSocketViolation.options),
+    /origin isolation.*blocked traffic/i,
+  );
+
+  const reboundIsolationOrigin = await evidenceFixture(t, {
+    mutateCaptureReceipt(receipt) {
+      receipt.navigation.allowedOrigin = "http://localhost:18088";
+      receipt.navigation.finalOrigin = "http://localhost:18088";
+      receipt.navigation.isolation.allowedOrigin = "http://localhost:18088";
+    },
+  });
+  await assert.rejects(
+    loader()(reboundIsolationOrigin.options),
+    /origin isolation.*sandbox authorization|capture origin.*runtime request/i,
   );
 });

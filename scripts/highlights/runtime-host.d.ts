@@ -69,6 +69,7 @@ export interface HighlightRuntimeWorkerRequest {
   runId: string;
   pullRequest: HighlightRuntimePullRequest | null;
   bundleRoot: string;
+  workerTempRoot: string;
   sourceProof: HighlightRuntimeSourceProof;
   build: HighlightRuntimeBuildIdentity;
   tools: HighlightRuntimeToolPaths;
@@ -77,11 +78,22 @@ export interface HighlightRuntimeWorkerRequest {
 }
 
 export interface HighlightChromiumSandboxPolicy {
+  contract: "kandev-highlight-chromium-sandbox-policy-v1";
+  version: 1;
   mode: "native" | "disabled";
   proof: {
     status: "available" | "unavailable" | "unknown";
     reason: string;
   };
+  authorization: HighlightDisabledSandboxAuthorization | null;
+}
+
+export interface HighlightDisabledSandboxAuthorization {
+  contract: "kandev-highlight-disabled-sandbox-authorization-v1";
+  sourceMode: "current_main";
+  sourceSha: string;
+  allowedOrigin: string;
+  guardContract: "kandev-highlight-origin-isolation-v1";
 }
 
 export interface HighlightApplicationRuntimeProof {
@@ -322,6 +334,7 @@ export function sanitizeRuntimeHostEnvironment(
   options: {
     homeRoot: string;
     fixtureRoot: string;
+    tempRoot: string;
     requestPath: string;
     workerResultPath: string;
     portOffset: number;
