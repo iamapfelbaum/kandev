@@ -539,6 +539,7 @@ test("scaffold refuses overwrite and dry-run leaves no file", async () => {
 
 test("quick-start template is checked in, promotion-ready, and digest-stable", async () => {
   const {
+    compileTimeline,
     computeScenarioDigest,
     readScenarioTemplate,
     requireDeliveryMetadata,
@@ -563,6 +564,15 @@ test("quick-start template is checked in, promotion-ready, and digest-stable", a
   assert.equal(requireDeliveryMetadata(first).highlight.mobileRequired, false);
   assert.equal(first.delivery.docs.page, "tasks-and-workflows.md");
   assert.equal(first.delivery.docs.section, "Create a task");
+  const click = first.story.actions.find((action) => action.kind === "click");
+  assert.equal(click.cursorDurationMs, 1_000);
+  const timeline = compileTimeline(first);
+  const clickEvent = timeline.events.find(
+    (event) => event.sourcePointer === "/story/actions/1",
+  );
+  assert.equal(clickEvent.cursorDurationMs, 1_000);
+  assert.equal(clickEvent.actionDurationMs, 1_120);
+  assert.ok(timeline.totalDurationMs <= 4_000);
   assert.equal(computeScenarioDigest(first), computeScenarioDigest(second));
   assert.doesNotMatch(JSON.stringify(first), /replace-with|TODO|kandev\.empty-workspace/);
   for (const action of first.story.actions) {

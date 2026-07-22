@@ -69,6 +69,85 @@ test("controller drives every sample through trusted input and records independe
   assert.ok(Number.isFinite(movement.visibility.endMs));
 });
 
+test("cursor duration is an absolute schedule that absorbs bounded input and glyph proof cost", async () => {
+  let time = 0;
+  let measurements = 0;
+  const page = {
+    mouse: {
+      async move() {
+        time += 5;
+      },
+    },
+    async waitForTimeout(ms) {
+      time += ms;
+    },
+  };
+  const controller = createCursorController({
+    page,
+    viewport: { width: 1920, height: 1200 },
+    now: () => time,
+    measurePointerGlyph: async ({ x, y }) => {
+      measurements += 1;
+      time += 7;
+      return { x: x - 10, y: y - 10, width: 20, height: 20 };
+    },
+  });
+
+  await controller.resync({ x: 200, y: 900 });
+  const movement = await controller.moveTo(
+    { x: 1700, y: 100 },
+    { durationMs: 1_000, label: "Create task" },
+  );
+
+  assert.ok(movement.samples.length > 12, "long motion retains bounded native steps");
+  assert.equal(
+    measurements,
+    3,
+    "resync plus independently measured movement endpoints are enough to prove a fixed glyph path",
+  );
+  assert.equal(movement.schedule.requestedDurationMs, 1_000);
+  assert.ok(movement.schedule.overrunMs <= 16);
+  assert.equal(movement.samples[0].pointerGlyphProof, "measured");
+  assert.equal(movement.samples.at(-1).pointerGlyphProof, "measured");
+  assert.ok(
+    movement.samples.slice(1, -1).every((sample) => sample.pointerGlyphProof === "projected"),
+  );
+});
+
+test("cursor reports an actionable schedule overrun when trusted input cannot meet declared duration", async () => {
+  let time = 0;
+  const page = {
+    mouse: {
+      async move() {
+        time += 80;
+      },
+    },
+    async waitForTimeout(ms) {
+      time += ms;
+    },
+  };
+  const controller = createCursorController({
+    page,
+    viewport: { width: 800, height: 600 },
+    now: () => time,
+    measurePointerGlyph: async ({ x, y }) => ({
+      x: x - 10,
+      y: y - 10,
+      width: 20,
+      height: 20,
+    }),
+  });
+  await controller.resync({ x: 100, y: 100 });
+
+  await assert.rejects(
+    controller.moveTo(
+      { x: 700, y: 500 },
+      { durationMs: 320, label: "Slow target" },
+    ),
+    /Slow target.*cursor schedule.*increase cursorDurationMs/i,
+  );
+});
+
 test("controller rejects a clipped pointer glyph with movement context", async () => {
   let time = 0;
   const page = {

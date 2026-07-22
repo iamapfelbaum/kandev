@@ -323,10 +323,15 @@ test("native-mobile drag uses touch start, dense touch moves, and touch end with
   const hoverInput = [];
   const touchInput = [];
   let clock = 0;
+  const recordWait = page.waitForTimeout.bind(page);
+  page.waitForTimeout = async (ms) => {
+    await recordWait(ms);
+    clock += ms;
+  };
   const cursor = createCursorController({
     page,
     viewport: { width: 430, height: 932 },
-    now: () => (clock += 5),
+    now: () => clock,
     trustedInput: async (input) => hoverInput.push(input),
     measurePointerGlyph: async ({ x, y }) => ({ x, y, width: 8, height: 10 }),
   });

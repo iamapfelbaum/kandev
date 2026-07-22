@@ -2,6 +2,7 @@ const DEFAULT_SAMPLE_INTERVAL_MS = 32;
 const DEFAULT_MAX_STEP_PX = 44;
 const DEFAULT_MIN_SAMPLES = 12;
 const DEFAULT_MIN_WAIT_MS = 4;
+const DEFAULT_MAX_SCHEDULE_OVERRUN_MS = 64;
 
 function finite(value, label) {
   if (!Number.isFinite(value)) throw new Error(`${label} must be finite`);
@@ -83,6 +84,30 @@ function cloneRect(rect) {
   return result;
 }
 
+function translateRect(rect, from, to) {
+  const source = point(from, "pointer glyph projection source");
+  const destination = point(to, "pointer glyph projection destination");
+  return {
+    x: rect.x + destination.x - source.x,
+    y: rect.y + destination.y - source.y,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+function assertStableGlyphProjection(expected, measured, label) {
+  const tolerance = 0.75;
+  if (
+    ["x", "y", "width", "height"].some(
+      (key) => Math.abs(expected[key] - measured[key]) > tolerance,
+    )
+  ) {
+    throw new Error(
+      `${label}: pointer glyph geometry changed during movement; expected ${JSON.stringify(expected)}, measured ${JSON.stringify(measured)}`,
+    );
+  }
+}
+
 function assertGlyphContained(rect, viewport, label) {
   if (!rect) throw new Error(`${label}: pointer glyph measurement is required`);
   const epsilon = 1e-6;
@@ -110,6 +135,7 @@ export function createCursorController({
   maxStepPx = DEFAULT_MAX_STEP_PX,
   minSamples = DEFAULT_MIN_SAMPLES,
   minWaitMs = DEFAULT_MIN_WAIT_MS,
+  maxScheduleOverrunMs = DEFAULT_MAX_SCHEDULE_OVERRUN_MS,
 } = {}) {
   if (!page || typeof page !== "object") throw new Error("cursor controller needs a page");
   if (!viewport || !Number.isFinite(viewport.width) || !Number.isFinite(viewport.height)) {
@@ -118,6 +144,10 @@ export function createCursorController({
   if (typeof now !== "function") throw new Error("cursor controller now must be a function");
   if (typeof measurePointerGlyph !== "function") {
     throw new Error("cursor controller needs independent pointer glyph measurement");
+  }
+  positive(minWaitMs, undefined, "minWaitMs");
+  if (!Number.isFinite(maxScheduleOverrunMs) || maxScheduleOverrunMs < 0) {
+    throw new Error("maxScheduleOverrunMs must be non-negative");
   }
   const sendTrustedInput = trustedInput ?? (async ({ x, y }) => {
     if (typeof page.mouse?.move !== "function") throw new Error("page has no trusted pointer input adapter");
@@ -175,30 +205,48 @@ export function createCursorController({
       endedAtMs: null,
       visibility: { startMs: null, endMs: null },
       samples: [],
+      schedule: null,
     };
     movement.visibility.startMs = movement.startedAtMs;
-    let priorOffset = 0;
+    let glyphAnchor = null;
     try {
-      for (const planned of trajectory) {
+      for (const [index, planned] of trajectory.entries()) {
+        const remainingMs = movement.startedAtMs + planned.offsetMs - now();
+        if (remainingMs >= minWaitMs) {
+          await page.waitForTimeout(remainingMs);
+        }
         const inputStarted = now();
         await movementInput({ x: planned.x, y: planned.y, phase: "travel", label });
         const inputEnded = now();
-        const pointerGlyphBounds = cloneRect(await measurePointerGlyph({ x: planned.x, y: planned.y }));
+        const independentlyMeasured = index === 0 || index === trajectory.length - 1;
+        let pointerGlyphBounds;
+        if (independentlyMeasured) {
+          pointerGlyphBounds = cloneRect(await measurePointerGlyph({ x: planned.x, y: planned.y }));
+          if (glyphAnchor) {
+            assertStableGlyphProjection(
+              translateRect(glyphAnchor.bounds, glyphAnchor.point, planned),
+              pointerGlyphBounds,
+              label,
+            );
+          } else {
+            glyphAnchor = {
+              point: { x: planned.x, y: planned.y },
+              bounds: pointerGlyphBounds,
+            };
+          }
+        } else {
+          pointerGlyphBounds = translateRect(glyphAnchor.bounds, glyphAnchor.point, planned);
+        }
         assertGlyphContained(pointerGlyphBounds, viewport, label);
         movement.samples.push({
           ...planned,
           tMs: inputEnded,
           trustedInputElapsedMs: inputEnded - inputStarted,
+          pointerGlyphProof: independentlyMeasured ? "measured" : "projected",
           targetBounds: cloneRect(metadata.targetBounds),
           targetGlyphBounds: cloneRect(metadata.targetGlyphBounds),
           pointerGlyphBounds,
         });
-        const plannedGap = Math.min(sampleIntervalMs, planned.offsetMs - priorOffset);
-        priorOffset = planned.offsetMs;
-        if (planned !== trajectory.at(-1)) {
-          const adaptiveWait = Math.max(minWaitMs, Math.min(sampleIntervalMs, plannedGap - (inputEnded - inputStarted)));
-          await page.waitForTimeout(adaptiveWait);
-        }
       }
     } catch (error) {
       movement.endedAtMs = now();
@@ -207,7 +255,20 @@ export function createCursorController({
     }
     current = next;
     movement.endedAtMs = now();
+    const actualDurationMs = movement.endedAtMs - movement.startedAtMs;
+    movement.schedule = {
+      requestedDurationMs: durationMs,
+      actualDurationMs,
+      overrunMs: Math.max(0, actualDurationMs - durationMs),
+      maxOverrunMs: maxScheduleOverrunMs,
+    };
     movements.push(movement);
+    if (movement.schedule.overrunMs > maxScheduleOverrunMs) {
+      movement.visibility.endMs = movement.endedAtMs;
+      throw new Error(
+        `${label}: cursor schedule overran declared ${durationMs}ms by ${Math.round(movement.schedule.overrunMs)}ms; increase cursorDurationMs or reduce movement distance`,
+      );
+    }
     activeMovement = movement;
     return movement;
   }
