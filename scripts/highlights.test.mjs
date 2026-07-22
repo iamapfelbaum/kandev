@@ -155,6 +155,78 @@ test("capture, render, qa, and run CLI forward strict declarative pipeline optio
   assert.equal(Object.hasOwn(received[3], "runtimeId"), false);
 });
 
+test("stage CLI delegates an exact zero-write dry-run to the declarative pipeline", async () => {
+  const { root } = await fixtureRoot();
+  const { runHighlightsCli } = await import("./highlights.mjs");
+  const before = await fs.readdir(root, { recursive: true });
+  const received = [];
+
+  await runHighlightsCli(
+    [
+      "stage",
+      "story.json",
+      "--artifact-root",
+      "/external/story",
+      "--run-id",
+      "ci-42",
+      "--allow-extension",
+      "fixture.open",
+      "--allow-extension",
+      "fixture.close",
+      "--dry-run",
+    ],
+    {
+      repoRoot: root,
+      log: () => {},
+      pipelineRunner: async (options) => {
+        received.push(options);
+        return { contract: "kandev-highlight-stage-dry-run-v1", dryRun: true };
+      },
+    },
+  );
+
+  assert.deepEqual(received, [
+    {
+      command: "stage",
+      scenarioPath: path.join(root, "story.json"),
+      artifactRoot: "/external/story",
+      runId: "ci-42",
+      allowedExtensionIds: ["fixture.open", "fixture.close"],
+      dryRun: true,
+      repoRoot: root,
+    },
+  ]);
+  assert.deepEqual(await fs.readdir(root, { recursive: true }), before);
+});
+
+test("stage CLI rejects options outside its recovery contract", async () => {
+  const { runHighlightsCli } = await import("./highlights.mjs");
+  const options = {
+    repoRoot: "/repo",
+    log: () => {},
+    pipelineRunner: async () => ({}),
+  };
+
+  for (const [name, value] of [
+    ["source", "pr_head"],
+    ["runtime", "kandev-isolated-e2e"],
+    ["landing-root", "/landing"],
+  ]) {
+    await assert.rejects(
+      runHighlightsCli(
+        ["stage", "story.json", "--artifact-root", "/external/story", `--${name}`, value],
+        options,
+      ),
+      new RegExp(`unknown option --${name}`),
+    );
+  }
+
+  await assert.rejects(
+    runHighlightsCli(["stage", "story.json"], options),
+    /usage: highlights\.mjs stage <scenario\.json> --artifact-root <external-directory> \[--run-id <id>\] \[--allow-extension <id>\] \[--dry-run\]/,
+  );
+});
+
 test("declarative pipeline CLI rejects missing, unknown, and duplicate options", async () => {
   const { runHighlightsCli } = await import("./highlights.mjs");
   const options = { repoRoot: "/repo", log: () => {}, pipelineRunner: async () => ({}) };

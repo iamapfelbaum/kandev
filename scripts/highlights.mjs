@@ -983,6 +983,28 @@ export async function runHighlightsCli(argv = process.argv.slice(2), {
     } else {
       log(output.trimEnd());
     }
+  } else if (command === "stage") {
+    const parsed = parseCliArgs(
+      args,
+      new Set(["artifact-root", "run-id", "allow-extension", "dry-run"]),
+    );
+    if (parsed.positionals.length !== 1 || !parsed.values["artifact-root"]) {
+      throw new Error(
+        "usage: highlights.mjs stage <scenario.json> --artifact-root <external-directory> [--run-id <id>] [--allow-extension <id>] [--dry-run]",
+      );
+    }
+    const execute =
+      pipelineRunner ?? (await import("./highlights/pipeline.mjs")).runDeclarativeHighlightCommand;
+    const result = await execute({
+      command,
+      scenarioPath: path.resolve(repoRoot, parsed.positionals[0]),
+      artifactRoot: path.resolve(repoRoot, parsed.values["artifact-root"]),
+      runId: parsed.values["run-id"],
+      allowedExtensionIds: parsed.repeated["allow-extension"] ?? [],
+      dryRun: parsed.flags.has("dry-run"),
+      repoRoot,
+    });
+    log(JSON.stringify(result, null, 2));
   } else if (["capture", "render", "qa", "run"].includes(command)) {
     const capturesSource = command === "capture" || command === "run";
     const allowed = capturesSource
@@ -1077,7 +1099,9 @@ export async function runHighlightsCli(argv = process.argv.slice(2), {
     if (!args[0] || args.length < 2) throw new Error("usage: highlights.mjs withdraw <highlight-directory> <reason>");
     log(JSON.stringify(await withdrawHighlight({ highlightDir: path.resolve(repoRoot, args[0]), reason: args.slice(1).join(" ") }), null, 2));
   } else {
-    throw new Error("usage: highlights.mjs scaffold|validate [scenario]|storyboard|capture|render|qa|run|digest|promote|activate|activate-release|withdraw");
+    throw new Error(
+      "usage: highlights.mjs scaffold|validate [scenario]|storyboard|capture|render|qa|stage|run|digest|promote|activate|activate-release|withdraw",
+    );
   }
 }
 
