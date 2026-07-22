@@ -200,7 +200,7 @@ test("builds silent no-overwrite 25fps native RGB X11 capture commands", () => {
     assert.match(joined, /-qp 0/);
     assert.match(joined, /-profile:v high444/);
     assert.match(joined, /-pix_fmt bgr0/);
-    assert.match(joined, /-threads 2/);
+    assert.match(joined, /-threads 3/);
     assert.match(
       joined,
       /-progress \/external\/highlight-run\/logs\/ffmpeg\.progress/,
@@ -357,7 +357,7 @@ test("encoder readiness plan amortizes cold startup while proving sustained full
   assert.match(joined, /-qp 0/);
   assert.match(joined, /-c:v libx264rgb/);
   assert.match(joined, /-pix_fmt bgr0/);
-  assert.match(joined, /-threads 2/);
+  assert.match(joined, /-threads 3/);
   assert.equal(plan.master.pixelFormat, "gbrp");
   assert.equal(plan.master.profile, "High 4:4:4 Predictive");
   assert.equal(plan.sourceDurationMs, 3_000);
