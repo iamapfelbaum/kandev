@@ -124,6 +124,8 @@ function encoderContract(encoder) {
         "libx264",
         "-preset",
         "ultrafast",
+        "-threads",
+        "2",
         "-qp",
         "0",
         "-profile:v",
