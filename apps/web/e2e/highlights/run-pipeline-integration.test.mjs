@@ -1,4 +1,4 @@
-/* eslint-disable no-nested-ternary, sonarjs/no-duplicate-string */
+/* eslint-disable max-lines, no-nested-ternary, sonarjs/no-duplicate-string */
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -14,6 +14,7 @@ import {
   buildPipelineCommandSequence,
   captureRepositoryState,
   commitScenarioAndBindCurrentMain,
+  linkIgnoredDependencies,
   normalizeDeterminismEvidence,
   projectSemanticPointerEvidence,
   runWithEvalRetention,
@@ -336,6 +337,34 @@ test("repository-state proof catches tracked and untracked production writes", a
     () => assertRepositoryStateUnchanged(before, after, "production repository"),
     /production repository.*changed.*unexpected\.txt/i,
   );
+});
+
+test("dependency reuse links only ignored node_modules directories into the snapshot", async (t) => {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "highlight-pipeline-links-test-"));
+  t.after(() => fs.rm(temp, { recursive: true, force: true }));
+  const sourceRoot = path.join(temp, "source");
+  const cloneRoot = path.join(temp, "snapshot");
+  await initRepository(sourceRoot);
+  await fs.writeFile(path.join(sourceRoot, ".gitignore"), "node_modules/\n");
+  await exec("git", ["add", ".gitignore"], { cwd: sourceRoot });
+  await exec("git", ["commit", "-m", "ignore dependencies"], { cwd: sourceRoot });
+  await Promise.all([
+    fs.mkdir(path.join(sourceRoot, "apps", "node_modules", ".pnpm"), { recursive: true }),
+    fs.mkdir(path.join(sourceRoot, "apps", "web", "node_modules", ".bin"), { recursive: true }),
+  ]);
+  await snapshotCommittedRepository({ sourceRoot, cloneRoot });
+
+  const links = await linkIgnoredDependencies({ sourceRoot, cloneRoot });
+  assert.equal(links.length, 2);
+  for (const link of links) {
+    const target = await fs.lstat(link.target);
+    assert.equal(target.isDirectory(), true);
+    assert.equal(target.isSymbolicLink(), false);
+    const entries = await fs.readdir(link.target);
+    assert.equal(entries.length, 1);
+    assert.equal((await fs.lstat(path.join(link.target, entries[0]))).isSymbolicLink(), true);
+  }
+  assert.equal((await captureRepositoryState(cloneRoot)).status, "");
 });
 
 test("determinism normalization excludes volatile host data but retains semantic evidence", () => {

@@ -500,7 +500,7 @@ export async function commitScenarioAndBindCurrentMain({ cloneRoot, scenarioPath
   return proof;
 }
 
-async function linkIgnoredNodeModules({ sourceRoot, cloneRoot }) {
+export async function linkIgnoredDependencies({ sourceRoot, cloneRoot }) {
   const links = [];
   for (const relative of ["apps/node_modules", "apps/web/node_modules"]) {
     const source = path.join(sourceRoot, relative);
@@ -509,15 +509,29 @@ async function linkIgnoredNodeModules({ sourceRoot, cloneRoot }) {
     if (!stat?.isDirectory() || stat.isSymbolicLink() || (await fs.realpath(source)) !== source) {
       throw new Error(`reusable dependency directory is missing or unsafe: ${source}`);
     }
-    const ignored = await git(cloneRoot, ["check-ignore", "--quiet", relative]).catch((error) => {
+    const ignored = await git(cloneRoot, [
+      "check-ignore",
+      "--quiet",
+      "--no-index",
+      `${relative}/`,
+    ]).catch((error) => {
       if (error.commandResult?.exitCode === 1) return null;
       throw error;
     });
     if (!ignored) throw new Error(`dependency link target is not Git-ignored: ${relative}`);
     if (await pathExists(target)) throw new Error(`refusing existing dependency target: ${target}`);
-    await fs.mkdir(path.dirname(target), { recursive: true });
-    await fs.symlink(source, target, "dir");
-    links.push({ source, target });
+    await fs.mkdir(target, { recursive: true });
+    const entries = await fs.readdir(source, { withFileTypes: true });
+    for (const entry of entries) {
+      await fs.symlink(path.join(source, entry.name), path.join(target, entry.name));
+    }
+    const status = (
+      await git(cloneRoot, ["status", "--porcelain=v1", "--untracked-files=all"])
+    ).stdout.trim();
+    if (status !== "") {
+      throw new Error(`ignored dependency reuse dirtied eval snapshot at ${relative}: ${status}`);
+    }
+    links.push({ source, target, linkedEntries: entries.length });
   }
   return links;
 }
@@ -1239,7 +1253,7 @@ export async function runFreshAgentPipelineEvaluation({
         cloneRoot,
         originRoot,
       });
-      const dependencyLinks = await linkIgnoredNodeModules({ sourceRoot: source, cloneRoot });
+      const dependencyLinks = await linkIgnoredDependencies({ sourceRoot: source, cloneRoot });
       const environment = await configuredToolchainEnvironment(inheritedEnv);
       const initialCommands = buildPipelineCommandSequence({
         cloneRoot,
