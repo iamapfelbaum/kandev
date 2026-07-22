@@ -473,13 +473,17 @@ test("timeline compiler is deterministic and keeps cursor and camera events inde
   const click = first.events.find((event) => event.kind === "click");
   const type = first.events.find((event) => event.kind === "type");
   assert.notEqual(cursor.index, camera.index);
+  assert.equal(cursor.runtimeOverheadBudgetMs, 1_000);
   assert.equal(camera.movesCursor, false);
+  assert.equal(camera.runtimeOverheadBudgetMs, 0);
   assert.equal(click.movesCursor, true);
   assert.equal(click.cursorDurationMs, 350);
   assert.equal(click.activationDurationMs, 120);
+  assert.equal(click.runtimeOverheadBudgetMs, 1_000);
   assert.equal(type.movesCursor, true);
   assert.equal(type.cursorDurationMs, 350);
   assert.equal(type.activationDurationMs, 120);
+  assert.equal(type.runtimeOverheadBudgetMs, 1_000);
   assert.equal(first.totalDurationMs, first.events.at(-1).endMs);
 });
 
@@ -518,6 +522,7 @@ test("storyboard renders machine JSON and human Markdown", async () => {
   assert.equal(machine.scenarioId, "short-task-story");
   assert.match(markdown, /^# Storyboard: Create a task from the board/m);
   assert.match(markdown, /\| Start \| End \| Kind \| Intent \|/);
+  assert.match(markdown, /runtime overhead bound 1000ms/i);
   assert.match(markdown, /cameraFocus.*Review API/);
 });
 
@@ -575,8 +580,9 @@ test("quick-start template is checked in, promotion-ready, and digest-stable", a
     (event) => event.sourcePointer === "/story/actions/1",
   );
   assert.equal(clickEvent.cursorDurationMs, 1_800);
-  assert.equal(clickEvent.actionDurationMs, 1_920);
-  assert.ok(timeline.totalDurationMs <= 4_000);
+  assert.equal(clickEvent.runtimeOverheadBudgetMs, 1_000);
+  assert.equal(clickEvent.actionDurationMs, 2_920);
+  assert.equal(timeline.totalDurationMs, 4_820);
   assert.equal(computeScenarioDigest(first), computeScenarioDigest(second));
   assert.doesNotMatch(JSON.stringify(first), /replace-with|TODO|kandev\.empty-workspace/);
   for (const action of first.story.actions) {

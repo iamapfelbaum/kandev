@@ -172,7 +172,7 @@ export function compileTimeline(scenario, options = {}) {
   assertValidScenario(scenario, options);
   const events = [];
   let cursorMs = 0;
-  const append = ({ kind, durationMs, sourcePointer, intent, movesCursor = false, controlsCamera = false, settleMs = 0, cursorDurationMs = 0, activationDurationMs = 0, approachDurationMs = 0, timeoutBoundMs = null }) => {
+  const append = ({ kind, durationMs, sourcePointer, intent, movesCursor = false, controlsCamera = false, settleMs = 0, cursorDurationMs = 0, activationDurationMs = 0, approachDurationMs = 0, runtimeOverheadBudgetMs = 0, timeoutBoundMs = null }) => {
     const actionDurationMs = durationMs;
     const totalDurationMs = actionDurationMs + settleMs;
     const event = {
@@ -189,6 +189,7 @@ export function compileTimeline(scenario, options = {}) {
       cursorDurationMs,
       activationDurationMs,
       approachDurationMs,
+      runtimeOverheadBudgetMs,
       timeoutBoundMs,
       intent,
     };
@@ -215,6 +216,7 @@ export function compileTimeline(scenario, options = {}) {
       cursorDurationMs: timing.cursorDurationMs,
       activationDurationMs: timing.activationDurationMs,
       approachDurationMs: timing.approachDurationMs,
+      runtimeOverheadBudgetMs: timing.runtimeOverheadBudgetMs,
       timeoutBoundMs: timing.timeoutBoundMs ?? null,
     });
   });
@@ -245,9 +247,12 @@ export function compileTimeline(scenario, options = {}) {
 export function renderStoryboard(timeline, { format = "markdown" } = {}) {
   if (format === "json") return `${JSON.stringify(timeline, null, 2)}\n`;
   if (format !== "markdown") throw new Error(`unsupported storyboard format: ${format}`);
-  const rows = timeline.events.map((event) =>
-    `| ${formatSeconds(event.startMs)} | ${formatSeconds(event.endMs)} | ${escapeCell(event.kind)} | ${escapeCell(event.intent)} |`,
-  );
+  const rows = timeline.events.map((event) => {
+    const runtimeBound = event.runtimeOverheadBudgetMs > 0
+      ? `; runtime overhead bound ${event.runtimeOverheadBudgetMs}ms`
+      : "";
+    return `| ${formatSeconds(event.startMs)} | ${formatSeconds(event.endMs)} | ${escapeCell(event.kind)} | ${escapeCell(`${event.intent}${runtimeBound}`)} |`;
+  });
   return [
     `# Storyboard: ${timeline.title}`,
     "",
@@ -606,22 +611,36 @@ function validateSafeMarkdownPath(value, pointer, errors) {
   }
 }
 
+const POINTER_RUNTIME_OVERHEAD_BUDGET_MS = 1_000;
+
 function actionTiming(action) {
   switch (action.kind) {
     case "click": {
       const cursorDurationMs = action.cursorDurationMs ?? 350;
       const activationDurationMs = 120;
-      return { durationMs: cursorDurationMs + activationDurationMs, cursorDurationMs, activationDurationMs, approachDurationMs: 0 };
+      return {
+        durationMs: cursorDurationMs + activationDurationMs + POINTER_RUNTIME_OVERHEAD_BUDGET_MS,
+        cursorDurationMs,
+        activationDurationMs,
+        approachDurationMs: 0,
+        runtimeOverheadBudgetMs: POINTER_RUNTIME_OVERHEAD_BUDGET_MS,
+      };
     }
     case "type": {
       const cursorDurationMs = action.cursorDurationMs ?? 350;
       const activationDurationMs = 120;
       const typingDurationMs = Math.max(80, [...action.text].length * (action.keystrokeDelayMs ?? 35));
-      return { durationMs: cursorDurationMs + activationDurationMs + typingDurationMs, cursorDurationMs, activationDurationMs, approachDurationMs: 0 };
+      return {
+        durationMs: cursorDurationMs + activationDurationMs + typingDurationMs + POINTER_RUNTIME_OVERHEAD_BUDGET_MS,
+        cursorDurationMs,
+        activationDurationMs,
+        approachDurationMs: 0,
+        runtimeOverheadBudgetMs: POINTER_RUNTIME_OVERHEAD_BUDGET_MS,
+      };
     }
     case "press": return simpleTiming(80);
-    case "hover": return cursorTiming(action.durationMs ?? 250);
-    case "moveCursor": return cursorTiming(action.durationMs ?? 350);
+    case "hover": return cursorTiming(action.durationMs ?? 250, POINTER_RUNTIME_OVERHEAD_BUDGET_MS);
+    case "moveCursor": return cursorTiming(action.durationMs ?? 350, POINTER_RUNTIME_OVERHEAD_BUDGET_MS);
     case "waitForVisible":
     case "waitForState": return {
       ...simpleTiming(0),
@@ -630,7 +649,14 @@ function actionTiming(action) {
     case "drag": {
       const approachDurationMs = action.approachDurationMs ?? 350;
       const dragDurationMs = action.durationMs ?? 600;
-      return { durationMs: approachDurationMs + dragDurationMs, cursorDurationMs: approachDurationMs + dragDurationMs, activationDurationMs: 0, approachDurationMs };
+      const runtimeOverheadBudgetMs = POINTER_RUNTIME_OVERHEAD_BUDGET_MS * 2;
+      return {
+        durationMs: approachDurationMs + dragDurationMs + runtimeOverheadBudgetMs,
+        cursorDurationMs: approachDurationMs + dragDurationMs,
+        activationDurationMs: 0,
+        approachDurationMs,
+        runtimeOverheadBudgetMs,
+      };
     }
     case "pause":
     case "cameraHold": return simpleTiming(action.durationMs);
@@ -643,11 +669,17 @@ function actionTiming(action) {
 }
 
 function simpleTiming(durationMs) {
-  return { durationMs, cursorDurationMs: 0, activationDurationMs: 0, approachDurationMs: 0 };
+  return { durationMs, cursorDurationMs: 0, activationDurationMs: 0, approachDurationMs: 0, runtimeOverheadBudgetMs: 0 };
 }
 
-function cursorTiming(durationMs) {
-  return { durationMs, cursorDurationMs: durationMs, activationDurationMs: 0, approachDurationMs: 0 };
+function cursorTiming(durationMs, runtimeOverheadBudgetMs = 0) {
+  return {
+    durationMs: durationMs + runtimeOverheadBudgetMs,
+    cursorDurationMs: durationMs,
+    activationDurationMs: 0,
+    approachDurationMs: 0,
+    runtimeOverheadBudgetMs,
+  };
 }
 
 function estimateStoryDuration(story) {

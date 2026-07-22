@@ -23,6 +23,13 @@ intent or runtime source; never patch delivery bytes or provenance after QA.
 - `waitForVisible`/`waitForState` deterministic timing overrun: make seeded
   state resolve immediately. Use explicit `pause` or `settleMs` when viewers
   should see a hold; do not inflate assertion timeout.
+- pointer action `overran planned slot`: inspect the machine storyboard's
+  `runtimeOverheadBudgetMs`. This fixed bound already covers semantic
+  bounds/glyph lookup and trusted-input transport; increasing
+  `cursorDurationMs` lengthens visible motion but cannot repair additive browser
+  overhead. Reduce host/capture contention and retry with a fresh run ID. If a
+  clean supported host reproducibly exceeds the bound, change the shared timing
+  contract with a failing test; do not add an untyped scenario delay.
 - opening/ending settle failure: use at least 400ms and ensure UI, camera, and
   cursor are motionless for full interval.
 - trusted pointer cadence failure: reduce capture load or use measured recorder

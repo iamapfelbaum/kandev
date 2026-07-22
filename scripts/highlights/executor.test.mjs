@@ -410,6 +410,9 @@ test("omitted executor timing defaults match the compiled storyboard contract", 
     },
   };
   const timeline = compileTimeline(scenario);
+  assert.equal(timeline.events[1].runtimeOverheadBudgetMs, 1_000);
+  assert.equal(timeline.events[2].runtimeOverheadBudgetMs, 1_000);
+  assert.equal(timeline.events[3].runtimeOverheadBudgetMs, 2_000);
   await executeScenario({
     scenario,
     page,
@@ -423,10 +426,88 @@ test("omitted executor timing defaults match the compiled storyboard contract", 
     ["move", timeline.events[1].cursorDurationMs],
     ["move", timeline.events[2].cursorDurationMs],
     ["move", timeline.events[3].approachDurationMs],
-    ["drag", timeline.events[3].actionDurationMs - timeline.events[3].approachDurationMs],
+    ["drag", timeline.events[3].cursorDurationMs - timeline.events[3].approachDurationMs],
   ]);
   assert.ok(page.log.includes("wait:visible:2000"));
   assert.ok(page.log.includes("wait:attached:2000"));
+});
+
+test("compiled pointer overhead absorbs bounded semantic lookup and trusted-input transport cost", async () => {
+  let clock = 0;
+  let boundsCostMs = 350;
+  let glyphCostMs = 200;
+  let activationCostMs = 100;
+  const page = fakePage();
+  page.locator.boundingBox = async () => {
+    clock += boundsCostMs;
+    return { x: 20, y: 30, width: 100, height: 40 };
+  };
+  page.waitForTimeout = async (ms) => { clock += ms; };
+  const cursor = {
+    async moveTo(_point, { durationMs }) { clock += durationMs; },
+    finishVisibility() {},
+  };
+  const scenario = {
+    schemaVersion: 1,
+    id: "bounded-pointer-overhead",
+    title: "Bounded pointer overhead",
+    profile: {
+      kind: "desktop",
+      viewport: { width: 1920, height: 1200 },
+      deviceScaleFactor: 2,
+    },
+    seed: { recipe: "tiny" },
+    setup: { route: "workspace.board", primitives: [] },
+    story: {
+      openingSettleMs: 400,
+      actions: [{
+        kind: "click",
+        target: { testId: "save" },
+        cursorDurationMs: 100,
+        settleMs: 200,
+      }],
+      endingSettleMs: 400,
+    },
+  };
+  const timeline = compileTimeline(scenario);
+  const prepare = () => prepareScenario({
+    scenario,
+    page,
+    cursor,
+    seedRegistry: { tiny: async () => {} },
+    measureTargetGlyph: async () => {
+      clock += glyphCostMs;
+      return { x: 28, y: 38, width: 72, height: 18 };
+    },
+    trustedActivation: async () => { clock += activationCostMs; },
+    now: () => clock,
+  });
+
+  const execution = await executePreparedScenario({
+    prepared: await prepare(),
+    timeline,
+    now: () => clock,
+  });
+  const click = timeline.events.find((event) => event.kind === "click");
+  assert.equal(click.runtimeOverheadBudgetMs, 1_000);
+  assert.equal(click.actionDurationMs, 1_220);
+  assert.equal(execution.steps[0].plannedStartMs, 400);
+  assert.equal(execution.steps[0].plannedEndMs, 1_820);
+  assert.equal(execution.steps[0].endedAtMs, 1_820);
+  assert.equal(execution.storyDurationMs, 2_220);
+
+  clock = 0;
+  boundsCostMs = 900;
+  glyphCostMs = 300;
+  activationCostMs = 100;
+  await assert.rejects(
+    executePreparedScenario({
+      prepared: await prepare(),
+      timeline,
+      now: () => clock,
+    }),
+    /overran planned slot.*runtime overhead budget 1000ms exhausted/i,
+  );
 });
 
 test("default executor and cursor clocks produce monotonic story-relative samples", async () => {

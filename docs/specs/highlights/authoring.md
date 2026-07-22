@@ -47,6 +47,13 @@ unique run ID, build/host paths, landing checkout, prerequisites, and phase orde
 without building, reserving directories, starting a process, capturing, rendering,
 running QA, staging, or promoting.
 
+Pointer duration fields describe visible motion. Machine storyboard events also
+show `runtimeOverheadBudgetMs`: a fixed 1000ms per semantic pointer target
+(2000ms for a two-target drag) that bounds target/glyph measurement and trusted
+browser-input transport without making agents guess host latency. Unused budget
+is absorbed before the next event; exceeding it fails at the action JSON pointer
+instead of silently changing total video duration.
+
 ## Run the trusted pipeline
 
 Feature-PR capture, with every trust choice explicit:

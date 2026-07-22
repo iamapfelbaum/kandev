@@ -474,13 +474,16 @@ export async function executePreparedScenario({
   if (typeof onRecordingStart === "function") await onRecordingStart({ prepared, timeline });
   const storyEpochMs = now();
   const elapsed = () => now() - storyEpochMs;
-  const waitUntil = async (targetMs, label) => {
+  const waitUntil = async (targetMs, label, { runtimeOverheadBudgetMs = 0 } = {}) => {
     const before = elapsed();
     if (before < targetMs) await page.waitForTimeout(targetMs - before);
     const after = elapsed();
     const overrun = after - targetMs;
     if (overrun > timingToleranceMs) {
-      throw new Error(`${label} overran planned slot by ${Math.round(overrun)}ms`);
+      const overhead = runtimeOverheadBudgetMs > 0
+        ? `; runtime overhead budget ${runtimeOverheadBudgetMs}ms exhausted (reduce capture contention or revise the shared tested bound)`
+        : "";
+      throw new Error(`${label} overran planned slot by ${Math.round(overrun)}ms${overhead}`);
     }
     return after;
   };
@@ -521,7 +524,11 @@ export async function executePreparedScenario({
         assertDeterministicWaitResolution(action, elapsed() - startedAtMs, timingToleranceMs);
       }
       if (action.settleMs) await page.waitForTimeout(action.settleMs);
-      if (planned) await waitUntil(planned.endMs, `step ${index} (${pointer})`);
+      if (planned) {
+        await waitUntil(planned.endMs, `step ${index} (${pointer})`, {
+          runtimeOverheadBudgetMs: planned.runtimeOverheadBudgetMs,
+        });
+      }
       const step = {
         index,
         pointer,

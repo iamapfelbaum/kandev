@@ -85,7 +85,7 @@ test("checked quick-start scenario is executable, short, semantic, and has no ca
     scenario.story.actions.find((action) => action.kind === "click")?.cursorDurationMs,
     1_800,
   );
-  assert.ok(timeline.totalDurationMs <= 4_000);
+  assert.equal(timeline.totalDurationMs, 4_820);
   assert.equal(timeline.initialCameraZoom, 1);
   const waits = timeline.events.filter((event) => event.kind === "waitForVisible");
   assert.equal(waits.length, 2);

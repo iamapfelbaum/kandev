@@ -167,6 +167,15 @@ pointer. Use `pause` for viewer readability or `settleMs` for an intentional
 post-action hold. Every pointer journey uses dense trusted input samples; a
 click, hover, type focus, or drag cannot teleport directly to its target.
 
+`cursorDurationMs`, `durationMs`, and `approachDurationMs` describe visible
+pointer motion only. The compiled machine storyboard also reserves a fixed
+`runtimeOverheadBudgetMs` for semantic bounds/glyph measurement and trusted
+browser-input transport: 1000ms for each pointer target, or 2000ms for a drag's
+source and destination. Agents do not hand-tune this runtime bound. Unused time
+is absorbed before the next declared action so the story keeps one fixed total;
+work that exceeds the bound fails with the action JSON pointer instead of
+silently stretching the video.
+
 ## Profiles
 
 - Desktop: CSS viewport `1920x1200` DPR2; physical source `3840x2400` at 25 fps;

@@ -34,3 +34,9 @@ acceptance. `technical_pass` alone is never promotable. For native mobile, use a
 separate native scenario/review and `--mobile-review`; never relabel old desktop
 bytes. Migration itself does not authorize activation, withdrawal, asset
 deletion, overwrite, or recapture.
+
+The compiled storyboard includes derived `runtimeOverheadBudgetMs` for each
+semantic pointer target. An old bespoke story close to the 15-second limit may
+therefore become invalid even when its authored delays look shorter. Split that
+story or remove dead actions; do not hide lookup/input cost by shortening
+settled frames, deleting cursor motion, or adding an inline script.
