@@ -398,11 +398,10 @@ async function verifyDependencyIsolation(roots, cloneRoot, storeRoot) {
   };
 }
 
-async function runPnpm(runCommand, specification) {
+function runPnpm(runCommand, specification) {
   return runCommand({
-    command: "corepack",
+    command: "pnpm",
     ...specification,
-    args: ["pnpm", ...specification.args],
   });
 }
 
@@ -469,7 +468,7 @@ export async function installFrozenOfflineDependencies({
   return {
     contract: DEPENDENCY_CONTRACT,
     install: {
-      argv: ["corepack", "pnpm", ...INSTALL_ARGS],
+      argv: ["pnpm", ...INSTALL_ARGS],
       cwd: appsRoot,
       packageManager: expected.packageManager,
       actualVersion,

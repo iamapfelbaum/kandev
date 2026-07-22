@@ -74,7 +74,6 @@ test("dependency install is frozen, offline, integrity-checked, and provenance-b
 
   assert.equal(proof.contract, "kandev-highlight-pipeline-dependencies-v1");
   assert.deepEqual(proof.install.argv, [
-    "corepack",
     "pnpm",
     "install",
     "--offline",
@@ -87,7 +86,7 @@ test("dependency install is frozen, offline, integrity-checked, and provenance-b
   assert.equal(proof.install.deadlineMs, 300_000);
   assert.equal(
     fixture.calls.every(
-      ({ command, env }) => command === "corepack" && env.COREPACK_ENABLE_NETWORK === "0",
+      ({ command, env }) => command === "pnpm" && env.COREPACK_ENABLE_NETWORK === "0",
     ),
     true,
   );
