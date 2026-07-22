@@ -11,7 +11,11 @@ import {
   requireDeliveryMetadata,
   writeScenarioScaffold,
 } from "./highlights/scenario.mjs";
-import { resolveHighlightRuntime } from "./highlights/runtime-catalog.mjs";
+import {
+  BUILTIN_HIGHLIGHT_RUNTIME_ID,
+  resolveHighlightRuntime,
+} from "./highlights/runtime-catalog.mjs";
+import { validateCompactRuntimeProvenance } from "./highlights/runtime-provenance.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -573,6 +577,12 @@ function assertProvenance(descriptor) {
     if (!landing || !LANDING_ADAPTER_SHA_PATTERN.test(landing.source_sha ?? "") || !CONTRACT_VERSION_PATTERN.test(landing.contract_version ?? "")) {
       throw new Error(`${descriptor.id} declarative provenance requires exact landing adapter SHA and contract version`);
     }
+    if (provenance.runtime !== undefined) {
+      validateCompactRuntimeProvenance(provenance.runtime, {
+        sourceMode: provenance.capture_mode,
+        sourceSha: provenance.source_sha,
+      });
+    }
   }
   validateReviewProvenance(descriptor);
 }
@@ -582,6 +592,9 @@ function validateReviewProvenance(descriptor) {
   if (!provenance.forms && !provenance.acceptance) return;
   if (!provenance.forms || !provenance.acceptance) {
     throw new Error(`${descriptor.id} review provenance requires forms and acceptance together`);
+  }
+  if (!provenance.runtime) {
+    throw new Error(`${descriptor.id} review provenance requires runtime identity`);
   }
   const expectedForms = descriptor.mobile_scenario ? ["desktop", "mobile"] : ["desktop"];
   if (Object.keys(provenance.forms).sort().join(",") !== expectedForms.join(",")) {
@@ -623,6 +636,11 @@ function validateReviewProvenance(descriptor) {
       !Number.isFinite(Date.parse(formProvenance?.captured_at))
     ) {
       throw new Error(`${descriptor.id} ${form} review provenance source, seed, tool, or landing identity does not match descriptor`);
+    }
+    if (!sameCompactRuntimePolicy(provenance.runtime, formProvenance.runtime)) {
+      throw new Error(
+        `${descriptor.id} ${form} review runtime, build, source, or scanner policy does not match descriptor`,
+      );
     }
     if (provenance.capture_mode === "pr_head" && (
       formProvenance.pr_number !== provenance.pr_number ||
@@ -732,7 +750,8 @@ async function validateRevisionFiles({ highlightDir, descriptor, allowedExtensio
   } catch (error) {
     throw new Error(`${descriptor.id} compact provenance is invalid JSON: ${error.message}`);
   }
-  if (compact?.schema_version !== 1 || compact.scenario_digest !== descriptor.provenance.scenario_digest || compact.capture_digest !== descriptor.provenance.capture_digest || compact.stage_digest !== descriptor.provenance.stage_digest) {
+  const expectedCompactVersion = descriptor.provenance.forms ? 2 : 1;
+  if (compact?.schema_version !== expectedCompactVersion || compact.scenario_digest !== descriptor.provenance.scenario_digest || compact.capture_digest !== descriptor.provenance.capture_digest || compact.stage_digest !== descriptor.provenance.stage_digest) {
     throw new Error(`${descriptor.id} compact provenance does not match descriptor digests`);
   }
   if (compact.source_sha !== descriptor.provenance.source_sha || compact.qa?.status !== "accepted" || !isDigest(compact.qa?.report_digest)) {
@@ -740,7 +759,8 @@ async function validateRevisionFiles({ highlightDir, descriptor, allowedExtensio
   }
   if (descriptor.provenance.forms && (
     canonicalJson(compact.forms) !== canonicalJson(descriptor.provenance.forms) ||
-    canonicalJson(compact.acceptance) !== canonicalJson(descriptor.provenance.acceptance)
+    canonicalJson(compact.acceptance) !== canonicalJson(descriptor.provenance.acceptance) ||
+    canonicalJson(compact.runtime) !== canonicalJson(descriptor.provenance.runtime)
   )) {
     throw new Error(`${descriptor.id} compact per-form review provenance must match descriptor`);
   }
@@ -772,6 +792,17 @@ async function validateRevisionFiles({ highlightDir, descriptor, allowedExtensio
     throw new Error(`${descriptor.id} compact landing adapter provenance must match descriptor SHA and contract version`);
   }
   return [...recordsByPath.values()];
+}
+
+function sameCompactRuntimePolicy(left, right) {
+  validateCompactRuntimeProvenance(left);
+  validateCompactRuntimeProvenance(right);
+  return (
+    left.runtime_id === right.runtime_id &&
+    left.build_manifest_digest === right.build_manifest_digest &&
+    canonicalJson(left.source) === canonicalJson(right.source) &&
+    canonicalJson(left.scanner) === canonicalJson(right.scanner)
+  );
 }
 
 async function validatePublishedHistory(highlightDir, descriptor) {
@@ -928,6 +959,7 @@ export async function runHighlightsCli(argv = process.argv.slice(2), {
   repoRoot = process.cwd(),
   log = console.log,
   pipelineRunner,
+  runtimeRunner,
 } = {}) {
   const [command, ...args] = argv;
   const highlightsDir = path.join(repoRoot, HIGHLIGHTS_RELATIVE_DIR);
@@ -1025,8 +1057,13 @@ export async function runHighlightsCli(argv = process.argv.slice(2), {
     if (parsed.values["pr-base-sha"] !== undefined && !/^[a-f0-9]{40}$/.test(parsed.values["pr-base-sha"])) {
       throw new Error("--pr-base-sha must be an exact lowercase 40-character Git SHA");
     }
-    if (parsed.values.runtime !== undefined) resolveHighlightRuntime(parsed.values.runtime);
-    const execute = pipelineRunner ?? (await import("./highlights/pipeline.mjs")).runDeclarativeHighlightCommand;
+    const runtimeId = capturesSource
+      ? parsed.values.runtime ?? BUILTIN_HIGHLIGHT_RUNTIME_ID
+      : undefined;
+    if (runtimeId !== undefined) resolveHighlightRuntime(runtimeId);
+    const execute = capturesSource
+      ? runtimeRunner ?? (await import("./highlights/runtime-dispatch.mjs")).runTrustedHighlightCommand
+      : pipelineRunner ?? (await import("./highlights/pipeline.mjs")).runDeclarativeHighlightCommand;
     const result = await execute({
       command,
       scenarioPath: path.resolve(repoRoot, parsed.positionals[0]),
@@ -1036,9 +1073,7 @@ export async function runHighlightsCli(argv = process.argv.slice(2), {
       runId: parsed.values["run-id"],
       prNumber,
       prBaseSha: parsed.values["pr-base-sha"],
-      ...(parsed.values.runtime === undefined
-        ? {}
-        : { runtimeId: parsed.values.runtime }),
+      ...(runtimeId === undefined ? {} : { runtimeId }),
       allowedExtensionIds: parsed.repeated["allow-extension"] ?? [],
       dryRun: parsed.flags.has("dry-run"),
       repoRoot,
@@ -1060,7 +1095,7 @@ export async function runHighlightsCli(argv = process.argv.slice(2), {
     const target = path.resolve(repoRoot, parsed.positionals[0]);
     const stat = await fs.lstat(target);
     if (!stat.isFile()) {
-      throw new Error("promote accepts only a kandev-highlight-review-stage-v1 manifest");
+      throw new Error("promote accepts only a kandev-highlight-review-stage-v2 manifest");
     }
     const allowedExtensionIds = parsed.repeated["allow-extension"] ?? [];
     const stage = await import("./highlights/stage.mjs");
@@ -1070,8 +1105,8 @@ export async function runHighlightsCli(argv = process.argv.slice(2), {
     } catch (error) {
       throw new Error(`cannot inspect promotion manifest ${target}: ${error.message}`);
     }
-    if (contract !== "kandev-highlight-review-stage-v1") {
-      throw new Error("promote accepts only a kandev-highlight-review-stage-v1 manifest");
+    if (contract !== "kandev-highlight-review-stage-v2") {
+      throw new Error("promote accepts only a kandev-highlight-review-stage-v2 manifest");
     }
     const result = await stage.promoteReviewedHighlight({
       desktopManifestPath: target,

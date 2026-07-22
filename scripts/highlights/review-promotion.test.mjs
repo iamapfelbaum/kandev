@@ -10,6 +10,31 @@ function sha(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+const SENSITIVE_COVERAGE = Object.freeze({
+  metadata: true,
+  visibleDomText: true,
+  browserConsole: true,
+  runtimeLogs: false,
+  renderedPixelOcr: false,
+});
+
+function runtimeProvenance(sourceSha, overrides = {}) {
+  return {
+    contract: "kandev-highlight-runtime-provenance-v1",
+    runtimeId: "kandev-isolated-e2e",
+    receiptDigest: `sha256:${"2".repeat(64)}`,
+    buildManifestDigest: `sha256:${"3".repeat(64)}`,
+    captureEvidenceDigest: `sha256:${"4".repeat(64)}`,
+    runtimeLogDigest: `sha256:${"5".repeat(64)}`,
+    source: { mode: "pr_head", selectedSha: sourceSha },
+    scanner: {
+      contract: "kandev-highlight-sensitive-scan-v1",
+      coverage: structuredClone(SENSITIVE_COVERAGE),
+    },
+    ...overrides,
+  };
+}
+
 function delivery(mobileRequired) {
   return {
     revision: "r1",
@@ -55,6 +80,11 @@ async function writeReview({
   capturedAt = "2026-07-22T10:00:00.000Z",
   revision = "r1",
   payloadSuffix = "",
+  runtime = runtimeProvenance(sourceSha),
+  sensitiveCoverage,
+  reviewContract = "kandev-highlight-review-stage-v2",
+  schemaVersion = 2,
+  reportScenarioId,
 } = {}) {
   let base;
   let repoRoot;
@@ -81,7 +111,23 @@ async function writeReview({
   const workDir = await fs.mkdtemp(path.join(reviewsRoot, ".building-"));
   const scenarioBytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
   const rawBytes = Buffer.from(`${form}-raw${payloadSuffix}`);
-  const reportBytes = Buffer.from(`${JSON.stringify({ status: "technical_pass", passed: true, checks: ["codec", "containment"] })}\n`);
+  const reportBytes = Buffer.from(`${JSON.stringify({
+    status: "technical_pass",
+    passed: true,
+    scenarioId: reportScenarioId ?? value.id,
+    checks: ["codec", "containment"],
+    ...(runtime
+      ? {
+          runtime,
+          sensitiveData: {
+            contract: "kandev-highlight-sensitive-scan-v1",
+            passed: true,
+            coverage: structuredClone(sensitiveCoverage ?? runtime.scanner.coverage),
+            findings: [],
+          },
+        }
+      : {}),
+  })}\n`);
   const mediaBytes = {
     webm: Buffer.from(`${form}-webm${payloadSuffix}`),
     mp4: Buffer.from(`${form}-mp4${payloadSuffix}`),
@@ -120,8 +166,8 @@ async function writeReview({
     };
   };
   const manifest = {
-    contract: "kandev-highlight-review-stage-v1",
-    schemaVersion: 1,
+    contract: reviewContract,
+    schemaVersion,
     revision,
     highlight: {
       id: value.id,
@@ -157,6 +203,7 @@ async function writeReview({
       prNumber: 42,
       prBaseSha: "fedcba9876543210fedcba9876543210fedcba98",
       prHeadSha: sourceSha,
+      ...(runtime ? { runtime } : {}),
     },
     profile,
     promotable: false,
@@ -182,6 +229,58 @@ async function writeReview({
   };
 }
 
+test("technical review refuses missing runtime and scanner provenance", async (t) => {
+  const fixture = await writeReview({ runtime: null });
+  t.after(() => fs.rm(fixture.base, { recursive: true, force: true }));
+  const { readReviewManifest } = await import("./stage.mjs");
+
+  await assert.rejects(
+    () => readReviewManifest(fixture.manifestPath, { repoRoot: fixture.repoRoot }),
+    /runtime|scanner|sensitive/i,
+  );
+});
+
+test("technical review binds QA sensitive coverage to runtime policy", async (t) => {
+  const sourceSha = "0123456789abcdef0123456789abcdef01234567";
+  const runtime = runtimeProvenance(sourceSha);
+  const fixture = await writeReview({
+    runtime,
+    sensitiveCoverage: { ...SENSITIVE_COVERAGE, browserConsole: false },
+  });
+  t.after(() => fs.rm(fixture.base, { recursive: true, force: true }));
+  const { readReviewManifest } = await import("./stage.mjs");
+
+  await assert.rejects(
+    () => readReviewManifest(fixture.manifestPath, { repoRoot: fixture.repoRoot }),
+    /coverage|scanner|sensitive/i,
+  );
+});
+
+test("technical review binds the QA report to the staged scenario", async (t) => {
+  const fixture = await writeReview({ reportScenarioId: "different-story" });
+  t.after(() => fs.rm(fixture.base, { recursive: true, force: true }));
+  const { readReviewManifest } = await import("./stage.mjs");
+
+  await assert.rejects(
+    () => readReviewManifest(fixture.manifestPath, { repoRoot: fixture.repoRoot }),
+    /QA report.*scenario|scenario.*QA report/i,
+  );
+});
+
+test("review contract version is fail-closed even with a self-consistent digest", async (t) => {
+  const fixture = await writeReview({
+    reviewContract: "kandev-highlight-review-stage-v1",
+    schemaVersion: 1,
+  });
+  t.after(() => fs.rm(fixture.base, { recursive: true, force: true }));
+  const { readReviewManifest } = await import("./stage.mjs");
+
+  await assert.rejects(
+    () => readReviewManifest(fixture.manifestPath, { repoRoot: fixture.repoRoot }),
+    /review.*contract.*v2|schemaVersion.*2/i,
+  );
+});
+
 test("reads one immutable technical review without treating it as accepted", async (t) => {
   const fixture = await writeReview();
   t.after(() => fs.rm(fixture.base, { recursive: true, force: true }));
@@ -189,7 +288,7 @@ test("reads one immutable technical review without treating it as accepted", asy
   const declarations = await fs.readFile(new URL("./stage.d.ts", import.meta.url), "utf8");
 
   assert.equal(typeof stage.readReviewManifest, "function");
-  assert.match(declarations, /export interface HighlightReviewManifestV1/);
+  assert.match(declarations, /export interface HighlightReviewManifestV2/);
   assert.match(declarations, /export function readReviewManifest/);
   assert.match(declarations, /export function promoteReviewedHighlight/);
   const reviewed = await stage.readReviewManifest(fixture.manifestPath, { repoRoot: fixture.repoRoot });
@@ -253,6 +352,8 @@ test("explicitly accepted desktop review promotes and records acceptance without
   const files = (await fs.readdir(revisionDir)).sort();
   assert.deepEqual(files, ["desktop.mp4", "desktop.webm", "desktop.webp", "provenance.json", "scenario.json"]);
   const compact = JSON.parse(await fs.readFile(path.join(revisionDir, "provenance.json"), "utf8"));
+  assert.equal(compact.schema_version, 2);
+  assert.deepEqual(compact.runtime, result.descriptor.provenance.runtime);
   assert.deepEqual(compact.acceptance, result.descriptor.provenance.acceptance);
   assert.equal(compact.forms.desktop.review_digest, fixture.manifest.stageDigest);
   assert.equal(compact.forms.desktop.scenario_digest, fixture.manifest.scenario.digest);
@@ -260,6 +361,10 @@ test("explicitly accepted desktop review promotes and records acceptance without
   assert.equal(compact.forms.desktop.qa.report_digest, fixture.manifest.qa.reportDigest);
   assert.equal(compact.forms.desktop.provenance.source_sha, fixture.manifest.provenance.sourceSha);
   assert.equal(compact.forms.mobile, undefined);
+  assert.doesNotMatch(
+    JSON.stringify({ descriptor: result.descriptor, compact }),
+    /playwright\.log|runtimeEvidence|applicationRuntime|Safe seeded board|fixed Playwright|Review API|\/raw\//i,
+  );
 });
 
 test("mobile-required desktop review refuses promotion without an exact native-mobile review", async (t) => {
@@ -304,6 +409,88 @@ test("desktop and mobile reviews with mismatched source provenance cannot be pai
     /sourceSha|source.*(?:match|pair)|paired.*source/i,
   );
   assert.deepEqual(await fs.readdir(desktop.highlightsDir), []);
+});
+
+test("desktop and mobile reviews require one runtime, build, and scanner policy", async (t) => {
+  const cases = [
+    {
+      name: "runtime",
+      overrides: { runtimeId: "unregistered-runtime" },
+      pattern: /unknown Highlight runtime|runtime.*match/i,
+    },
+    {
+      name: "build",
+      overrides: { buildManifestDigest: `sha256:${"9".repeat(64)}` },
+      pattern: /runtime.*build|build.*match/i,
+    },
+    {
+      name: "scanner",
+      overrides: {
+        scanner: {
+          contract: "kandev-highlight-sensitive-scan-v1",
+          coverage: { ...SENSITIVE_COVERAGE, browserConsole: false },
+        },
+      },
+      pattern: /scanner|coverage/i,
+    },
+  ];
+  for (const item of cases) {
+    await t.test(item.name, async (subtest) => {
+      const desktop = await writeReview({ mobileRequired: true });
+      const mobile = await writeReview({
+        form: "mobile",
+        mobileRequired: true,
+        existing: desktop,
+        payloadSuffix: `-${item.name}`,
+        runtime: runtimeProvenance(
+          desktop.manifest.provenance.sourceSha,
+          item.overrides,
+        ),
+      });
+      subtest.after(() => fs.rm(desktop.base, { recursive: true, force: true }));
+      const { promoteReviewedHighlight } = await import("./stage.mjs");
+      await assert.rejects(
+        () =>
+          promoteReviewedHighlight({
+            desktopManifestPath: desktop.manifestPath,
+            mobileManifestPath: mobile.manifestPath,
+            acceptedBy: "reviewer-42",
+            repoRoot: desktop.repoRoot,
+            highlightsDir: desktop.highlightsDir,
+            dryRun: true,
+          }),
+        item.pattern,
+      );
+    });
+  }
+});
+
+test("paired reviews may retain independent receipt and evidence digests", async (t) => {
+  const desktop = await writeReview({ mobileRequired: true });
+  const sourceSha = desktop.manifest.provenance.sourceSha;
+  const mobile = await writeReview({
+    form: "mobile",
+    mobileRequired: true,
+    existing: desktop,
+    payloadSuffix: "-independent-evidence",
+    runtime: runtimeProvenance(sourceSha, {
+      receiptDigest: `sha256:${"6".repeat(64)}`,
+      captureEvidenceDigest: `sha256:${"7".repeat(64)}`,
+      runtimeLogDigest: `sha256:${"8".repeat(64)}`,
+    }),
+  });
+  t.after(() => fs.rm(desktop.base, { recursive: true, force: true }));
+  const { promoteReviewedHighlight } = await import("./stage.mjs");
+
+  const result = await promoteReviewedHighlight({
+    desktopManifestPath: desktop.manifestPath,
+    mobileManifestPath: mobile.manifestPath,
+    acceptedBy: "reviewer-42",
+    repoRoot: desktop.repoRoot,
+    highlightsDir: desktop.highlightsDir,
+    dryRun: true,
+  });
+  assert.equal(result.dryRun, true);
 });
 
 test("accepted exact desktop/mobile pair preserves both scenarios and per-form review provenance", async (t) => {

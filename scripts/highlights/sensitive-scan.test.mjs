@@ -275,3 +275,29 @@ test("trusted custom scanner may explicitly require generated proof OCR coverage
     }),
   );
 });
+
+test("trusted custom hooks add findings without replacing mandatory built-in rules", async () => {
+  const secret = "sk-custom-hook-cannot-hide-1234567890";
+  const scanner = sensitiveScan.createTrustedSensitiveScanner({
+    requiredCoverage: ["metadata"],
+    scan: async () => [],
+  });
+
+  const result = await scanner({
+    scenario: { id: "custom-hook-union", title: secret },
+    camera: {},
+    artifacts: [],
+    generatedProofEvidence: [],
+  });
+
+  assert.equal(result.passed, false);
+  assert.deepEqual(result.findings, [
+    {
+      ruleId: "access-token",
+      source: "metadata",
+      occurrences: 1,
+      redacted: true,
+    },
+  ]);
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(secret));
+});

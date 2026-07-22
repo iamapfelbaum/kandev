@@ -7,7 +7,7 @@ export interface HighlightRuntimeScannerCoverage {
   readonly metadata: true;
   readonly visibleDomText: true;
   readonly browserConsole: true;
-  readonly runtimeLogs: true;
+  readonly runtimeLogs: false;
   readonly renderedPixelOcr: false;
 }
 

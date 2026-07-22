@@ -22,11 +22,27 @@ const SENSITIVE_DATA = Object.freeze({
     metadata: true,
     visibleDomText: true,
     browserConsole: true,
-    runtimeLogs: true,
+    runtimeLogs: false,
     renderedPixelOcr: false,
   },
   findings: [],
 });
+
+function runtimeProvenance() {
+  return {
+    contract: "kandev-highlight-runtime-provenance-v1",
+    runtimeId: "kandev-isolated-e2e",
+    receiptDigest: `sha256:${"4".repeat(64)}`,
+    buildManifestDigest: `sha256:${"e".repeat(64)}`,
+    captureEvidenceDigest: `sha256:${"5".repeat(64)}`,
+    runtimeLogDigest: `sha256:${"6".repeat(64)}`,
+    source: { mode: "pr_head", selectedSha: SOURCE_SHA },
+    scanner: {
+      contract: "kandev-highlight-sensitive-scan-v1",
+      coverage: structuredClone(SENSITIVE_DATA.coverage),
+    },
+  };
+}
 
 function sourceGateProof() {
   return {
@@ -320,6 +336,15 @@ function baseDependencies(
         },
       };
     },
+    loadRuntimeEvidence: async () => ({
+      contract: "kandev-highlight-runtime-evidence-v1",
+      captureEvidence: {
+        visibleDomText: ["Safe seeded board"],
+        browserConsole: [],
+      },
+      runtimeEvidence: { logs: [] },
+      provenance: runtimeProvenance(),
+    }),
     renderHighlight: async ({
       scenario: input,
       artifactRoot,
@@ -552,6 +577,8 @@ test("run writes technical content-addressed review stage and never promotes", a
     await fs.readFile(result.phases.stage.manifestPath, "utf8"),
   );
   assert.equal(review.qa.passed, true);
+  assert.equal(review.contract, "kandev-highlight-review-stage-v2");
+  assert.equal(review.schemaVersion, 2);
   assert.equal(path.basename(result.phases.stage.manifestPath), "review.json");
   assert.equal(review.qa.status, "technical_pass");
   assert.deepEqual(result.phases.qa.sensitiveData, SENSITIVE_DATA);
@@ -561,7 +588,7 @@ test("run writes technical content-addressed review stage and never promotes", a
         visibleDomText: ["Safe seeded board"],
         browserConsole: [],
       },
-      runtimeEvidence: { logs: ["isolated runtime ready"] },
+      runtimeEvidence: { logs: [] },
     },
   ]);
   assert.equal(review.provenance.seedId, value.seed.recipe);
@@ -569,7 +596,161 @@ test("run writes technical content-addressed review stage and never promotes", a
     sourceSha: LANDING_SHA,
     contractVersion: "1.0.0",
   });
+  assert.deepEqual(review.provenance.runtime, runtimeProvenance());
   assert.equal(review.assets.desktop.mp4.width, 1920);
+});
+
+test("QA loads verified runtime evidence and persists only compact runtime provenance", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const qaInputs = [];
+  const dependencies = baseDependencies(value, [], [], qaInputs);
+  let evidenceLoads = 0;
+  dependencies.loadRuntimeEvidence = async (input) => {
+    evidenceLoads += 1;
+    assert.equal(input.scenarioId, value.id);
+    assert.equal(input.runId, "runtime-qa-001");
+    return {
+      contract: "kandev-highlight-runtime-evidence-v1",
+      captureEvidence: {
+        visibleDomText: ["Verified DOM value"],
+        browserConsole: [],
+      },
+      runtimeEvidence: { logs: [] },
+      provenance: runtimeProvenance(),
+    };
+  };
+
+  const common = await runThroughQa({
+    value,
+    repoRoot,
+    artifactRoot,
+    scenarioPath,
+    runId: "runtime-qa-001",
+    dependencies,
+  });
+  assert.equal(evidenceLoads, 1);
+  assert.deepEqual(qaInputs, [{
+    captureEvidence: {
+      visibleDomText: ["Verified DOM value"],
+      browserConsole: [],
+    },
+    runtimeEvidence: { logs: [] },
+  }]);
+  const qaRecord = JSON.parse(
+    await fs.readFile(
+      path.join(artifactRoot, value.id, "runs", common.runId, "evidence", "qa.json"),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(qaRecord.value.runtime, runtimeProvenance());
+  assert.doesNotMatch(JSON.stringify(qaRecord.value), /Verified DOM value|verified runtime log/);
+});
+
+test("QA rejects a trusted scanner result weaker than catalog runtime coverage", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const dependencies = baseDependencies(value);
+  dependencies.loadRuntimeEvidence = async () => ({
+    contract: "kandev-highlight-runtime-evidence-v1",
+    captureEvidence: { visibleDomText: ["Safe DOM"], browserConsole: [] },
+    runtimeEvidence: { logs: [] },
+    provenance: runtimeProvenance(),
+  });
+  dependencies.runQualityAssurance = async () => ({
+    contract: "kandev-highlight-qa-v1",
+    scenarioId: value.id,
+    passed: true,
+    artifacts: [],
+    camera: { passed: true },
+    containment: { passed: true },
+    sensitiveData: {
+      contract: "kandev-highlight-sensitive-scan-v1",
+      passed: true,
+      coverage: {
+        metadata: true,
+        visibleDomText: false,
+        browserConsole: false,
+        runtimeLogs: false,
+        renderedPixelOcr: false,
+      },
+      findings: [],
+    },
+    browser: { passed: true },
+  });
+
+  await runDeclarativeHighlightCommand({
+    command: "capture",
+    scenarioPath,
+    artifactRoot,
+    source: "pr_head",
+    runId: "weak-scan-001",
+    prNumber: 42,
+    prBaseSha: BASE_SHA,
+    repoRoot,
+    dependencies,
+  });
+  await runDeclarativeHighlightCommand({
+    command: "render",
+    scenarioPath,
+    artifactRoot,
+    landingRoot: path.join(path.dirname(repoRoot), "landing"),
+    runId: "weak-scan-001",
+    repoRoot,
+    dependencies,
+  });
+  await assert.rejects(
+    runDeclarativeHighlightCommand({
+      command: "qa",
+      scenarioPath,
+      artifactRoot,
+      landingRoot: path.join(path.dirname(repoRoot), "landing"),
+      runId: "weak-scan-001",
+      repoRoot,
+      dependencies,
+    }),
+    /sensitive-scan coverage visibleDomText.*reported false|runtime coverage/i,
+  );
+});
+
+test("QA rejects sensitive findings even if an injected QA adapter claims pass", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const dependencies = baseDependencies(value);
+  dependencies.runQualityAssurance = async () => ({
+    contract: "kandev-highlight-qa-v1",
+    scenarioId: value.id,
+    passed: true,
+    artifacts: [],
+    camera: { passed: true },
+    containment: { passed: true },
+    sensitiveData: {
+      contract: "kandev-highlight-sensitive-scan-v1",
+      passed: false,
+      coverage: structuredClone(SENSITIVE_DATA.coverage),
+      findings: [
+        {
+          ruleId: "access-token",
+          source: "metadata",
+          occurrences: 1,
+          redacted: true,
+        },
+      ],
+    },
+    browser: { passed: true },
+  });
+
+  await assert.rejects(
+    runThroughQa({
+      value,
+      repoRoot,
+      artifactRoot,
+      scenarioPath,
+      runId: "runtime-sensitive-finding",
+      dependencies,
+    }),
+    /sensitive.*(?:pass|finding)|automatic QA/i,
+  );
 });
 
 test("run rejects missing delivery metadata before source, landing, or capture work", async (t) => {

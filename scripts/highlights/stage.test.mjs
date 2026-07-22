@@ -358,7 +358,7 @@ test("CLI promote refuses a legacy accepted-stage manifest", async () => {
     encoding: "utf8",
   });
   assert.notEqual(result.status, 0, result.stdout);
-  assert.match(result.stderr, /promote.*review.*v1|review.*manifest.*only/i);
+  assert.match(result.stderr, /promote.*review.*v2|review.*manifest.*only/i);
   await assert.rejects(fs.access(path.join(fixture.highlightsDir, "stage-demo")));
 });
 
@@ -376,7 +376,7 @@ test("CLI promote refuses a self-hashed legacy stage backed only by technical_pa
   });
 
   assert.notEqual(result.status, 0, result.stdout);
-  assert.match(result.stderr, /promote.*review.*v1|review.*manifest.*only/i);
+  assert.match(result.stderr, /promote.*review.*v2|review.*manifest.*only/i);
   await assert.rejects(fs.access(path.join(fixture.highlightsDir, "stage-demo")));
 });
 

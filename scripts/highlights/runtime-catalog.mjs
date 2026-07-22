@@ -18,7 +18,7 @@ const BUILTIN_RUNTIME = deepFreeze({
     metadata: true,
     visibleDomText: true,
     browserConsole: true,
-    runtimeLogs: true,
+    runtimeLogs: false,
     renderedPixelOcr: false,
   },
   scenarioTemplate: "scripts/highlights/examples/quick-start.scenario.json",

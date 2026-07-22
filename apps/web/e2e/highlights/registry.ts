@@ -127,7 +127,7 @@ export const HIGHLIGHT_RUNTIME_BINDING_METADATA = {
     metadata: true,
     visibleDomText: true,
     browserConsole: true,
-    runtimeLogs: true,
+    runtimeLogs: false,
     renderedPixelOcr: false,
   },
   scenarioTemplate: "scripts/highlights/examples/quick-start.scenario.json",

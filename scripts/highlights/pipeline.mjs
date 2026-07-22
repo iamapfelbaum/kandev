@@ -16,8 +16,19 @@ import {
 } from "./qa.mjs";
 import { renderHighlight as defaultRenderHighlight } from "./render.mjs";
 import { runHighlightPipeline } from "./runner.mjs";
+import { loadVerifiedRuntimeEvidence as defaultLoadRuntimeEvidence } from "./runtime-evidence.mjs";
+import { validateRuntimeProvenance } from "./runtime-provenance.mjs";
 import * as scenarioContract from "./scenario.mjs";
-import { computeStageManifestDigest } from "./stage.mjs";
+import {
+  createTrustedSensitiveScanner,
+  getTrustedSensitiveScannerCoverage,
+  validateSensitiveScanResult,
+} from "./sensitive-scan.mjs";
+import {
+  computeStageManifestDigest,
+  REVIEW_STAGE_CONTRACT,
+  REVIEW_STAGE_VERSION,
+} from "./stage.mjs";
 import {
   assertExternalArtifactRoot,
   verifySourceGate as defaultVerifySourceGate,
@@ -107,6 +118,8 @@ function dependenciesWithDefaults(dependencies) {
     renderHighlight: defaultRenderHighlight,
     runQualityAssurance: defaultRunQualityAssurance,
     browserPlayback: runBrowserPlaybackQa,
+    loadRuntimeEvidence: defaultLoadRuntimeEvidence,
+    createSensitiveScanner: createTrustedSensitiveScanner,
     commandRunner: defaultCommandRunner,
     readFile: fs.readFile,
     clock: () => new Date(),
@@ -602,25 +615,61 @@ async function validateRecoveredRender(context, camera, render) {
   return render;
 }
 
-function validateSensitiveDataEvidence(sensitiveData) {
-  const coverageKeys = [
-    "metadata",
-    "visibleDomText",
-    "browserConsole",
-    "runtimeLogs",
-    "renderedPixelOcr",
-  ];
-  return (
-    sensitiveData?.contract === "kandev-highlight-sensitive-scan-v1" &&
-    sensitiveData.passed === true &&
-    Array.isArray(sensitiveData.findings) &&
-    sensitiveData.findings.length === 0 &&
-    sensitiveData.coverage?.metadata === true &&
-    Object.keys(sensitiveData.coverage ?? {}).length === coverageKeys.length &&
-    coverageKeys.every(
-      (key) => typeof sensitiveData.coverage?.[key] === "boolean",
-    )
-  );
+async function loadRuntimeQaEvidence(context, capture) {
+  if (typeof context.deps.loadRuntimeEvidence !== "function") {
+    throw new Error("QA requires the verified runtime evidence loader");
+  }
+  const loaded = await context.deps.loadRuntimeEvidence({
+    artifactRoot: context.paths.artifactRoot,
+    attemptRoot: context.paths.attemptRoot,
+    scenarioId: context.scenario.id,
+    scenarioPath: context.scenarioPath,
+    scenarioDigest: context.scenarioDigest,
+    runId: context.runId,
+    captureReceipt: capture.receipt,
+  });
+  if (
+    loaded?.contract !== "kandev-highlight-runtime-evidence-v1" ||
+    !Array.isArray(loaded.captureEvidence?.visibleDomText) ||
+    !Array.isArray(loaded.captureEvidence?.browserConsole) ||
+    !Array.isArray(loaded.runtimeEvidence?.logs)
+  ) {
+    throw new Error("verified runtime evidence loader returned incomplete typed evidence");
+  }
+  validateRuntimeProvenance(loaded.provenance, {
+    sourceMode: context.sourceProvenance?.captureMode,
+    sourceSha: context.sourceProvenance?.sourceSha,
+    buildManifestDigest: capture.receipt?.build?.manifestDigest,
+  });
+  if (
+    loaded.provenance.scanner.coverage.runtimeLogs === false &&
+    loaded.runtimeEvidence.logs.length !== 0
+  ) {
+    throw new Error(
+      "verified runtime evidence cannot expose logs when runtimeLogs coverage is false",
+    );
+  }
+  return loaded;
+}
+
+function sensitiveScannerForRuntime(context, provenance) {
+  const expectedCoverage = provenance.scanner.coverage;
+  const injected =
+    context.deps.sensitiveScanner ?? context.captureBindings?.sensitiveScanner;
+  if (injected !== undefined) {
+    if (typeof injected !== "function") {
+      throw new Error("custom sensitive scanner must be a trusted scanner function");
+    }
+    const declared = getTrustedSensitiveScannerCoverage(injected);
+    if (!declared || canonicalJson(declared) !== canonicalJson(expectedCoverage)) {
+      throw new Error("custom sensitive scanner coverage must exactly match catalog runtime coverage");
+    }
+    return injected;
+  }
+  const requiredCoverage = Object.entries(expectedCoverage)
+    .filter(([, covered]) => covered)
+    .map(([key]) => key);
+  return context.deps.createSensitiveScanner({ requiredCoverage });
 }
 
 async function validateRecoveredQa(context, render, qa) {
@@ -633,7 +682,6 @@ async function validateRecoveredQa(context, render, qa) {
     qa.passed !== true ||
     qa.status !== "technical_pass" ||
     !Number.isFinite(Date.parse(qa.completedAt)) ||
-    !validateSensitiveDataEvidence(qa.sensitiveData) ||
     qa.browser?.passed !== true
   ) {
     fail(
@@ -641,6 +689,16 @@ async function validateRecoveredQa(context, render, qa) {
     );
   }
   try {
+    const loaded = await loadRuntimeQaEvidence(context, context.capture);
+    if (canonicalJson(qa.runtime) !== canonicalJson(loaded.provenance)) {
+      fail("QA runtime provenance does not match verified external runtime evidence");
+    }
+    validateSensitiveScanResult(qa.sensitiveData, {
+      expectedCoverage: loaded.provenance.scanner.coverage,
+    });
+    if (qa.sensitiveData.passed !== true) {
+      fail("QA sensitive-data evidence did not pass");
+    }
     await verifyRegularDigest({
       filePath: qa.reportPath,
       allowedRoot: context.paths.qaRoot,
@@ -1215,6 +1273,7 @@ function phaseAdapters(context) {
     qa: async ({ phases }) => {
       const capture = phases.capture;
       const render = phases.render;
+      const runtime = await loadRuntimeQaEvidence(context, capture);
       const artifacts = absoluteRenderArtifacts(render).map((artifact) => ({
         ...artifact,
         expected: expectedForArtifact(
@@ -1229,23 +1288,18 @@ function phaseAdapters(context) {
         captureProfile: profile,
         fps: profile.fps,
       });
-      const sensitiveScanner =
-        deps.sensitiveScanner ?? context.captureBindings?.sensitiveScanner;
+      const sensitiveScanner = sensitiveScannerForRuntime(
+        context,
+        runtime.provenance,
+      );
       const report = await deps.runQualityAssurance({
         scenario,
         artifacts,
         camera: render.cameraTrack,
         pointerTrack: geometry.pointerTrack,
         targetIntervals: geometry.targetIntervals,
-        ...(capture.receipt?.captureEvidence
-          ? { captureEvidence: capture.receipt.captureEvidence }
-          : {}),
-        ...((capture.receipt?.applicationRuntime ?? capture.runtimeEvidence)
-          ? {
-              runtimeEvidence:
-                capture.receipt?.applicationRuntime ?? capture.runtimeEvidence,
-            }
-          : {}),
+        captureEvidence: runtime.captureEvidence,
+        runtimeEvidence: runtime.runtimeEvidence,
         runner: deps.commandRunner,
         readFile: deps.readFile,
         browserPlayback: ({ artifacts: reports }) =>
@@ -1255,12 +1309,19 @@ function phaseAdapters(context) {
           }),
         cameraAuditor: landing.auditHighlightCameraMotion,
         qaOutputDir: paths.qaRoot,
-        ...(typeof sensitiveScanner === "function" ? { sensitiveScanner } : {}),
+        sensitiveScanner,
       });
       if (report?.passed !== true) throw new Error("automatic QA did not pass");
+      validateSensitiveScanResult(report.sensitiveData, {
+        expectedCoverage: runtime.provenance.scanner.coverage,
+      });
+      if (report.sensitiveData.passed !== true) {
+        throw new Error("automatic QA sensitive-data scan did not pass");
+      }
       const completedAt = deps.clock().toISOString();
       const technical = {
         ...report,
+        runtime: runtime.provenance,
         status: "technical_pass",
         passed: true,
         completedAt,
@@ -1689,7 +1750,7 @@ function deliveryRecord(report, form, kind, exact = {}) {
 
 function reviewManifest(input, assets, form) {
   const common = {
-    schemaVersion: 1,
+    schemaVersion: REVIEW_STAGE_VERSION,
     revision: input.delivery.revision,
     highlight: input.delivery.highlight,
     scenario: { path: "scenario.json", digest: input.scenarioDigest },
@@ -1711,7 +1772,7 @@ function reviewManifest(input, assets, form) {
       ? "explicit-acceptance-required"
       : "desktop-stage-required";
   const manifest = {
-    contract: "kandev-highlight-review-stage-v1",
+    contract: REVIEW_STAGE_CONTRACT,
     ...common,
     profile: input.scenario.profile.kind,
     promotable: false,
@@ -1766,6 +1827,7 @@ function stageProvenance(input) {
       sourceSha: input.landing.sourceSha,
       contractVersion: input.landing.contractVersion,
     },
+    runtime: structuredClone(input.qa.runtime),
     ...(source.captureMode === "pr_head"
       ? {
           prNumber: source.prNumber,
@@ -1809,6 +1871,17 @@ function assertStageInput(input) {
     throw new Error("stage needs exact seed digest");
   if (!DIGEST_PATTERN.test(input.qa?.reportDigest ?? ""))
     throw new Error("stage needs exact QA report digest");
+  validateRuntimeProvenance(input.qa?.runtime, {
+    sourceMode: source.captureMode,
+    sourceSha: source.sourceSha,
+    buildManifestDigest: receipt.build.manifestDigest,
+  });
+  validateSensitiveScanResult(input.qa?.sensitiveData, {
+    expectedCoverage: input.qa.runtime.scanner.coverage,
+  });
+  if (input.qa.sensitiveData.passed !== true) {
+    throw new Error("stage requires a passing sensitive-data scan");
+  }
   landingEvidence({
     provenance: { sha: input.landing?.sourceSha },
     contracts: { camera: { version: input.landing?.contractVersion } },

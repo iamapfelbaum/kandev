@@ -13,8 +13,16 @@ import {
   requireDeliveryMetadata,
 } from "./scenario.mjs";
 import { processStartToken } from "./capture-runtime.mjs";
+import {
+  compactRuntimeProvenance,
+  sameRuntimePolicy,
+  validateRuntimeProvenance,
+} from "./runtime-provenance.mjs";
+import { validateSensitiveScanResult } from "./sensitive-scan.mjs";
 
 export const STAGE_MANIFEST_VERSION = 1;
+export const REVIEW_STAGE_VERSION = 2;
+export const REVIEW_STAGE_CONTRACT = "kandev-highlight-review-stage-v2";
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const ADAPTER_SHA_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
@@ -158,6 +166,10 @@ export async function readReviewManifest(manifestPath, {
   if (!isObject(qaReport) || qaReport.status !== "technical_pass" || qaReport.passed !== true) {
     throw new Error("review QA report must record technical_pass with passed=true");
   }
+  if (qaReport.scenarioId !== scenario.id) {
+    throw new Error("review QA report scenario does not match staged scenario");
+  }
+  validateQaRuntime(qaReport, manifest.provenance.runtime, "review QA report");
 
   const form = manifest.profile === "desktop" ? "desktop" : "mobile";
   const assets = { [form]: {} };
@@ -393,8 +405,8 @@ function buildAcceptedReviewStage({ desktop, mobile, acceptance }) {
     ...(mobile ? { mobile: reviewFormRecord(mobile) } : {}),
   };
   const source = {
-    contract: "kandev-highlight-accepted-review-v1",
-    schemaVersion: STAGE_MANIFEST_VERSION,
+    contract: "kandev-highlight-accepted-review-v2",
+    schemaVersion: REVIEW_STAGE_VERSION,
     revision: desktop.manifest.revision,
     highlight: structuredClone(desktop.manifest.highlight),
     scenario: structuredClone(desktop.manifest.scenario),
@@ -488,6 +500,11 @@ function assertReviewPair(desktop, mobile) {
     if (canonicalJson(desktop.manifest.provenance[field]) !== canonicalJson(mobile.manifest.provenance[field])) {
       throw new Error(`paired mobile review provenance ${field} does not match desktop review`);
     }
+  }
+  if (!sameRuntimePolicy(desktop.manifest.provenance.runtime, mobile.manifest.provenance.runtime)) {
+    throw new Error(
+      "paired mobile review runtime, build, source, or scanner policy does not match desktop review",
+    );
   }
 }
 
@@ -638,11 +655,11 @@ function validateReviewManifestShape(manifest) {
     "reason",
     "assets",
   ], "review manifest");
-  if (manifest.contract !== "kandev-highlight-review-stage-v1") {
-    throw new Error("review manifest contract must be kandev-highlight-review-stage-v1");
+  if (manifest.contract !== REVIEW_STAGE_CONTRACT) {
+    throw new Error(`review manifest contract must be ${REVIEW_STAGE_CONTRACT}`);
   }
-  if (manifest.schemaVersion !== STAGE_MANIFEST_VERSION) {
-    throw new Error(`review manifest schemaVersion must be ${STAGE_MANIFEST_VERSION}`);
+  if (manifest.schemaVersion !== REVIEW_STAGE_VERSION) {
+    throw new Error(`review manifest schemaVersion must be ${REVIEW_STAGE_VERSION}`);
   }
   if (!DIGEST_PATTERN.test(manifest.stageDigest)) throw new Error("review stageDigest must be SHA-256");
   if (typeof manifest.revision !== "string" || !/^[a-z0-9][a-z0-9._-]*$/.test(manifest.revision)) {
@@ -663,7 +680,7 @@ function validateReviewManifestShape(manifest) {
   if (!DIGEST_PATTERN.test(manifest.qa.reportDigest) || !validDate(manifest.qa.completedAt)) {
     throw new Error("review QA requires report digest and completedAt");
   }
-  validateProvenance(manifest.provenance);
+  validateProvenance(manifest.provenance, { runtimeRequired: true });
   if (!["desktop", "native-mobile"].includes(manifest.profile)) {
     throw new Error("review profile must be desktop or native-mobile");
   }
@@ -744,8 +761,8 @@ function validateHighlightMetadata(highlight) {
   if (typeof highlight.docs.page !== "string" || typeof highlight.docs.section !== "string" || !highlight.docs.section.trim()) throw new Error("stage Highlight requires docs ownership");
 }
 
-function validateProvenance(provenance) {
-  const common = ["captureMode", "sourceSha", "capturedAt", "seedId", "seedDigest", "toolVersion", "landingAdapter"];
+function validateProvenance(provenance, { runtimeRequired = false } = {}) {
+  const common = ["captureMode", "sourceSha", "capturedAt", "seedId", "seedDigest", "toolVersion", "landingAdapter", ...(runtimeRequired ? ["runtime"] : [])];
   const pr = ["prNumber", "prBaseSha", "prHeadSha"];
   const main = ["sourceRef"];
   assertObjectKeys(provenance, [...common, ...pr, ...main], "provenance", { optional: true });
@@ -758,10 +775,28 @@ function validateProvenance(provenance) {
   if (typeof provenance.landingAdapter.contractVersion !== "string" || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(provenance.landingAdapter.contractVersion)) {
     throw new Error("landing adapter provenance requires a stable contract version");
   }
+  if (runtimeRequired) {
+    validateRuntimeProvenance(provenance.runtime, {
+      sourceMode: provenance.captureMode,
+      sourceSha: provenance.sourceSha,
+    });
+  }
   if (provenance.captureMode === "pr_head") {
     if (!Number.isInteger(provenance.prNumber) || provenance.prNumber < 1 || !SHA_PATTERN.test(provenance.prBaseSha) || provenance.prHeadSha !== provenance.sourceSha) throw new Error("pr_head stage provenance is invalid");
   } else if (provenance.sourceRef !== "origin/main") {
     throw new Error("current_main stage provenance requires origin/main");
+  }
+}
+
+function validateQaRuntime(report, runtime, label) {
+  if (canonicalJson(report.runtime) !== canonicalJson(runtime)) {
+    throw new Error(`${label} runtime provenance does not match stage provenance`);
+  }
+  validateSensitiveScanResult(report.sensitiveData, {
+    expectedCoverage: runtime.scanner.coverage,
+  });
+  if (report.sensitiveData.passed !== true) {
+    throw new Error(`${label} sensitive-data scan did not pass`);
   }
 }
 
@@ -801,8 +836,9 @@ async function copyTrackedFile(source, destination, relativePath) {
 }
 
 function buildCompactProvenance(manifest) {
+  const reviewed = manifest.schemaVersion === REVIEW_STAGE_VERSION;
   return {
-    schema_version: 1,
+    schema_version: reviewed ? 2 : 1,
     scenario_digest: manifest.scenario.digest,
     capture_digest: manifest.capture.digest,
     stage_digest: manifest.stageDigest,
@@ -816,6 +852,9 @@ function buildCompactProvenance(manifest) {
       source_sha: manifest.provenance.landingAdapter.sourceSha,
       contract_version: manifest.provenance.landingAdapter.contractVersion,
     },
+    ...(reviewed
+      ? { runtime: compactRuntimeProvenance(manifest.provenance.runtime) }
+      : {}),
     qa: {
       status: "accepted",
       report_digest: manifest.qa.reportDigest,
@@ -838,6 +877,9 @@ function buildDescriptor({ manifest, existingDescriptor, desktop, mobileAssets, 
       source_sha: manifest.provenance.landingAdapter.sourceSha,
       contract_version: manifest.provenance.landingAdapter.contractVersion,
     },
+    ...(manifest.schemaVersion === REVIEW_STAGE_VERSION
+      ? { runtime: compactRuntimeProvenance(manifest.provenance.runtime) }
+      : {}),
     scenario_digest: manifest.scenario.digest,
     capture_digest: manifest.capture.digest,
     stage_digest: manifest.stageDigest,
@@ -900,6 +942,7 @@ function compactCaptureProvenance(provenance) {
       source_sha: provenance.landingAdapter.sourceSha,
       contract_version: provenance.landingAdapter.contractVersion,
     },
+    runtime: compactRuntimeProvenance(provenance.runtime),
     ...(provenance.captureMode === "pr_head" ? {
       pr_number: provenance.prNumber,
       pr_base_sha: provenance.prBaseSha,

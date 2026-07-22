@@ -15,6 +15,26 @@ export interface StageMediaRecord extends StageFileRecord {
   audio: false;
 }
 
+export interface HighlightRuntimeProvenanceV1 {
+  contract: "kandev-highlight-runtime-provenance-v1";
+  runtimeId: string;
+  receiptDigest: string;
+  buildManifestDigest: string;
+  captureEvidenceDigest: string;
+  runtimeLogDigest: string;
+  source: { mode: "pr_head" | "current_main"; selectedSha: string };
+  scanner: {
+    contract: "kandev-highlight-sensitive-scan-v1";
+    coverage: {
+      metadata: boolean;
+      visibleDomText: boolean;
+      browserConsole: boolean;
+      runtimeLogs: boolean;
+      renderedPixelOcr: boolean;
+    };
+  };
+}
+
 export interface HighlightStageManifestV1 {
   schemaVersion: 1;
   stageDigest: string;
@@ -56,9 +76,9 @@ export interface HighlightStageManifestV1 {
   };
 }
 
-export interface HighlightReviewManifestV1 {
-  contract: "kandev-highlight-review-stage-v1";
-  schemaVersion: 1;
+export interface HighlightReviewManifestV2 {
+  contract: "kandev-highlight-review-stage-v2";
+  schemaVersion: 2;
   stageDigest: string;
   revision: string;
   highlight: HighlightStageManifestV1["highlight"] & { mobileRequired?: boolean };
@@ -71,7 +91,9 @@ export interface HighlightReviewManifestV1 {
     reportDigest: string;
     completedAt: string;
   };
-  provenance: HighlightStageManifestV1["provenance"];
+  provenance: HighlightStageManifestV1["provenance"] & {
+    runtime: HighlightRuntimeProvenanceV1;
+  };
   profile: "desktop" | "native-mobile";
   promotable: false;
   readyForReview: true;
@@ -100,7 +122,9 @@ export interface PromoteReviewedOptions extends ReadStageOptions {
 }
 
 export const STAGE_MANIFEST_VERSION: 1;
-export function computeStageManifestDigest(manifest: Omit<HighlightStageManifestV1, "stageDigest"> | HighlightStageManifestV1 | Omit<HighlightReviewManifestV1, "stageDigest"> | HighlightReviewManifestV1): string;
+export const REVIEW_STAGE_VERSION: 2;
+export const REVIEW_STAGE_CONTRACT: "kandev-highlight-review-stage-v2";
+export function computeStageManifestDigest(manifest: Omit<HighlightStageManifestV1, "stageDigest"> | HighlightStageManifestV1 | Omit<HighlightReviewManifestV2, "stageDigest"> | HighlightReviewManifestV2): string;
 export function readStageManifest(manifestPath: string, options?: ReadStageOptions): Promise<{
   manifest: HighlightStageManifestV1;
   stageDir: string;
@@ -117,7 +141,7 @@ export function promoteStagedHighlight(options: PromoteStageOptions): Promise<{
   validation: object;
 }>;
 export function readReviewManifest(manifestPath: string, options?: ReadStageOptions): Promise<{
-  manifest: HighlightReviewManifestV1;
+  manifest: HighlightReviewManifestV2;
   stageDir: string;
   scenario: HighlightScenarioV1;
   scenarioPath: string;

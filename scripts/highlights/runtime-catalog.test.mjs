@@ -50,7 +50,7 @@ test("catalog exposes one deeply immutable built-in runtime", async () => {
       metadata: true,
       visibleDomText: true,
       browserConsole: true,
-      runtimeLogs: true,
+      runtimeLogs: false,
       renderedPixelOcr: false,
     },
     scenarioTemplate: "scripts/highlights/examples/quick-start.scenario.json",
@@ -96,7 +96,7 @@ test("runtime preflight accepts only registered declarative bindings", async () 
       metadata: true,
       visibleDomText: true,
       browserConsole: true,
-      runtimeLogs: true,
+      runtimeLogs: false,
       renderedPixelOcr: false,
     },
   });

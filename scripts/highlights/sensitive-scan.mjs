@@ -243,14 +243,16 @@ export function createTrustedSensitiveScanner({
   }
   const scanner = async (input) => {
     requireEvidence(input, coverage, typeof scan === "function");
-    const findings =
-      typeof scan === "function"
-        ? await scan(input)
-        : scanBuiltIn(input, coverage);
-    if (!Array.isArray(findings))
+    const customFindings =
+      typeof scan === "function" ? await scan(input) : [];
+    if (!Array.isArray(customFindings))
       throw new Error(
         "trusted sensitive-scanner hook must return a findings array",
       );
+    const findings = [
+      ...scanBuiltIn(input, coverage),
+      ...customFindings,
+    ];
     return validateSensitiveScanResult(
       {
         contract: SENSITIVE_SCAN_CONTRACT,

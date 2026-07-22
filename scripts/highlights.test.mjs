@@ -116,14 +116,24 @@ after(async () => {
   );
 });
 
-test("capture, render, qa, and run CLI forward strict declarative pipeline options", async () => {
+test("capture and run CLI use the closed runtime while render and QA use pipeline recovery", async () => {
   const { runHighlightsCli } = await import("./highlights.mjs");
-  const received = [];
+  const pipelineCalls = [];
+  const runtimeCalls = [];
   const pipelineRunner = async (options) => {
-    received.push(options);
+    pipelineCalls.push(options);
     return { contract: "test-result", command: options.command };
   };
-  const common = { repoRoot: "/repo", log: () => {}, pipelineRunner };
+  const runtimeRunner = async (options) => {
+    runtimeCalls.push(options);
+    return { contract: "test-runtime-result", command: options.command };
+  };
+  const common = {
+    repoRoot: "/repo",
+    log: () => {},
+    pipelineRunner,
+    runtimeRunner,
+  };
 
   await runHighlightsCli([
     "capture", "story.json", "--artifact-root", "/external/story", "--source", "pr_head",
@@ -141,18 +151,47 @@ test("capture, render, qa, and run CLI forward strict declarative pipeline optio
     "run", "story.json", "--artifact-root", "/external/story", "--source", "current_main", "--landing-root", "/landing",
   ], common);
 
-  assert.deepEqual(received.map(({ command }) => command), ["capture", "render", "qa", "run"]);
-  assert.equal(received[0].scenarioPath, "/repo/story.json");
-  assert.equal(received[0].artifactRoot, "/external/story");
-  assert.equal(received[0].source, "pr_head");
-  assert.equal(received[0].prNumber, 42);
-  assert.equal(received[0].prBaseSha, "b".repeat(40));
-  assert.equal(received[0].dryRun, true);
-  assert.equal(received[0].runtimeId, "kandev-isolated-e2e");
-  assert.deepEqual(received[0].allowedExtensionIds, ["fixture.open", "fixture.close"]);
-  assert.equal(received[1].source, undefined);
-  assert.equal(received[3].source, "current_main");
-  assert.equal(Object.hasOwn(received[3], "runtimeId"), false);
+  assert.deepEqual(runtimeCalls.map(({ command }) => command), ["capture", "run"]);
+  assert.deepEqual(pipelineCalls.map(({ command }) => command), ["render", "qa"]);
+  assert.equal(runtimeCalls[0].scenarioPath, "/repo/story.json");
+  assert.equal(runtimeCalls[0].artifactRoot, "/external/story");
+  assert.equal(runtimeCalls[0].source, "pr_head");
+  assert.equal(runtimeCalls[0].prNumber, 42);
+  assert.equal(runtimeCalls[0].prBaseSha, "b".repeat(40));
+  assert.equal(runtimeCalls[0].dryRun, true);
+  assert.equal(runtimeCalls[0].runtimeId, "kandev-isolated-e2e");
+  assert.deepEqual(runtimeCalls[0].allowedExtensionIds, ["fixture.open", "fixture.close"]);
+  assert.equal(pipelineCalls[0].source, undefined);
+  assert.equal(runtimeCalls[1].source, "current_main");
+  assert.equal(runtimeCalls[1].runtimeId, "kandev-isolated-e2e");
+});
+
+test("capture CLI cannot fall back to an injected in-process pipeline capture", async () => {
+  const { runHighlightsCli } = await import("./highlights.mjs");
+  let runtimeCalls = 0;
+  await runHighlightsCli([
+    "capture",
+    "story.json",
+    "--artifact-root",
+    "/external/story",
+    "--source",
+    "pr_head",
+    "--pr-number",
+    "42",
+    "--pr-base-sha",
+    "b".repeat(40),
+  ], {
+    repoRoot: "/repo",
+    log: () => {},
+    pipelineRunner: async () => {
+      throw new Error("in-process capture fallback executed");
+    },
+    runtimeRunner: async () => {
+      runtimeCalls += 1;
+      return { contract: "test-runtime-result" };
+    },
+  });
+  assert.equal(runtimeCalls, 1);
 });
 
 test("stage CLI delegates an exact zero-write dry-run to the declarative pipeline", async () => {
