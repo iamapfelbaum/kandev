@@ -500,9 +500,26 @@ export async function commitScenarioAndBindCurrentMain({ cloneRoot, scenarioPath
   return proof;
 }
 
+async function workspaceDependencyRoots(sourceRoot) {
+  const relatives = new Set(["apps/node_modules"]);
+  for (const parentRelative of ["apps", "apps/packages"]) {
+    const parent = path.join(sourceRoot, parentRelative);
+    const entries = await fs.readdir(parent, { withFileTypes: true }).catch((error) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    });
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === "node_modules") continue;
+      const relative = `${parentRelative}/${entry.name}/node_modules`;
+      if (await pathExists(path.join(sourceRoot, relative))) relatives.add(relative);
+    }
+  }
+  return [...relatives].sort();
+}
+
 export async function linkIgnoredDependencies({ sourceRoot, cloneRoot }) {
   const links = [];
-  for (const relative of ["apps/node_modules", "apps/web/node_modules"]) {
+  for (const relative of await workspaceDependencyRoots(sourceRoot)) {
     const source = path.join(sourceRoot, relative);
     const target = path.join(cloneRoot, relative);
     const stat = await fs.lstat(source).catch(() => null);

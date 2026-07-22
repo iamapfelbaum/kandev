@@ -351,11 +351,14 @@ test("dependency reuse links only ignored node_modules directories into the snap
   await Promise.all([
     fs.mkdir(path.join(sourceRoot, "apps", "node_modules", ".pnpm"), { recursive: true }),
     fs.mkdir(path.join(sourceRoot, "apps", "web", "node_modules", ".bin"), { recursive: true }),
+    fs.mkdir(path.join(sourceRoot, "apps", "packages", "ui", "node_modules", "react"), {
+      recursive: true,
+    }),
   ]);
   await snapshotCommittedRepository({ sourceRoot, cloneRoot });
 
   const links = await linkIgnoredDependencies({ sourceRoot, cloneRoot });
-  assert.equal(links.length, 2);
+  assert.equal(links.length, 3);
   for (const link of links) {
     const target = await fs.lstat(link.target);
     assert.equal(target.isDirectory(), true);
