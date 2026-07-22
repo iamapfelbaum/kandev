@@ -21,6 +21,8 @@ import { prepareRuntimeTempNamespace } from "./runtime-temp.mjs";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dirname, "../..");
 const AUTHORIZATION_PATH = "/kandev-boundary/authorization.json";
+const LOOPBACK_PEER_CONNECTION_ARG =
+  "--allow-loopback-in-peer-connection";
 const ATTESTED_DOCKER_BOUNDARY =
   process.env[CHROMIUM_DOCKER_BOUNDARY_AUTHORIZATION_ENV] ===
   AUTHORIZATION_PATH;
@@ -222,7 +224,7 @@ test(
     const controlBrowser = await chromium.launch({
       executablePath,
       headless: true,
-      args: ["--no-sandbox"],
+      args: ["--no-sandbox", LOOPBACK_PEER_CONNECTION_ARG],
     });
     t.after(() => controlBrowser.close().catch(() => {}));
     const controlPage = await controlBrowser.newPage();
@@ -264,6 +266,7 @@ test(
       browserExecutable: executablePath,
       chromiumSandbox: sandboxPolicy,
     });
+    plan.chromium.args.push(LOOPBACK_PEER_CONNECTION_ARG);
     Object.assign(plan.chromium.env, {
       TMPDIR: runtimeTempNamespace.namespaceRoot,
       TMP: runtimeTempNamespace.namespaceRoot,
@@ -274,6 +277,12 @@ test(
       plan.chromiumNetworkPolicy,
     );
     assert.equal(commandEvidence.executable, executablePath);
+    assert.equal(
+      commandEvidence.args.filter(
+        (argument) => argument === LOOPBACK_PEER_CONNECTION_ARG,
+      ).length,
+      1,
+    );
     assert.match(commandEvidence.argsDigest, /^sha256:[a-f0-9]{64}$/);
 
     let runtime;
