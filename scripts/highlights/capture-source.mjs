@@ -406,7 +406,7 @@ export async function configureCaptureTarget({ page, cdp, profile } = {}) {
   await cdp.send("Emulation.setDeviceMetricsOverride", metrics);
   await cdp.send("Emulation.setTouchEmulationEnabled", {
     enabled: profile.nativeMobile,
-    maxTouchPoints: profile.nativeMobile ? 1 : 0,
+    ...(profile.nativeMobile ? { maxTouchPoints: 1 } : {}),
   });
   const viewport = await page.evaluate(() => ({
     innerWidth: window.innerWidth,

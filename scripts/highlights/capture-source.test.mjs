@@ -429,10 +429,9 @@ test("configures exact desktop and native-mobile CDP metrics without crop", asyn
     ]);
     assert.deepEqual(calls[1], [
       "Emulation.setTouchEmulationEnabled",
-      {
-        enabled: expectedMobile,
-        maxTouchPoints: expectedMobile ? 1 : 0,
-      },
+      expectedMobile
+        ? { enabled: true, maxTouchPoints: 1 }
+        : { enabled: false },
     ]);
     assert.deepEqual(measured, {
       cssWidth: profile.cssWidth,
