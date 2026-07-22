@@ -10,6 +10,7 @@ import {
   runDeclarativeHighlightCommand,
   writeContentAddressedStage,
 } from "./pipeline.mjs";
+import { renderHighlight } from "./render.mjs";
 
 const SOURCE_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
@@ -634,22 +635,34 @@ test("QA loads verified runtime evidence and persists only compact runtime prove
     dependencies,
   });
   assert.equal(evidenceLoads, 1);
-  assert.deepEqual(qaInputs, [{
-    captureEvidence: {
-      visibleDomText: ["Verified DOM value"],
-      browserConsole: [],
-      truncated: { visibleDomText: false, browserConsole: false },
+  assert.deepEqual(qaInputs, [
+    {
+      captureEvidence: {
+        visibleDomText: ["Verified DOM value"],
+        browserConsole: [],
+        truncated: { visibleDomText: false, browserConsole: false },
+      },
+      runtimeEvidence: { logs: [] },
     },
-    runtimeEvidence: { logs: [] },
-  }]);
+  ]);
   const qaRecord = JSON.parse(
     await fs.readFile(
-      path.join(artifactRoot, value.id, "runs", common.runId, "evidence", "qa.json"),
+      path.join(
+        artifactRoot,
+        value.id,
+        "runs",
+        common.runId,
+        "evidence",
+        "qa.json",
+      ),
       "utf8",
     ),
   );
   assert.deepEqual(qaRecord.value.runtime, runtimeProvenance());
-  assert.doesNotMatch(JSON.stringify(qaRecord.value), /Verified DOM value|verified runtime log/);
+  assert.doesNotMatch(
+    JSON.stringify(qaRecord.value),
+    /Verified DOM value|verified runtime log/,
+  );
 });
 
 test("QA rejects a trusted scanner result weaker than catalog runtime coverage", async (t) => {
@@ -760,6 +773,351 @@ test("QA rejects sensitive findings even if an injected QA adapter claims pass",
     }),
     /sensitive.*(?:pass|finding)|automatic QA/i,
   );
+});
+
+test("browser failure leaves no published QA and the same run retries cleanly", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const dependencies = baseDependencies(value);
+  const successfulQa = dependencies.runQualityAssurance;
+  let qaAttempts = 0;
+  dependencies.runQualityAssurance = async (input) => {
+    qaAttempts += 1;
+    if (qaAttempts === 1) {
+      await fs.mkdir(input.qaOutputDir, { recursive: true });
+      await fs.writeFile(
+        path.join(input.qaOutputDir, "partial-contact-sheet.png"),
+        "partial-proof",
+        { flag: "wx" },
+      );
+      throw new Error("browser playback failed after proof generation");
+    }
+    return successfulQa(input);
+  };
+  const runId = "qa-browser-retry-001";
+  const common = {
+    scenarioPath,
+    artifactRoot,
+    landingRoot: path.join(path.dirname(repoRoot), "landing"),
+    runId,
+    repoRoot,
+    dependencies,
+  };
+  await runDeclarativeHighlightCommand({
+    ...common,
+    command: "capture",
+    source: "pr_head",
+    prNumber: 42,
+    prBaseSha: BASE_SHA,
+  });
+  await runDeclarativeHighlightCommand({ ...common, command: "render" });
+
+  await assert.rejects(
+    runDeclarativeHighlightCommand({ ...common, command: "qa" }),
+    /browser playback failed after proof generation/,
+  );
+  const attemptRoot = path.join(artifactRoot, value.id, "runs", runId);
+  await assert.rejects(fs.access(path.join(attemptRoot, "qa")), /ENOENT/);
+  assert.equal(
+    (await fs.readdir(attemptRoot)).some((entry) =>
+      entry.startsWith(".qa-building-"),
+    ),
+    false,
+  );
+
+  const retried = await runDeclarativeHighlightCommand({
+    ...common,
+    command: "qa",
+  });
+  assert.equal(retried.phases.qa.status, "technical_pass");
+  assert.equal(qaAttempts, 2);
+  const reportPath = path.join(attemptRoot, "qa", "report.json");
+  await fs.access(reportPath);
+  assert.equal(
+    (await fs.readFile(reportPath, "utf8")).includes(".qa-building-"),
+    false,
+  );
+});
+
+test("QA cleanup refuses to delete a replaced private build directory", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const dependencies = baseDependencies(value);
+  let replacementPath;
+  dependencies.runQualityAssurance = async ({ qaOutputDir }) => {
+    await fs.rename(qaOutputDir, `${qaOutputDir}-moved`);
+    await fs.mkdir(qaOutputDir);
+    replacementPath = path.join(qaOutputDir, "do-not-delete.txt");
+    await fs.writeFile(replacementPath, "replacement-owned-elsewhere");
+    throw new Error("synthetic QA failure after directory replacement");
+  };
+  const runId = "qa-cleanup-ownership-001";
+  const common = {
+    scenarioPath,
+    artifactRoot,
+    landingRoot: path.join(path.dirname(repoRoot), "landing"),
+    runId,
+    repoRoot,
+    dependencies,
+  };
+  await runDeclarativeHighlightCommand({
+    ...common,
+    command: "capture",
+    source: "pr_head",
+    prNumber: 42,
+    prBaseSha: BASE_SHA,
+  });
+  await runDeclarativeHighlightCommand({ ...common, command: "render" });
+
+  await assert.rejects(
+    runDeclarativeHighlightCommand({ ...common, command: "qa" }),
+    /private build directory could not be cleaned|replaced QA build directory/i,
+  );
+  assert.equal(
+    await fs.readFile(replacementPath, "utf8"),
+    "replacement-owned-elsewhere",
+  );
+});
+
+test("QA refuses to publish a replaced private build directory", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const dependencies = baseDependencies(value);
+  const successfulQa = dependencies.runQualityAssurance;
+  let replacementRoot;
+  dependencies.runQualityAssurance = async (input) => {
+    const report = await successfulQa(input);
+    await fs.rename(input.qaOutputDir, `${input.qaOutputDir}-moved`);
+    await fs.mkdir(input.qaOutputDir);
+    replacementRoot = input.qaOutputDir;
+    return report;
+  };
+  const runId = "qa-publish-ownership-001";
+  const common = {
+    scenarioPath,
+    artifactRoot,
+    landingRoot: path.join(path.dirname(repoRoot), "landing"),
+    runId,
+    repoRoot,
+    dependencies,
+  };
+  await runDeclarativeHighlightCommand({
+    ...common,
+    command: "capture",
+    source: "pr_head",
+    prNumber: 42,
+    prBaseSha: BASE_SHA,
+  });
+  await runDeclarativeHighlightCommand({ ...common, command: "render" });
+
+  await assert.rejects(
+    runDeclarativeHighlightCommand({ ...common, command: "qa" }),
+    /private build directory could not be cleaned|replaced QA build directory/i,
+  );
+  assert.equal((await fs.lstat(replacementRoot)).isDirectory(), true);
+});
+
+test("QA publication refuses an empty final directory created during the run", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const dependencies = baseDependencies(value);
+  const successfulQa = dependencies.runQualityAssurance;
+  let finalQaRoot;
+  dependencies.runQualityAssurance = async (input) => {
+    const report = await successfulQa(input);
+    finalQaRoot = path.join(path.dirname(input.qaOutputDir), "qa");
+    await fs.mkdir(finalQaRoot);
+    return report;
+  };
+  const runId = "qa-publish-race-001";
+  const common = {
+    scenarioPath,
+    artifactRoot,
+    landingRoot: path.join(path.dirname(repoRoot), "landing"),
+    runId,
+    repoRoot,
+    dependencies,
+  };
+  await runDeclarativeHighlightCommand({
+    ...common,
+    command: "capture",
+    source: "pr_head",
+    prNumber: 42,
+    prBaseSha: BASE_SHA,
+  });
+  await runDeclarativeHighlightCommand({ ...common, command: "render" });
+
+  await assert.rejects(
+    runDeclarativeHighlightCommand({ ...common, command: "qa" }),
+    /refusing to overwrite published QA output/i,
+  );
+  assert.deepEqual(await fs.readdir(finalQaRoot), []);
+});
+
+test("published QA without a phase record finalizes without rerunning tools", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const dependencies = baseDependencies(value);
+  const runId = "qa-finalize-001";
+  const common = await runThroughQa({
+    value,
+    repoRoot,
+    artifactRoot,
+    scenarioPath,
+    runId,
+    dependencies,
+  });
+  const qaPhasePath = path.join(
+    artifactRoot,
+    value.id,
+    "runs",
+    runId,
+    "evidence",
+    "qa.json",
+  );
+  await fs.unlink(qaPhasePath);
+  dependencies.runQualityAssurance = async () => {
+    throw new Error("QA tools must not rerun for published output");
+  };
+
+  const recovered = await runDeclarativeHighlightCommand({
+    ...common,
+    command: "qa",
+  });
+
+  assert.equal(recovered.phases.qa.status, "technical_pass");
+  await fs.access(qaPhasePath);
+});
+
+test("QA finalization preserves and rejects a published proof symlink", async (t) => {
+  const value = scenario();
+  const { base, repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const dependencies = baseDependencies(value);
+  const basicQa = dependencies.runQualityAssurance;
+  dependencies.runQualityAssurance = async (input) => {
+    const report = await basicQa(input);
+    const keyframePath = path.join(input.qaOutputDir, "proof-keyframe.png");
+    const contactSheetPath = path.join(
+      input.qaOutputDir,
+      "proof-contact-sheet.png",
+    );
+    const keyframeBytes = Buffer.from("keyframe-proof");
+    const contactBytes = Buffer.from("contact-sheet-proof");
+    await Promise.all([
+      fs.writeFile(keyframePath, keyframeBytes, { flag: "wx" }),
+      fs.writeFile(contactSheetPath, contactBytes, { flag: "wx" }),
+    ]);
+    report.artifacts[0].proofs = {
+      keyframes: [
+        {
+          frame: 0,
+          path: keyframePath,
+          bytes: keyframeBytes.length,
+          sha256: digest(keyframeBytes),
+        },
+      ],
+      contactSheet: {
+        path: contactSheetPath,
+        bytes: contactBytes.length,
+        sha256: digest(contactBytes),
+      },
+    };
+    return report;
+  };
+  const runId = "qa-proof-symlink-001";
+  const common = await runThroughQa({
+    value,
+    repoRoot,
+    artifactRoot,
+    scenarioPath,
+    runId,
+    dependencies,
+  });
+  const attemptRoot = path.join(artifactRoot, value.id, "runs", runId);
+  const qaPhasePath = path.join(attemptRoot, "evidence", "qa.json");
+  const keyframePath = path.join(attemptRoot, "qa", "proof-keyframe.png");
+  const outsidePath = path.join(base, "outside-proof.png");
+  await fs.writeFile(outsidePath, "outside-proof-stays");
+  await fs.unlink(qaPhasePath);
+  await fs.unlink(keyframePath);
+  await fs.symlink(outsidePath, keyframePath);
+  dependencies.runQualityAssurance = async () => {
+    throw new Error("QA tools must not rerun for suspicious output");
+  };
+
+  await assert.rejects(
+    runDeclarativeHighlightCommand({ ...common, command: "qa" }),
+    /proof.*(?:regular file|symlink)/i,
+  );
+  assert.equal(await fs.readFile(outsidePath, "utf8"), "outside-proof-stays");
+  assert.equal((await fs.lstat(keyframePath)).isSymbolicLink(), true);
+});
+
+test("published render without a phase record finalizes without re-encoding", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const dependencies = baseDependencies(value);
+  const adapter = landingAdapter();
+  let encodes = 0;
+  adapter.encodeHighlight = async (input) => {
+    encodes += 1;
+    const outputs = {
+      mp4: path.join(input.outputDir, `${input.slug}.mp4`),
+      poster: path.join(input.outputDir, `${input.slug}.webp`),
+      webm: path.join(input.outputDir, `${input.slug}.webm`),
+    };
+    await Promise.all(
+      Object.values(outputs).map((filePath) =>
+        fs.writeFile(filePath, "rendered-delivery", { flag: "wx" }),
+      ),
+    );
+    return Object.fromEntries(
+      Object.entries(outputs).map(([kind, filePath]) => [
+        kind,
+        { path: filePath },
+      ]),
+    );
+  };
+  dependencies.loadLandingAdapter = async () => adapter;
+  dependencies.renderHighlight = renderHighlight;
+  const runId = "render-finalize-001";
+  const common = {
+    scenarioPath,
+    artifactRoot,
+    landingRoot: path.join(path.dirname(repoRoot), "landing"),
+    runId,
+    repoRoot,
+    dependencies,
+  };
+  await runDeclarativeHighlightCommand({
+    ...common,
+    command: "capture",
+    source: "pr_head",
+    prNumber: 42,
+    prBaseSha: BASE_SHA,
+  });
+  await runDeclarativeHighlightCommand({ ...common, command: "render" });
+  const renderPhasePath = path.join(
+    artifactRoot,
+    value.id,
+    "runs",
+    runId,
+    "evidence",
+    "render.json",
+  );
+  await fs.unlink(renderPhasePath);
+  adapter.encodeHighlight = async () => {
+    throw new Error("encoder must not rerun for published output");
+  };
+
+  const recovered = await runDeclarativeHighlightCommand({
+    ...common,
+    command: "render",
+  });
+
+  assert.equal(recovered.phases.render.manifest.scenarioId, value.id);
+  assert.equal(encodes, 1);
+  await fs.access(renderPhasePath);
 });
 
 test("run rejects missing delivery metadata before source, landing, or capture work", async (t) => {

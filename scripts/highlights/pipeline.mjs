@@ -296,10 +296,194 @@ async function writeCameraEvidence(paths, plan, track, landing) {
     ...source,
     recordDigest: `sha256:${sha256(canonicalJson(source))}`,
   };
-  return writeJsonExclusive(
-    path.join(paths.evidenceRoot, "camera.json"),
-    record,
-  );
+  const destination = path.join(paths.evidenceRoot, "camera.json");
+  try {
+    return await writeJsonExclusive(destination, record);
+  } catch (error) {
+    if (!/refusing to overwrite immutable manifest/.test(error.message)) {
+      throw error;
+    }
+    const existing = await readJsonRegular(destination, "camera evidence");
+    if (canonicalJson(existing) !== canonicalJson(record)) {
+      throw new Error(
+        `existing camera evidence does not match deterministic render recovery: ${destination}`,
+      );
+    }
+    return destination;
+  }
+}
+
+function rebasePublishedPaths(value, fromRoot, toRoot) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => rebasePublishedPaths(entry, fromRoot, toRoot));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        rebasePublishedPaths(entry, fromRoot, toRoot),
+      ]),
+    );
+  }
+  if (typeof value !== "string") return value;
+  const source = path.resolve(fromRoot);
+  if (value === source) return path.resolve(toRoot);
+  if (!value.startsWith(`${source}${path.sep}`)) return value;
+  return path.join(path.resolve(toRoot), path.relative(source, value));
+}
+
+function qaProofEntries(report) {
+  const entries = [];
+  for (const [artifactIndex, artifact] of (report?.artifacts ?? []).entries()) {
+    const proofs = artifact?.proofs;
+    if (!proofs || proofs.skipped === true) continue;
+    if (!Array.isArray(proofs.keyframes) || !proofs.contactSheet) {
+      throw new Error(
+        `QA artifact ${artifactIndex} proof evidence is incomplete`,
+      );
+    }
+    for (const [proofIndex, proof] of proofs.keyframes.entries()) {
+      entries.push({
+        ...proof,
+        label: `QA artifact ${artifactIndex} keyframe ${proofIndex + 1}`,
+      });
+    }
+    entries.push({
+      ...proofs.contactSheet,
+      label: `QA artifact ${artifactIndex} contact sheet`,
+    });
+  }
+  return entries;
+}
+
+async function validateQaPublication(
+  report,
+  { publishedRoot, physicalRoot = publishedRoot } = {},
+) {
+  const expectedNames = new Set(["report.json"]);
+  for (const proof of qaProofEntries(report)) {
+    const publishedPath = path.resolve(proof.path ?? "");
+    const relative = path.relative(path.resolve(publishedRoot), publishedPath);
+    if (
+      !relative ||
+      relative.startsWith("..") ||
+      path.isAbsolute(relative) ||
+      path.dirname(relative) !== "."
+    ) {
+      throw new Error(`${proof.label} path escapes the published QA directory`);
+    }
+    if (expectedNames.has(relative)) {
+      throw new Error(
+        `${proof.label} duplicates published QA output ${relative}`,
+      );
+    }
+    expectedNames.add(relative);
+    const physicalPath = path.join(path.resolve(physicalRoot), relative);
+    const stat = await fs.lstat(physicalPath).catch(() => null);
+    if (!stat?.isFile() || stat.isSymbolicLink()) {
+      throw new Error(`${proof.label} is missing or is not a regular file`);
+    }
+    if ((await fs.realpath(physicalPath)) !== physicalPath) {
+      throw new Error(`${proof.label} cannot resolve through symlinks`);
+    }
+    if (
+      !Number.isInteger(proof.bytes) ||
+      proof.bytes <= 0 ||
+      !/^[a-f0-9]{64}$/.test(proof.sha256 ?? "") ||
+      stat.size !== proof.bytes ||
+      (await hashFile(physicalPath)) !== proof.sha256
+    ) {
+      throw new Error(`${proof.label} digest or byte count does not match`);
+    }
+  }
+  const reportPath = path.join(path.resolve(physicalRoot), "report.json");
+  const persisted = await readJsonRegular(reportPath, "QA report");
+  if (canonicalJson(persisted) !== canonicalJson(report)) {
+    throw new Error("published QA report changed before publication");
+  }
+  const entries = await fs.readdir(physicalRoot, { withFileTypes: true });
+  const actualNames = new Set(entries.map((entry) => entry.name));
+  if (
+    entries.some((entry) => !entry.isFile() || entry.isSymbolicLink()) ||
+    actualNames.size !== expectedNames.size ||
+    [...expectedNames].some((name) => !actualNames.has(name))
+  ) {
+    throw new Error(
+      "published QA directory must contain exactly its regular report and proof files",
+    );
+  }
+  return report;
+}
+
+async function publishedDirectoryExists(directory, label) {
+  const stat = await fs.lstat(directory).catch((error) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!stat) return false;
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error(`${label} exists but is not a regular directory`);
+  }
+  if ((await fs.realpath(directory)) !== path.resolve(directory)) {
+    throw new Error(`${label} cannot resolve through symlinks`);
+  }
+  return true;
+}
+
+async function requireOwnedQaBuild(buildDir, ownership) {
+  const current = await fs.lstat(buildDir).catch((error) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (
+    !current?.isDirectory() ||
+    current.isSymbolicLink() ||
+    current.dev !== ownership.dev ||
+    current.ino !== ownership.ino
+  ) {
+    throw new Error(`refusing to use replaced QA build directory: ${buildDir}`);
+  }
+}
+
+async function cleanupQaBuild(buildDir, ownership, primaryError) {
+  if (!buildDir) throw primaryError;
+  try {
+    const current = await fs.lstat(buildDir).catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (!current) throw primaryError;
+    if (
+      !current.isDirectory() ||
+      current.isSymbolicLink() ||
+      current.dev !== ownership.dev ||
+      current.ino !== ownership.ino
+    ) {
+      throw new Error(
+        `refusing to clean replaced QA build directory: ${buildDir}`,
+      );
+    }
+    await fs.rm(buildDir, { recursive: true, force: true });
+  } catch (cleanupError) {
+    if (cleanupError === primaryError) throw primaryError;
+    throw new AggregateError(
+      [primaryError, cleanupError],
+      "QA transaction failed and its private build directory could not be cleaned",
+    );
+  }
+  throw primaryError;
+}
+
+async function recoverPublishedQa(context, render) {
+  const reportPath = path.join(context.paths.qaRoot, "report.json");
+  const report = await readJsonRegular(reportPath, "published QA report");
+  const candidate = {
+    ...report,
+    reportPath,
+    reportDigest: `sha256:${await hashFile(reportPath)}`,
+  };
+  await validateRecoveredQa(context, render, candidate);
+  return candidate;
 }
 
 async function readJsonRegular(filePath, label) {
@@ -731,6 +915,13 @@ async function validateRecoveredQa(context, render, qa) {
   delete phaseReport.reportDigest;
   if (canonicalJson(report) !== canonicalJson(phaseReport)) {
     fail("QA report content does not match the QA phase evidence");
+  }
+  try {
+    await validateQaPublication(report, {
+      publishedRoot: context.paths.qaRoot,
+    });
+  } catch (error) {
+    fail(error.message);
   }
   const rendered = new Map(
     (render.artifactEvidence ?? []).map((artifact) => [
@@ -1248,6 +1439,7 @@ function phaseAdapters(context) {
         runId,
         repoRoots: [context.repoRoot, landing.root].filter(Boolean),
         landingAdapter: landing,
+        recoverPublished: true,
       });
       const adapterEvidence = landingEvidence(landing);
       const artifactEvidence = await collectRenderArtifactEvidence(
@@ -1270,6 +1462,14 @@ function phaseAdapters(context) {
     qa: async ({ phases }) => {
       const capture = phases.capture;
       const render = phases.render;
+      if (await publishedDirectoryExists(paths.qaRoot, "published QA output")) {
+        return writePhaseRecord(
+          paths,
+          "qa",
+          await recoverPublishedQa(context, render),
+          deps,
+        );
+      }
       const runtime = await loadRuntimeQaEvidence(context, capture);
       const artifacts = absoluteRenderArtifacts(render).map((artifact) => ({
         ...artifact,
@@ -1289,51 +1489,90 @@ function phaseAdapters(context) {
         context,
         runtime.provenance,
       );
-      const report = await deps.runQualityAssurance({
-        scenario,
-        artifacts,
-        camera: render.cameraTrack,
-        pointerTrack: geometry.pointerTrack,
-        targetIntervals: geometry.targetIntervals,
-        captureEvidence: runtime.captureEvidence,
-        runtimeEvidence: runtime.runtimeEvidence,
-        runner: deps.commandRunner,
-        readFile: deps.readFile,
-        browserPlayback: ({ artifacts: reports }) =>
-          deps.browserPlayback({
-            artifacts: reports,
-            webRoot: path.join(context.repoRoot, "apps/web"),
-          }),
-        cameraAuditor: landing.auditHighlightCameraMotion,
-        qaOutputDir: paths.qaRoot,
-        sensitiveScanner,
-      });
-      if (report?.passed !== true) throw new Error("automatic QA did not pass");
-      validateSensitiveScanResult(report.sensitiveData, {
-        expectedCoverage: runtime.provenance.scanner.coverage,
-      });
-      if (report.sensitiveData.passed !== true) {
-        throw new Error("automatic QA sensitive-data scan did not pass");
+      const qaBuildDir = await fs.mkdtemp(
+        path.join(paths.attemptRoot, ".qa-building-"),
+      );
+      const qaBuildOwnership = await fs.lstat(qaBuildDir);
+      let ownedBuildDir = qaBuildDir;
+      try {
+        const report = await deps.runQualityAssurance({
+          scenario,
+          artifacts,
+          camera: render.cameraTrack,
+          pointerTrack: geometry.pointerTrack,
+          targetIntervals: geometry.targetIntervals,
+          captureEvidence: runtime.captureEvidence,
+          runtimeEvidence: runtime.runtimeEvidence,
+          runner: deps.commandRunner,
+          readFile: deps.readFile,
+          browserPlayback: ({ artifacts: reports }) =>
+            deps.browserPlayback({
+              artifacts: reports,
+              webRoot: path.join(context.repoRoot, "apps/web"),
+            }),
+          cameraAuditor: landing.auditHighlightCameraMotion,
+          qaOutputDir: qaBuildDir,
+          sensitiveScanner,
+        });
+        if (report?.passed !== true)
+          throw new Error("automatic QA did not pass");
+        validateSensitiveScanResult(report.sensitiveData, {
+          expectedCoverage: runtime.provenance.scanner.coverage,
+        });
+        if (report.sensitiveData.passed !== true) {
+          throw new Error("automatic QA sensitive-data scan did not pass");
+        }
+        await requireOwnedQaBuild(qaBuildDir, qaBuildOwnership);
+        const completedAt = deps.clock().toISOString();
+        const technical = rebasePublishedPaths(
+          {
+            ...report,
+            runtime: runtime.provenance,
+            status: "technical_pass",
+            passed: true,
+            completedAt,
+          },
+          qaBuildDir,
+          paths.qaRoot,
+        );
+        await writeJsonExclusive(
+          path.join(qaBuildDir, "report.json"),
+          technical,
+        );
+        await validateQaPublication(technical, {
+          publishedRoot: paths.qaRoot,
+          physicalRoot: qaBuildDir,
+        });
+        await requireOwnedQaBuild(qaBuildDir, qaBuildOwnership);
+        if (
+          await publishedDirectoryExists(paths.qaRoot, "published QA output")
+        ) {
+          throw new Error(
+            `refusing to overwrite published QA output: ${paths.qaRoot}`,
+          );
+        }
+        try {
+          await fs.rename(qaBuildDir, paths.qaRoot);
+        } catch (error) {
+          if (["EEXIST", "ENOTEMPTY"].includes(error.code)) {
+            throw new Error(
+              `refusing to overwrite published QA output: ${paths.qaRoot}`,
+            );
+          }
+          throw error;
+        }
+        ownedBuildDir = null;
+        const reportPath = path.join(paths.qaRoot, "report.json");
+        const reportDigest = `sha256:${await hashFile(reportPath)}`;
+        return await writePhaseRecord(
+          paths,
+          "qa",
+          { ...technical, reportPath, reportDigest },
+          deps,
+        );
+      } catch (error) {
+        return cleanupQaBuild(ownedBuildDir, qaBuildOwnership, error);
       }
-      const completedAt = deps.clock().toISOString();
-      const technical = {
-        ...report,
-        runtime: runtime.provenance,
-        status: "technical_pass",
-        passed: true,
-        completedAt,
-      };
-      const reportPath = await writeJsonExclusive(
-        path.join(paths.qaRoot, "report.json"),
-        technical,
-      );
-      const reportDigest = `sha256:${await hashFile(reportPath)}`;
-      return writePhaseRecord(
-        paths,
-        "qa",
-        { ...technical, reportPath, reportDigest },
-        deps,
-      );
     },
     stage: async ({ phases }) =>
       writeContentAddressedStage(stageInput(context, phases)),
