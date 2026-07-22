@@ -8,16 +8,19 @@ import { fileURLToPath } from "node:url";
 
 import { compileTimeline, readScenario } from "../../../../scripts/highlights/scenario.mjs";
 import {
+  buildCaptureCheckout,
   buildIntegrationCommand,
   createCaptureBuildEnvironment,
   preflightCaptureIntegration,
   resolveIntegrationArtifactRoot,
   selectIntegrationPortOffset,
+  verifyCaptureBuildProvenance,
 } from "./run-capture-integration.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = path.resolve(HERE, "../..");
 const REPO_ROOT = path.resolve(WEB_ROOT, "../..");
+const TEST_NODE_EXECUTABLE = "/usr/bin/node";
 
 test("capture build environment allowlists toolchain inputs and strips ambient credentials", () => {
   const artifactRoot = "/external/highlight-build";
@@ -116,12 +119,12 @@ test("integration command uses dedicated config and package exposes exact docume
 test("integration command reuses the active package manager when bare pnpm is unavailable", () => {
   const command = buildIntegrationCommand({
     webRoot: WEB_ROOT,
-    nodeExecutable: "/usr/bin/node",
+    nodeExecutable: TEST_NODE_EXECUTABLE,
     packageManagerScript: "/opt/corepack/pnpm.js",
   });
 
   assert.deepEqual(command, {
-    command: "/usr/bin/node",
+    command: TEST_NODE_EXECUTABLE,
     args: [
       "/opt/corepack/pnpm.js",
       "exec",
@@ -194,9 +197,7 @@ test("artifact allocation rejects a parent symlink that resolves inside a reposi
   );
 });
 
-test("integration rebuilds clean checkout and attests exact backend, agent, and web tree hashes", async (t) => {
-  const { buildCaptureCheckout, verifyCaptureBuildProvenance } =
-    await import("./run-capture-integration.mjs");
+async function createCaptureBuildFixture(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "highlight-build-proof-test-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const repoRoot = path.join(root, "repo");
@@ -224,8 +225,6 @@ test("integration rebuilds clean checkout and attests exact backend, agent, and 
     clean: true,
     status: "",
   };
-  const commands = [];
-  const commandEnvironments = [];
   const buildEnvironment = createCaptureBuildEnvironment({
     artifactRoot,
     inheritedEnv: {
@@ -235,24 +234,44 @@ test("integration rebuilds clean checkout and attests exact backend, agent, and 
       NODE_OPTIONS: "--require=/tmp/ambient-hook.js",
     },
   });
-  let gateCalls = 0;
-  const result = await buildCaptureCheckout({
+  return {
+    root,
     repoRoot,
     webRoot,
+    backendDir,
+    webDist,
     artifactRoot,
+    source,
+    buildEnvironment,
+  };
+}
+
+async function runCaptureBuildFixture(fixture) {
+  let gateCalls = 0;
+  const commands = [];
+  const commandEnvironments = [];
+  const result = await buildCaptureCheckout({
+    repoRoot: fixture.repoRoot,
+    webRoot: fixture.webRoot,
+    artifactRoot: fixture.artifactRoot,
     verifySource: async () => {
       gateCalls += 1;
-      return source;
+      return fixture.source;
     },
     runCommand: async (command, environment) => {
       commands.push(command);
       commandEnvironments.push(environment);
     },
-    packageManager: { command: "/usr/bin/node", args: ["/opt/pnpm.js"] },
-    buildEnvironment,
+    packageManager: { command: TEST_NODE_EXECUTABLE, args: ["/opt/pnpm.js"] },
+    buildEnvironment: fixture.buildEnvironment,
     now: () => new Date("2026-07-22T12:00:00.000Z"),
   });
+  return { result, gateCalls, commands, commandEnvironments };
+}
 
+async function assertCaptureBuildProof(fixture, observed) {
+  const { buildEnvironment, repoRoot, root, source, webRoot } = fixture;
+  const { result, gateCalls, commands, commandEnvironments } = observed;
   assert.equal(gateCalls, 2, "source gate runs before and after build");
   assert.equal(commands.length, 2);
   assert.deepEqual(commandEnvironments, [buildEnvironment, buildEnvironment]);
@@ -263,7 +282,7 @@ test("integration rebuilds clean checkout and attests exact backend, agent, and 
     cwd: repoRoot,
   });
   assert.deepEqual(commands[1], {
-    command: "/usr/bin/node",
+    command: TEST_NODE_EXECUTABLE,
     args: ["/opt/pnpm.js", "--filter", "@kandev/web", "build"],
     cwd: path.join(repoRoot, "apps"),
   });
@@ -299,8 +318,10 @@ test("integration rebuilds clean checkout and attests exact backend, agent, and 
     }),
     result.manifest,
   );
+}
 
-  const attackerRoot = path.join(root, "attacker-build");
+async function assertAlternativeBuildPathsRejected(fixture, result) {
+  const attackerRoot = path.join(fixture.root, "attacker-build");
   await fs.mkdir(path.join(attackerRoot, "dist", "assets"), { recursive: true });
   await Promise.all([
     fs.writeFile(path.join(attackerRoot, "kandev"), "backend-current-sha"),
@@ -314,52 +335,68 @@ test("integration rebuilds clean checkout and attests exact backend, agent, and 
   attackerManifest.outputs.webDist.path = path.join(attackerRoot, "dist");
   delete attackerManifest.manifestDigest;
   attackerManifest.manifestDigest = digestValue(canonicalJson(attackerManifest));
-  const attackerManifestPath = path.join(artifactRoot, "evidence", "attacker-build.json");
+  const attackerManifestPath = path.join(fixture.artifactRoot, "evidence", "attacker-build.json");
   await fs.writeFile(attackerManifestPath, `${JSON.stringify(attackerManifest, null, 2)}\n`);
   await assert.rejects(
     () =>
       verifyCaptureBuildProvenance(attackerManifestPath, {
-        expectedSourceSha: source.selectedSha,
-        expectedRepositoryRoot: repoRoot,
+        expectedSourceSha: fixture.source.selectedSha,
+        expectedRepositoryRoot: fixture.repoRoot,
       }),
     /canonical.*backend|expected build output path/i,
   );
+}
 
-  const repositoryLink = path.join(root, "repository-link");
-  await fs.symlink(repoRoot, repositoryLink, "dir");
+async function assertRepositorySymlinkRejected(fixture, result) {
+  const repositoryLink = path.join(fixture.root, "repository-link");
+  await fs.symlink(fixture.repoRoot, repositoryLink, "dir");
   await assert.rejects(
     () =>
       verifyCaptureBuildProvenance(result.manifestPath, {
-        expectedSourceSha: source.selectedSha,
+        expectedSourceSha: fixture.source.selectedSha,
         expectedRepositoryRoot: repositoryLink,
       }),
     /repository root.*symlink/i,
   );
+}
 
-  const backendPath = path.join(backendDir, "kandev");
-  const backendRealPath = path.join(backendDir, "kandev.real");
+async function assertBackendSymlinkRejected(fixture, result) {
+  const backendPath = path.join(fixture.backendDir, "kandev");
+  const backendRealPath = path.join(fixture.backendDir, "kandev.real");
   await fs.rename(backendPath, backendRealPath);
   await fs.symlink(backendRealPath, backendPath, "file");
   await assert.rejects(
     () =>
       verifyCaptureBuildProvenance(result.manifestPath, {
-        expectedSourceSha: source.selectedSha,
-        expectedRepositoryRoot: repoRoot,
+        expectedSourceSha: fixture.source.selectedSha,
+        expectedRepositoryRoot: fixture.repoRoot,
       }),
     /backend build output.*non-symlink|symlink/i,
   );
   await fs.unlink(backendPath);
   await fs.rename(backendRealPath, backendPath);
+}
 
-  await fs.writeFile(path.join(webDist, "index.html"), "tampered");
+async function assertWebDistTamperingRejected(fixture, result) {
+  await fs.writeFile(path.join(fixture.webDist, "index.html"), "tampered");
   await assert.rejects(
     () =>
       verifyCaptureBuildProvenance(result.manifestPath, {
-        expectedSourceSha: source.selectedSha,
-        expectedRepositoryRoot: repoRoot,
+        expectedSourceSha: fixture.source.selectedSha,
+        expectedRepositoryRoot: fixture.repoRoot,
       }),
     /web dist.*digest|build output.*changed/i,
   );
+}
+
+test("integration rebuilds clean checkout and attests exact backend, agent, and web tree hashes", async (t) => {
+  const fixture = await createCaptureBuildFixture(t);
+  const observed = await runCaptureBuildFixture(fixture);
+  await assertCaptureBuildProof(fixture, observed);
+  await assertAlternativeBuildPathsRejected(fixture, observed.result);
+  await assertRepositorySymlinkRejected(fixture, observed.result);
+  await assertBackendSymlinkRejected(fixture, observed.result);
+  await assertWebDistTamperingRejected(fixture, observed.result);
 });
 
 test("preflight reports every missing external prerequisite with repair commands", async () => {

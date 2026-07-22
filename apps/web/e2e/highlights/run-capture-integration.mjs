@@ -13,39 +13,13 @@ import { verifySourceGate } from "../../../../scripts/highlights/source-gate.mjs
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_WEB_ROOT = path.resolve(HERE, "../..");
 const DEFAULT_REPO_ROOT = path.resolve(DEFAULT_WEB_ROOT, "../..");
-const CAPTURE_BUILD_TOOLCHAIN_ENV = Object.freeze([
-  "AR",
-  "AS",
-  "CC",
-  "CFLAGS",
-  "CGO_CFLAGS",
-  "CGO_CPPFLAGS",
-  "CGO_CXXFLAGS",
-  "CGO_ENABLED",
-  "CGO_LDFLAGS",
-  "CPPFLAGS",
-  "CXX",
-  "CXXFLAGS",
-  "GOAMD64",
-  "GOARCH",
-  "GOCACHE",
-  "GOFLAGS",
-  "GOMODCACHE",
-  "GOOS",
-  "GOPATH",
-  "GOROOT",
-  "GOTOOLCHAIN",
-  "LD",
-  "LDFLAGS",
-  "MAKEFLAGS",
-  "PKG_CONFIG",
-  "PKG_CONFIG_PATH",
-  "RANLIB",
-  "RUSTC",
-  "RUSTFLAGS",
-  "SOURCE_DATE_EPOCH",
-  "STRIP",
-]);
+const CAPTURE_BUILD_TOOLCHAIN_ENV = Object.freeze(
+  `AR AS CC CFLAGS CGO_CFLAGS CGO_CPPFLAGS CGO_CXXFLAGS CGO_ENABLED CGO_LDFLAGS CPPFLAGS
+  CXX CXXFLAGS GOAMD64 GOARCH GOCACHE GOFLAGS GOMODCACHE GOOS GOPATH GOROOT GOTOOLCHAIN
+  LD LDFLAGS MAKEFLAGS PKG_CONFIG PKG_CONFIG_PATH RANLIB RUSTC RUSTFLAGS SOURCE_DATE_EPOCH STRIP`.split(
+    /\s+/,
+  ),
+);
 const CAPTURE_BUILD_FIXED_ENV = Object.freeze({
   CI: "1",
   NODE_ENV: "production",
@@ -121,6 +95,19 @@ export function createCaptureBuildEnvironment({ artifactRoot, inheritedEnv = pro
   return environment;
 }
 
+function isNonEmptyString(value) {
+  return typeof value === "string" && value !== "";
+}
+
+function isControlledBuildDirectory(value, artifactRoot) {
+  return (
+    isNonEmptyString(value) &&
+    path.isAbsolute(value) &&
+    isInside(artifactRoot, value) &&
+    path.resolve(value) !== artifactRoot
+  );
+}
+
 function validateCaptureBuildEnvironment(environment, artifactRoot) {
   if (!environment || typeof environment !== "object" || Array.isArray(environment)) {
     throw new Error("capture buildEnvironment must be an allowlisted object");
@@ -129,11 +116,11 @@ function validateCaptureBuildEnvironment(environment, artifactRoot) {
     if (!CAPTURE_BUILD_ENV_KEYS.has(key)) {
       throw new Error(`capture buildEnvironment key ${key} is not allowlisted`);
     }
-    if (typeof value !== "string" || value === "") {
+    if (!isNonEmptyString(value)) {
       throw new Error(`capture buildEnvironment ${key} must be a non-empty string`);
     }
   }
-  if (typeof environment.PATH !== "string" || environment.PATH === "") {
+  if (!isNonEmptyString(environment.PATH)) {
     throw new Error("capture buildEnvironment PATH is required");
   }
   for (const [key, expected] of Object.entries(CAPTURE_BUILD_FIXED_ENV)) {
@@ -144,12 +131,7 @@ function validateCaptureBuildEnvironment(environment, artifactRoot) {
   const resolvedArtifactRoot = path.resolve(artifactRoot);
   for (const key of ["HOME", "TMPDIR", "XDG_CACHE_HOME"]) {
     const value = environment[key];
-    if (
-      typeof value !== "string" ||
-      !path.isAbsolute(value) ||
-      !isInside(resolvedArtifactRoot, value) ||
-      path.resolve(value) === resolvedArtifactRoot
-    ) {
+    if (!isControlledBuildDirectory(value, resolvedArtifactRoot)) {
       throw new Error(`capture buildEnvironment ${key} must be controlled inside artifactRoot`);
     }
   }
@@ -351,6 +333,30 @@ function buildOutputPaths(repoRoot, webRoot) {
   };
 }
 
+function captureBuildManifestSourceChanged(manifest, expectedSourceSha) {
+  return (
+    manifest.contract !== "kandev-highlight-build-provenance-v1" ||
+    manifest.source?.selectedSha !== expectedSourceSha
+  );
+}
+
+function captureBuildOutputChanged(label, actual, expected) {
+  return (
+    actual.digest !== expected.digest ||
+    actual.bytes !== expected.bytes ||
+    (label === "webDist" && actual.fileCount !== expected.fileCount)
+  );
+}
+
+async function captureBuildOutputs(outputPaths) {
+  const [backend, mockAgent, webDist] = await Promise.all([
+    regularFileIdentity(outputPaths.backend, "backend build output"),
+    regularFileIdentity(outputPaths.mockAgent, "mock-agent build output"),
+    collectWebDist(outputPaths.webDist),
+  ]);
+  return { backend, mockAgent, webDist };
+}
+
 export async function verifyCaptureBuildProvenance(
   manifestPath,
   { expectedSourceSha, expectedRepositoryRoot } = {},
@@ -364,10 +370,7 @@ export async function verifyCaptureBuildProvenance(
   );
   const manifestIdentity = await regularFileIdentity(manifestPath, "build provenance manifest");
   const manifest = JSON.parse(await fs.readFile(manifestIdentity.path, "utf8"));
-  if (
-    manifest.contract !== "kandev-highlight-build-provenance-v1" ||
-    manifest.source?.selectedSha !== expectedSourceSha
-  ) {
+  if (captureBuildManifestSourceChanged(manifest, expectedSourceSha)) {
     throw new Error("build provenance does not match selected source SHA");
   }
   const digestInput = structuredClone(manifest);
@@ -387,22 +390,38 @@ export async function verifyCaptureBuildProvenance(
       );
     }
   }
-  const [backend, mockAgent, webDist] = await Promise.all([
-    regularFileIdentity(expectedPaths.backend, "backend build output"),
-    regularFileIdentity(expectedPaths.mockAgent, "mock-agent build output"),
-    collectWebDist(expectedPaths.webDist),
-  ]);
-  for (const [label, actual] of Object.entries({ backend, mockAgent, webDist })) {
-    const expected = manifest.outputs[label];
-    if (
-      actual.digest !== expected.digest ||
-      actual.bytes !== expected.bytes ||
-      (label === "webDist" && actual.fileCount !== expected.fileCount)
-    ) {
+  const outputs = await captureBuildOutputs(expectedPaths);
+  for (const [label, actual] of Object.entries(outputs)) {
+    if (captureBuildOutputChanged(label, actual, manifest.outputs[label])) {
       throw new Error(`build output changed after attestation: ${label} digest mismatch`);
     }
   }
   return manifest;
+}
+
+async function resolveCaptureWebRoot(resolvedRepository, webRoot) {
+  const expectedWebRoot = path.join(resolvedRepository, "apps", "web");
+  const resolvedWebRoot = await canonicalDirectory(webRoot, "capture web root");
+  if (resolvedWebRoot !== expectedWebRoot) {
+    throw new Error(
+      `capture web root must be the canonical repository web app ${expectedWebRoot}; got ${resolvedWebRoot}`,
+    );
+  }
+  return resolvedWebRoot;
+}
+
+function validateSourceBeforeBuild(proof) {
+  if (proof?.clean !== true || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(proof.selectedSha ?? "")) {
+    throw new Error("capture build needs an exact clean source gate before build");
+  }
+  return proof;
+}
+
+function validateSourceAfterBuild(proof, expectedSourceSha) {
+  if (proof?.clean !== true || proof.selectedSha !== expectedSourceSha) {
+    throw new Error("source checkout changed while producing capture build");
+  }
+  return proof;
 }
 
 export async function buildCaptureCheckout({
@@ -424,27 +443,19 @@ export async function buildCaptureCheckout({
       resolvedArtifactRoot,
     ),
   );
+  const environmentDirectories = [environment.HOME, environment.TMPDIR, environment.XDG_CACHE_HOME];
   await Promise.all(
-    [environment.HOME, environment.TMPDIR, environment.XDG_CACHE_HOME].map((directory) =>
-      fs.mkdir(directory, { recursive: true }),
-    ),
+    environmentDirectories.map((directory) => fs.mkdir(directory, { recursive: true })),
   );
   await Promise.all(
-    [environment.HOME, environment.TMPDIR, environment.XDG_CACHE_HOME].map((directory) =>
+    environmentDirectories.map((directory) =>
       canonicalDirectory(directory, "capture build environment directory"),
     ),
   );
-  const expectedWebRoot = path.join(resolvedRepository, "apps", "web");
-  const resolvedWebRoot = await canonicalDirectory(webRoot, "capture web root");
-  if (resolvedWebRoot !== expectedWebRoot) {
-    throw new Error(
-      `capture web root must be the canonical repository web app ${expectedWebRoot}; got ${resolvedWebRoot}`,
-    );
-  }
-  const before = await verifySource({ repoRoot: resolvedRepository, source });
-  if (before?.clean !== true || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(before.selectedSha ?? "")) {
-    throw new Error("capture build needs an exact clean source gate before build");
-  }
+  const resolvedWebRoot = await resolveCaptureWebRoot(resolvedRepository, webRoot);
+  const before = validateSourceBeforeBuild(
+    await verifySource({ repoRoot: resolvedRepository, source }),
+  );
   const commands = [
     {
       command: "make",
@@ -458,23 +469,18 @@ export async function buildCaptureCheckout({
     },
   ];
   for (const command of commands) await runCommand(command, environment);
-  const after = await verifySource({ repoRoot: resolvedRepository, source });
-  if (after?.clean !== true || after.selectedSha !== before.selectedSha) {
-    throw new Error("source checkout changed while producing capture build");
-  }
+  const after = validateSourceAfterBuild(
+    await verifySource({ repoRoot: resolvedRepository, source }),
+    before.selectedSha,
+  );
   const outputPaths = buildOutputPaths(resolvedRepository, resolvedWebRoot);
-  const [backend, mockAgent, webDist] = await Promise.all([
-    regularFileIdentity(outputPaths.backend, "backend build output"),
-    regularFileIdentity(outputPaths.mockAgent, "mock-agent build output"),
-    collectWebDist(outputPaths.webDist),
-  ]);
   const base = {
     contract: "kandev-highlight-build-provenance-v1",
     builtAt: now().toISOString(),
     source: structuredClone(after),
     commands: commands.map(({ command, args, cwd }) => ({ command, args, cwd })),
     environment,
-    outputs: { backend, mockAgent, webDist },
+    outputs: await captureBuildOutputs(outputPaths),
   };
   const manifest = {
     ...base,
