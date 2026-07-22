@@ -1,0 +1,373 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kandev.com/schemas/highlight-scenario-v1.json",
+  "title": "Kandev Highlight scenario v1",
+  "description": "Deterministic, declarative product-story capture contract. Inline code and unstable selectors are intentionally unsupported.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "title", "profile", "seed", "setup", "story"],
+  "properties": {
+    "$schema": { "type": "string", "minLength": 1, "maxLength": 240 },
+    "schemaVersion": { "const": 1 },
+    "id": { "$ref": "#/$defs/id" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "description": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "profile": { "$ref": "#/$defs/profile" },
+    "seed": { "$ref": "#/$defs/seed" },
+    "setup": { "$ref": "#/$defs/setup" },
+    "story": { "$ref": "#/$defs/story" },
+    "camera": { "$ref": "#/$defs/camera" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "profile": { "properties": { "kind": { "const": "native-mobile" } }, "required": ["kind"] }
+        }
+      },
+      "then": {
+        "properties": {
+          "camera": { "properties": { "maxZoom": { "maximum": 1.18 } } }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$",
+      "maxLength": 128
+    },
+    "jsonValue": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "boolean" },
+        { "type": "number" },
+        { "type": "string" },
+        { "type": "array", "items": { "$ref": "#/$defs/jsonValue" } },
+        { "type": "object", "additionalProperties": { "$ref": "#/$defs/jsonValue" } }
+      ]
+    },
+    "profile": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "viewport", "deviceScaleFactor"],
+          "properties": {
+            "kind": { "const": "desktop" },
+            "viewport": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["width", "height"],
+              "properties": {
+                "width": { "const": 1920 },
+                "height": { "const": 1200 }
+              }
+            },
+            "deviceScaleFactor": { "const": 2 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "viewport", "deviceScaleFactor"],
+          "properties": {
+            "kind": { "const": "native-mobile" },
+            "viewport": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["width", "height"],
+              "properties": {
+                "width": { "const": 430 },
+                "height": { "const": 932 }
+              }
+            },
+            "deviceScaleFactor": { "const": 3 }
+          }
+        }
+      ]
+    },
+    "seed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recipe"],
+      "properties": {
+        "recipe": { "$ref": "#/$defs/id" },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/jsonValue" }
+        }
+      }
+    },
+    "target": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["testId"],
+          "properties": {
+            "testId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9:._-]*$",
+              "maxLength": 128
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "name"],
+          "properties": {
+            "role": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,31}$" },
+            "name": { "type": "string", "minLength": 1, "maxLength": 160 }
+          }
+        }
+      ]
+    },
+    "label": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "settleMs": { "type": "integer", "minimum": 0, "maximum": 5000 },
+    "pointerDuration": { "type": "integer", "minimum": 50, "maximum": 5000 },
+    "cameraDuration": { "type": "integer", "minimum": 1200, "maximum": 5000 },
+    "click": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "target"],
+      "properties": {
+        "kind": { "const": "click" },
+        "target": { "$ref": "#/$defs/target" },
+        "button": { "enum": ["left", "middle", "right"] },
+        "clickCount": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "cursorDurationMs": { "$ref": "#/$defs/pointerDuration" },
+        "label": { "$ref": "#/$defs/label" },
+        "settleMs": { "$ref": "#/$defs/settleMs" }
+      }
+    },
+    "typeAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "target", "text"],
+      "properties": {
+        "kind": { "const": "type" },
+        "target": { "$ref": "#/$defs/target" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "clear": { "type": "boolean" },
+        "keystrokeDelayMs": { "type": "integer", "minimum": 0, "maximum": 250 },
+        "cursorDurationMs": { "$ref": "#/$defs/pointerDuration" },
+        "label": { "$ref": "#/$defs/label" },
+        "settleMs": { "$ref": "#/$defs/settleMs" }
+      }
+    },
+    "press": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "target", "key"],
+      "properties": {
+        "kind": { "const": "press" },
+        "target": { "$ref": "#/$defs/target" },
+        "key": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "label": { "$ref": "#/$defs/label" },
+        "settleMs": { "$ref": "#/$defs/settleMs" }
+      }
+    },
+    "hover": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "target"],
+      "properties": {
+        "kind": { "const": "hover" },
+        "target": { "$ref": "#/$defs/target" },
+        "durationMs": { "$ref": "#/$defs/pointerDuration" },
+        "label": { "$ref": "#/$defs/label" },
+        "settleMs": { "$ref": "#/$defs/settleMs" }
+      }
+    },
+    "moveCursor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "target"],
+      "properties": {
+        "kind": { "const": "moveCursor" },
+        "target": { "$ref": "#/$defs/target" },
+        "durationMs": { "$ref": "#/$defs/pointerDuration" },
+        "easing": { "$ref": "#/$defs/easing" },
+        "label": { "$ref": "#/$defs/label" },
+        "settleMs": { "$ref": "#/$defs/settleMs" }
+      }
+    },
+    "waitForVisible": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "target"],
+      "properties": {
+        "kind": { "const": "waitForVisible" },
+        "target": { "$ref": "#/$defs/target" },
+        "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 10000 },
+        "label": { "$ref": "#/$defs/label" },
+        "settleMs": { "$ref": "#/$defs/settleMs" }
+      }
+    },
+    "waitForState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "target", "state"],
+      "properties": {
+        "kind": { "const": "waitForState" },
+        "target": { "$ref": "#/$defs/target" },
+        "state": { "enum": ["attached", "detached", "visible", "hidden", "enabled", "disabled", "checked", "unchecked"] },
+        "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 10000 },
+        "label": { "$ref": "#/$defs/label" },
+        "settleMs": { "$ref": "#/$defs/settleMs" }
+      }
+    },
+    "drag": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "from", "to"],
+      "properties": {
+        "kind": { "const": "drag" },
+        "from": { "$ref": "#/$defs/target" },
+        "to": { "$ref": "#/$defs/target" },
+        "approachDurationMs": { "$ref": "#/$defs/pointerDuration" },
+        "durationMs": { "type": "integer", "minimum": 100, "maximum": 5000 },
+        "label": { "$ref": "#/$defs/label" },
+        "settleMs": { "$ref": "#/$defs/settleMs" }
+      }
+    },
+    "pause": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "durationMs"],
+      "properties": {
+        "kind": { "const": "pause" },
+        "durationMs": { "type": "integer", "minimum": 50, "maximum": 5000 },
+        "label": { "$ref": "#/$defs/label" }
+      }
+    },
+    "cameraFocus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "target"],
+      "properties": {
+        "kind": { "const": "cameraFocus" },
+        "target": { "$ref": "#/$defs/target" },
+        "durationMs": { "$ref": "#/$defs/cameraDuration" },
+        "label": { "$ref": "#/$defs/label" },
+        "settleMs": { "$ref": "#/$defs/settleMs" }
+      }
+    },
+    "cameraZoom": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "zoom"],
+      "properties": {
+        "kind": { "const": "cameraZoom" },
+        "zoom": { "type": "number", "minimum": 1, "maximum": 1.5 },
+        "durationMs": { "$ref": "#/$defs/cameraDuration" },
+        "label": { "$ref": "#/$defs/label" },
+        "settleMs": { "$ref": "#/$defs/settleMs" }
+      }
+    },
+    "cameraHold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "durationMs"],
+      "properties": {
+        "kind": { "const": "cameraHold" },
+        "durationMs": { "type": "integer", "minimum": 240, "maximum": 5000 },
+        "label": { "$ref": "#/$defs/label" }
+      }
+    },
+    "cameraReturn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "cameraReturn" },
+        "durationMs": { "$ref": "#/$defs/cameraDuration" },
+        "label": { "$ref": "#/$defs/label" },
+        "settleMs": { "$ref": "#/$defs/settleMs" }
+      }
+    },
+    "extension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "primitiveId"],
+      "properties": {
+        "kind": { "const": "extension" },
+        "primitiveId": { "$ref": "#/$defs/id" },
+        "input": { "type": "object", "additionalProperties": { "$ref": "#/$defs/jsonValue" } },
+        "durationMs": { "type": "integer", "minimum": 0, "maximum": 5000 },
+        "label": { "$ref": "#/$defs/label" },
+        "settleMs": { "$ref": "#/$defs/settleMs" }
+      }
+    },
+    "action": {
+      "oneOf": [
+        { "$ref": "#/$defs/click" },
+        { "$ref": "#/$defs/typeAction" },
+        { "$ref": "#/$defs/press" },
+        { "$ref": "#/$defs/hover" },
+        { "$ref": "#/$defs/moveCursor" },
+        { "$ref": "#/$defs/waitForVisible" },
+        { "$ref": "#/$defs/waitForState" },
+        { "$ref": "#/$defs/drag" },
+        { "$ref": "#/$defs/pause" },
+        { "$ref": "#/$defs/cameraFocus" },
+        { "$ref": "#/$defs/cameraZoom" },
+        { "$ref": "#/$defs/cameraHold" },
+        { "$ref": "#/$defs/cameraReturn" },
+        { "$ref": "#/$defs/extension" }
+      ]
+    },
+    "story": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["openingSettleMs", "actions", "endingSettleMs"],
+      "properties": {
+        "recipe": { "$ref": "#/$defs/id" },
+        "openingSettleMs": { "type": "integer", "minimum": 400, "maximum": 5000 },
+        "actions": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/$defs/action" } },
+        "endingSettleMs": { "type": "integer", "minimum": 400, "maximum": 5000 }
+      }
+    },
+    "setupPrimitive": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primitiveId"],
+      "properties": {
+        "primitiveId": { "$ref": "#/$defs/id" },
+        "input": { "type": "object", "additionalProperties": { "$ref": "#/$defs/jsonValue" } }
+      }
+    },
+    "setup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primitives"],
+      "properties": {
+        "route": { "$ref": "#/$defs/id" },
+        "primitives": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/setupPrimitive" }
+        }
+      }
+    },
+    "easing": { "enum": ["linear", "easeInOutCubic", "easeOutCubic"] },
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minZoom", "maxZoom", "safeMarginPx", "glyphPaddingPx", "maxPanVelocityPxPerSecond", "maxPanAccelerationPxPerSecond2", "maxZoomRatePerSecond", "easing"],
+      "properties": {
+        "minZoom": { "const": 1 },
+        "maxZoom": { "type": "number", "minimum": 1, "maximum": 1.5 },
+        "safeMarginPx": { "type": "integer", "minimum": 16, "maximum": 240 },
+        "glyphPaddingPx": { "type": "integer", "minimum": 0, "maximum": 64 },
+        "maxPanVelocityPxPerSecond": { "type": "number", "minimum": 100, "maximum": 4000 },
+        "maxPanAccelerationPxPerSecond2": { "type": "number", "minimum": 100, "maximum": 12000 },
+        "maxZoomRatePerSecond": { "type": "number", "minimum": 0.1, "maximum": 2 },
+        "easing": { "$ref": "#/$defs/easing" }
+      }
+    }
+  }
+}

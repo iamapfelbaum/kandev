@@ -470,6 +470,7 @@ test-scripts:
 	@bash scripts/release-desktop.test.sh
 	@node --test apps/desktop/e2e/desktop-launch-smoke.test.mjs
 	@node --test scripts/validate-public-docs.test.mjs
+	@node --test scripts/highlights.test.mjs scripts/highlights-pr-gate.test.mjs scripts/highlights/scenario.test.mjs scripts/highlights/stage.test.mjs
 
 .PHONY: test-e2e
 test-e2e: build-backend build-web build-e2e-plugin-package

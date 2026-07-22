@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { validateHighlights } from "./highlights.mjs";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -14,7 +15,7 @@ const defaultDocsDir = path.join(repoRoot, "docs/public");
  * exactly once in the public navigation metadata.
  *
  * @param {string} [docsDir] Directory containing published docs and meta.json.
- * @returns {Promise<{pageCount: number}>} Number of validated published pages.
+ * @returns {Promise<{pageCount: number, highlightCount: number}>} Number of validated published pages and Highlights.
  */
 export async function validatePublicDocs(docsDir = defaultDocsDir) {
   const meta = await readMeta(docsDir);
@@ -65,11 +66,16 @@ export async function validatePublicDocs(docsDir = defaultDocsDir) {
     await validateFeatureMedia({ docsDir });
   }
 
+  const highlightsDir = path.join(docsDir, "media/highlights");
+  const highlights = await pathExists(highlightsDir)
+    ? await validateHighlights({ repoRoot: path.resolve(docsDir, "../.."), highlightsDir })
+    : { count: 0 };
+
   if (path.resolve(docsDir) === defaultDocsDir) {
     await validateCoverageInventory({ repoRoot, docsDir });
   }
 
-  return { pageCount: pagesBySlug.size };
+  return { pageCount: pagesBySlug.size, highlightCount: highlights.count };
 }
 
 /**
@@ -1270,8 +1276,8 @@ function isNavigationDecoration(entry) {
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   validatePublicDocs()
-    .then(({ pageCount }) =>
-      console.log(`Validated ${pageCount} published docs pages.`),
+    .then(({ pageCount, highlightCount }) =>
+      console.log(`Validated ${pageCount} published docs pages and ${highlightCount} Highlights.`),
     )
     .catch((error) => {
       console.error(error.message);

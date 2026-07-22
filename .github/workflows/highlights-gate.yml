@@ -1,0 +1,50 @@
+name: Highlights gate
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited, labeled, unlabeled]
+
+concurrency:
+  group: highlights-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Labels are intentionally read-only. A new PR head invalidates an existing
+# approval by failing until the maintainer removes and reapplies the label.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate:
+    name: Validate opted-in Highlight
+    runs-on: ubuntu-latest
+    steps:
+      # Never execute JavaScript from the PR checkout. The PR controls the
+      # files being inspected, but the validator itself stays base-trusted.
+      - name: Checkout trusted validator
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-highlights-validator
+          fetch-depth: 1
+
+      - name: Checkout pull request head
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: .highlight-pr
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install --yes ffmpeg
+
+      - name: Validate Highlights labels and content
+        env:
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        working-directory: .highlight-pr
+        run: node ../.trusted-highlights-validator/scripts/highlights-pr-gate.mjs

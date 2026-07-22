@@ -1,0 +1,85 @@
+{
+  "$schema": "../scenario.schema.json",
+  "schemaVersion": 1,
+  "id": "quick-start",
+  "title": "Quick start",
+  "description": "Show a deterministic task creation interaction.",
+  "profile": {
+    "kind": "desktop",
+    "viewport": {
+      "width": 1920,
+      "height": 1200
+    },
+    "deviceScaleFactor": 2
+  },
+  "seed": {
+    "recipe": "kandev.empty-workspace",
+    "parameters": {
+      "workspaceName": "Highlight demo"
+    }
+  },
+  "setup": {
+    "route": "workspace.board",
+    "primitives": []
+  },
+  "story": {
+    "recipe": "kandev.short-feature",
+    "openingSettleMs": 600,
+    "actions": [
+      {
+        "kind": "moveCursor",
+        "target": {
+          "role": "button",
+          "name": "New task"
+        },
+        "durationMs": 350
+      },
+      {
+        "kind": "click",
+        "target": {
+          "role": "button",
+          "name": "New task"
+        },
+        "settleMs": 200
+      },
+      {
+        "kind": "waitForVisible",
+        "target": {
+          "role": "dialog",
+          "name": "Create task"
+        },
+        "timeoutMs": 1200
+      },
+      {
+        "kind": "type",
+        "target": {
+          "testId": "task-title"
+        },
+        "text": "Review API",
+        "keystrokeDelayMs": 35
+      },
+      {
+        "kind": "press",
+        "target": {
+          "testId": "task-title"
+        },
+        "key": "Enter",
+        "settleMs": 250
+      },
+      {
+        "kind": "waitForVisible",
+        "target": {
+          "role": "heading",
+          "name": "Review API"
+        },
+        "timeoutMs": 1200
+      },
+      {
+        "kind": "pause",
+        "durationMs": 500,
+        "label": "Show created task"
+      }
+    ],
+    "endingSettleMs": 700
+  }
+}

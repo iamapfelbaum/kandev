@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "id": "replace-with-highlight-id",
+  "title": "Replace with a concise feature title",
+  "summary": "Describe user value in one sentence.",
+  "caption": "Describe the visible product action and result.",
+  "status": "queued",
+  "release_version": "0.0.0",
+  "feature_flags": ["features.replace-me"],
+  "qa_status": "pending",
+  "docs": {
+    "page": "replace-with-page.md",
+    "section": "Replace with a real heading"
+  },
+  "mobile": {
+    "available": false,
+    "declaration": "State explicitly whether this feature has a native mobile surface."
+  },
+  "active_revision": "r1",
+  "source_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "provenance": {
+    "capture_mode": "pr_head",
+    "source_sha": "0000000000000000000000000000000000000000",
+    "captured_at": "2026-01-01T00:00:00.000Z",
+    "seed_id": "replace-with-deterministic-seed-id",
+    "seed_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "tool_version": "replace-with-capture-tool-version",
+    "scenario_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "capture_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "stage_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "pr_number": 0,
+    "pr_base_sha": "0000000000000000000000000000000000000000",
+    "pr_head_sha": "0000000000000000000000000000000000000000"
+  },
+  "desktop": {
+    "webm": {
+      "path": "revisions/r1/desktop.webm",
+      "bytes": 1,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "mp4": {
+      "path": "revisions/r1/desktop.mp4",
+      "bytes": 1,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "poster": {
+      "path": "revisions/r1/desktop.webp",
+      "bytes": 1,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "scenario": {
+    "path": "revisions/r1/scenario.json",
+    "bytes": 1,
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "provenance_record": {
+    "path": "revisions/r1/provenance.json",
+    "bytes": 1,
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "revision_history": [
+    {
+      "revision": "r1",
+      "files": [
+        { "path": "revisions/r1/desktop.webm", "bytes": 1, "sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+        { "path": "revisions/r1/desktop.mp4", "bytes": 1, "sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+        { "path": "revisions/r1/desktop.webp", "bytes": 1, "sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+        { "path": "revisions/r1/scenario.json", "bytes": 1, "sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+        { "path": "revisions/r1/provenance.json", "bytes": 1, "sha256": "0000000000000000000000000000000000000000000000000000000000000000" }
+      ]
+    }
+  ]
+}

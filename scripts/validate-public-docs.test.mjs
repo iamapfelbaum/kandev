@@ -207,11 +207,12 @@ test("accepts explicitly ordered pages with required frontmatter", async () => {
       "README.md": "# Contributing",
       "index.md": validPage,
       "cli.md": validPage,
+      "media/highlights/README.md": "# Highlight media",
     },
     { title: "Kandev Docs", pages: ["---Start---", "index", "cli"] },
   );
 
-  await assert.doesNotReject(validatePublicDocs(dir));
+  assert.deepEqual(await validatePublicDocs(dir), { pageCount: 2, highlightCount: 0 });
 });
 
 test("rejects published pages omitted from meta.json", async () => {
