@@ -73,6 +73,27 @@ function withDigest(body, key) {
   return { ...body, [key]: digestBytes(canonicalJson(body)) };
 }
 
+function trustedInputEntry(sequence) {
+  return {
+    contract: "kandev-highlight-host-input-dispatch-v1",
+    sequence,
+    authority: "host-cdp",
+    dispatchSucceeded: true,
+    operation: "activation-start",
+    cdpMethod: "Input.dispatchMouseEvent",
+    type: "mousePressed",
+    inputKind: "desktop",
+    coordinates: { x: 20, y: 30 },
+    key: null,
+    code: null,
+    text: null,
+    button: "left",
+    buttons: 1,
+    clickCount: 1,
+    touchPoints: [],
+  };
+}
+
 async function evidenceFixture(
   t,
   {
@@ -969,27 +990,48 @@ test("verified loader binds immutable scenario bytes and canonical digest", asyn
   );
 });
 
+test("verified loader accepts contiguous retained input windows and rejects corrupt sequences", async (t) => {
+  const retainedWindow = await evidenceFixture(t, {
+    mutateCaptureReceipt(receipt) {
+      receipt.trustedInputLedger.push(
+        trustedInputEntry(2),
+        trustedInputEntry(3),
+      );
+    },
+  });
+  assert.deepEqual(
+    (await loader()(retainedWindow.options)).runtimeEvidence.logs,
+    [],
+  );
+
+  const nonpositive = await evidenceFixture(t, {
+    mutateCaptureReceipt(receipt) {
+      receipt.trustedInputLedger.push(trustedInputEntry(0));
+    },
+  });
+  await assert.rejects(
+    loader()(nonpositive.options),
+    /trusted input ledger 0 is invalid/i,
+  );
+
+  const gap = await evidenceFixture(t, {
+    mutateCaptureReceipt(receipt) {
+      receipt.trustedInputLedger.push(
+        trustedInputEntry(2),
+        trustedInputEntry(4),
+      );
+    },
+  });
+  await assert.rejects(
+    loader()(gap.options),
+    /trusted input ledger 1 is invalid/i,
+  );
+});
+
 test("verified loader requires stable build, media alignment, and host input attestations", async (t) => {
   const trustedInput = await evidenceFixture(t, {
     mutateCaptureReceipt(receipt) {
-      receipt.trustedInputLedger.push({
-        contract: "kandev-highlight-host-input-dispatch-v1",
-        sequence: 1,
-        authority: "host-cdp",
-        dispatchSucceeded: true,
-        operation: "activation-start",
-        cdpMethod: "Input.dispatchMouseEvent",
-        type: "mousePressed",
-        inputKind: "desktop",
-        coordinates: { x: 20, y: 30 },
-        key: null,
-        code: null,
-        text: null,
-        button: "left",
-        buttons: 1,
-        clickCount: 1,
-        touchPoints: [],
-      });
+      receipt.trustedInputLedger.push(trustedInputEntry(1));
     },
   });
   assert.deepEqual(

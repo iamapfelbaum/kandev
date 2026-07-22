@@ -1043,7 +1043,10 @@ function validateCaptureReceiptAttestations(receipt) {
     );
     if (
       entry.contract !== "kandev-highlight-host-input-dispatch-v1" ||
-      entry.sequence !== index + 1 ||
+      !Number.isSafeInteger(entry.sequence) ||
+      entry.sequence <= 0 ||
+      (index > 0 &&
+        entry.sequence !== receipt.trustedInputLedger[index - 1].sequence + 1) ||
       entry.authority !== "host-cdp" ||
       entry.dispatchSucceeded !== true ||
       typeof entry.operation !== "string" ||
