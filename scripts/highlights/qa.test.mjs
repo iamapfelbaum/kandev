@@ -340,6 +340,7 @@ test("QA validates MP4, WebM, and still WebP together while hashing real proof o
     [posterPath, Buffer.alloc(512, 2)],
   ]);
   const calls = [];
+  const proofOutputs = new Set();
   const runner = async (command, args) => {
     calls.push([command, ...args]);
     const inputPath = args.findLast((value) => probes.has(value));
@@ -352,6 +353,13 @@ test("QA validates MP4, WebM, and still WebP together while hashing real proof o
         stderr: "",
         exitCode: 0,
       };
+    }
+    if (command === "ffmpeg" && args.includes("-n")) {
+      const output = args.at(-1);
+      if (proofOutputs.has(output)) {
+        return { stdout: "", stderr: `refusing proof overwrite: ${output}`, exitCode: 1 };
+      }
+      proofOutputs.add(output);
     }
     return { stdout: "", stderr: "", exitCode: 0 };
   };
@@ -399,6 +407,7 @@ test("QA validates MP4, WebM, and still WebP together while hashing real proof o
     assert.ok(videoReport.proofs.contactSheet.bytes > 0);
     assert.match(videoReport.proofs.contactSheet.sha256, /^[a-f0-9]{64}$/);
   }
+  assert.notEqual(mp4Report.proofs.contactSheet.path, webmReport.proofs.contactSheet.path);
   assert.deepEqual(posterReport.probe, {
     width: 1920,
     height: 1200,

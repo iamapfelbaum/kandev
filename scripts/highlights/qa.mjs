@@ -514,12 +514,14 @@ function proofFrameIndices(frameCount) {
 
 export function buildQaCommands({ inputPath, qaOutputDir, fps = 25, frameCount } = {}) {
   const base = path.basename(inputPath, path.extname(inputPath));
-  const keyframePattern = path.join(qaOutputDir, `${base}-keyframe-%02d.png`);
-  const contactSheet = path.join(qaOutputDir, `${base}-contact-sheet.png`);
+  const mediaKind = path.extname(inputPath).slice(1).toLowerCase();
+  const proofBase = mediaKind ? `${base}-${mediaKind}` : base;
+  const keyframePattern = path.join(qaOutputDir, `${proofBase}-keyframe-%02d.png`);
+  const contactSheet = path.join(qaOutputDir, `${proofBase}-contact-sheet.png`);
   const frameIndices = proofFrameIndices(frameCount);
   const keyframeFiles = frameIndices.map((_, index) => path.join(
     qaOutputDir,
-    `${base}-keyframe-${String(index + 1).padStart(2, "0")}.png`,
+    `${proofBase}-keyframe-${String(index + 1).padStart(2, "0")}.png`,
   ));
   const select = `select='${frameIndices.map((frame) => `eq(n,${frame})`).join("+")}'`;
   return {
