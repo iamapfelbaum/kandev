@@ -129,7 +129,7 @@ test("capture, render, qa, and run CLI forward strict declarative pipeline optio
     "capture", "story.json", "--artifact-root", "/external/story", "--source", "pr_head",
     "--landing-root", "/landing", "--run-id", "ci-42", "--pr-number", "42",
     "--pr-base-sha", "b".repeat(40), "--allow-extension", "fixture.open",
-    "--allow-extension", "fixture.close", "--dry-run",
+    "--allow-extension", "fixture.close", "--runtime", "kandev-isolated-e2e", "--dry-run",
   ], common);
   await runHighlightsCli([
     "render", "story.json", "--artifact-root", "/external/story", "--landing-root", "/landing", "--run-id", "ci-42",
@@ -148,9 +148,11 @@ test("capture, render, qa, and run CLI forward strict declarative pipeline optio
   assert.equal(received[0].prNumber, 42);
   assert.equal(received[0].prBaseSha, "b".repeat(40));
   assert.equal(received[0].dryRun, true);
+  assert.equal(received[0].runtimeId, "kandev-isolated-e2e");
   assert.deepEqual(received[0].allowedExtensionIds, ["fixture.open", "fixture.close"]);
   assert.equal(received[1].source, undefined);
   assert.equal(received[3].source, "current_main");
+  assert.equal(Object.hasOwn(received[3], "runtimeId"), false);
 });
 
 test("declarative pipeline CLI rejects missing, unknown, and duplicate options", async () => {
@@ -179,6 +181,30 @@ test("declarative pipeline CLI rejects missing, unknown, and duplicate options",
   await assert.rejects(
     runHighlightsCli(["run", "story.json", "extra.json", "--artifact-root", "/external/story", "--source", "pr_head"], options),
     /usage|exactly one scenario/i,
+  );
+  await assert.rejects(
+    runHighlightsCli([
+      "run",
+      "story.json",
+      "--artifact-root",
+      "/external/story",
+      "--source",
+      "pr_head",
+      "--runtime",
+      "../custom-runtime.mjs",
+    ], options),
+    /unknown Highlight runtime.*kandev-isolated-e2e/i,
+  );
+  await assert.rejects(
+    runHighlightsCli([
+      "render",
+      "story.json",
+      "--artifact-root",
+      "/external/story",
+      "--runtime",
+      "kandev-isolated-e2e",
+    ], options),
+    /unknown option --runtime/i,
   );
 });
 

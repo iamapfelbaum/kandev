@@ -58,9 +58,25 @@ function assertApi(apiClient: ApiClientLike): asserts apiClient is Required<ApiC
   }
 }
 
+export const HIGHLIGHT_RUNTIME_BINDING_METADATA = {
+  runtimeId: "kandev-isolated-e2e",
+  profiles: ["desktop", "native-mobile"],
+  seedRecipes: [{ id: "kandev.highlight.quick-start", parameterKeys: [] }],
+  routes: ["workspace.board"],
+  primitiveIds: [],
+  scannerCoverage: {
+    metadata: true,
+    visibleDomText: true,
+    browserConsole: true,
+    runtimeLogs: true,
+    renderedPixelOcr: false,
+  },
+  scenarioTemplate: "scripts/highlights/examples/quick-start.scenario.json",
+} as const;
+
 async function seedQuickStart(apiClient: ApiClientLike, seedData: SeedData) {
   assertApi(apiClient);
-  const title = "Declarative Highlight fixture";
+  const title = "Review API";
   const created = await apiClient.createTask(seedData.workspaceId, title, {
     workflow_id: seedData.workflowId,
     workflow_step_id: seedData.startStepId,
@@ -76,7 +92,7 @@ async function seedQuickStart(apiClient: ApiClientLike, seedData: SeedData) {
     listing.tasks[0]?.id !== actual.id
   ) {
     throw new Error(
-      "quick-start seed invariant failed: expected exactly one fixture task in start workflow step",
+      "quick-start seed invariant failed: expected exactly one seeded task in start workflow step",
     );
   }
   const invariants = {
@@ -90,7 +106,16 @@ async function seedQuickStart(apiClient: ApiClientLike, seedData: SeedData) {
   };
   return {
     seedId: "kandev.highlight.quick-start",
-    seedDigest: digest({ recipe: "kandev.highlight.quick-start", invariants }),
+    seedDigest: digest({
+      recipe: "kandev.highlight.quick-start",
+      parameters: {},
+      invariants: {
+        workflowStep: "start",
+        title: actual.title,
+        state: actual.state ?? "BACKLOG",
+        taskCount: listing.tasks.length,
+      },
+    }),
     invariants,
   };
 }

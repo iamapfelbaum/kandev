@@ -11,6 +11,7 @@ import {
   requireDeliveryMetadata,
   writeScenarioScaffold,
 } from "./highlights/scenario.mjs";
+import { resolveHighlightRuntime } from "./highlights/runtime-catalog.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -945,13 +946,14 @@ export async function runHighlightsCli(argv = process.argv.slice(2), {
       log(`Validated ${result.count} Highlights (${result.activeCount} active, ${result.queuedCount} queued).`);
     }
   } else if (command === "scaffold") {
-    const parsed = parseCliArgs(args, new Set(["id", "title", "profile", "dry-run"]));
-    if (parsed.positionals.length !== 1 || !parsed.values.id) throw new Error("usage: highlights.mjs scaffold <scenario.json> --id <id> [--title <title>] [--profile desktop|native-mobile] [--dry-run]");
+    const parsed = parseCliArgs(args, new Set(["id", "title", "profile", "template", "dry-run"]));
+    if (parsed.positionals.length !== 1 || (!parsed.values.id && !parsed.values.template)) throw new Error("usage: highlights.mjs scaffold <scenario.json> (--id <id> | --template quick-start) [--title <title>] [--profile desktop|native-mobile] [--dry-run]");
     const result = await writeScenarioScaffold({
       destination: path.resolve(repoRoot, parsed.positionals[0]),
       id: parsed.values.id,
       title: parsed.values.title,
-      profileKind: parsed.values.profile ?? "desktop",
+      profileKind: parsed.values.profile,
+      templateId: parsed.values.template,
       dryRun: parsed.flags.has("dry-run"),
     });
     if (result.dryRun) {
@@ -984,7 +986,7 @@ export async function runHighlightsCli(argv = process.argv.slice(2), {
   } else if (["capture", "render", "qa", "run"].includes(command)) {
     const capturesSource = command === "capture" || command === "run";
     const allowed = capturesSource
-      ? new Set(["artifact-root", "source", "landing-root", "run-id", "pr-number", "pr-base-sha", "allow-extension", "dry-run"])
+      ? new Set(["artifact-root", "source", "landing-root", "run-id", "pr-number", "pr-base-sha", "allow-extension", "runtime", "dry-run"])
       : new Set(["artifact-root", "landing-root", "run-id", "allow-extension", "dry-run"]);
     const parsed = parseCliArgs(args, allowed);
     if (parsed.positionals.length !== 1 || !parsed.values["artifact-root"] || (capturesSource && !parsed.values.source)) {
@@ -1001,6 +1003,7 @@ export async function runHighlightsCli(argv = process.argv.slice(2), {
     if (parsed.values["pr-base-sha"] !== undefined && !/^[a-f0-9]{40}$/.test(parsed.values["pr-base-sha"])) {
       throw new Error("--pr-base-sha must be an exact lowercase 40-character Git SHA");
     }
+    if (parsed.values.runtime !== undefined) resolveHighlightRuntime(parsed.values.runtime);
     const execute = pipelineRunner ?? (await import("./highlights/pipeline.mjs")).runDeclarativeHighlightCommand;
     const result = await execute({
       command,
@@ -1011,6 +1014,9 @@ export async function runHighlightsCli(argv = process.argv.slice(2), {
       runId: parsed.values["run-id"],
       prNumber,
       prBaseSha: parsed.values["pr-base-sha"],
+      ...(parsed.values.runtime === undefined
+        ? {}
+        : { runtimeId: parsed.values.runtime }),
       allowedExtensionIds: parsed.repeated["allow-extension"] ?? [],
       dryRun: parsed.flags.has("dry-run"),
       repoRoot,

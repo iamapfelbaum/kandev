@@ -530,6 +530,88 @@ test("scaffold refuses overwrite and dry-run leaves no file", async () => {
   await assert.rejects(writeScenarioScaffold({ destination, id: "demo" }), /exists|overwrite/i);
 });
 
+test("quick-start template is checked in, promotion-ready, and digest-stable", async () => {
+  const {
+    computeScenarioDigest,
+    readScenarioTemplate,
+    requireDeliveryMetadata,
+    validateScenario,
+  } = await import(scenarioModule);
+  const checkedIn = JSON.parse(
+    await fs.readFile(
+      new URL("./examples/quick-start.scenario.json", import.meta.url),
+      "utf8",
+    ),
+  );
+
+  const first = await readScenarioTemplate("quick-start");
+  const second = await readScenarioTemplate("quick-start");
+
+  assert.deepEqual(first, checkedIn);
+  assert.notEqual(first, second);
+  assert.deepEqual(validateScenario(first), { ok: true, errors: [] });
+  assert.equal(first.seed.recipe, "kandev.highlight.quick-start");
+  assert.equal(first.setup.route, "workspace.board");
+  assert.equal(first.profile.kind, "desktop");
+  assert.equal(requireDeliveryMetadata(first).highlight.mobileRequired, false);
+  assert.equal(first.delivery.docs.page, "tasks-and-workflows.md");
+  assert.equal(first.delivery.docs.section, "Create a task");
+  assert.equal(computeScenarioDigest(first), computeScenarioDigest(second));
+  assert.doesNotMatch(JSON.stringify(first), /replace-with|TODO|kandev\.empty-workspace/);
+  for (const action of first.story.actions) {
+    for (const target of [action.target, action.from, action.to].filter(Boolean)) {
+      assert.ok(target.testId || (target.role && target.name));
+      assert.equal("css" in target || "xpath" in target, false);
+    }
+  }
+});
+
+test("quick-start template scaffolds a runnable scenario without edits", async () => {
+  const { readScenario, writeScenarioScaffold } = await import(scenarioModule);
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "highlight-template-"));
+  tempDirs.push(dir);
+  const destination = path.join(dir, "fresh-agent.scenario.json");
+
+  const preview = await writeScenarioScaffold({
+    destination,
+    templateId: "quick-start",
+    id: "fresh-agent",
+    title: "Fresh agent quick start",
+    dryRun: true,
+  });
+  assert.equal(preview.scenario.id, "fresh-agent");
+  assert.equal(preview.scenario.title, "Fresh agent quick start");
+  assert.equal(preview.scenario.delivery.revision, "r1");
+  await assert.rejects(fs.access(destination), /ENOENT/);
+
+  await writeScenarioScaffold({
+    destination,
+    templateId: "quick-start",
+    id: "fresh-agent",
+    title: "Fresh agent quick start",
+  });
+  assert.equal((await readScenario(destination)).seed.recipe, "kandev.highlight.quick-start");
+  await assert.rejects(
+    writeScenarioScaffold({ destination, templateId: "quick-start" }),
+    /overwrite|exists/i,
+  );
+});
+
+test("template selection is closed and rejects unsupported native-mobile output", async () => {
+  const { readScenarioTemplate, writeScenarioScaffold } = await import(scenarioModule);
+  await assert.rejects(readScenarioTemplate("../custom.mjs"), /unknown scenario template/i);
+  await assert.rejects(readScenarioTemplate("toString"), /unknown scenario template/i);
+  await assert.rejects(
+    writeScenarioScaffold({
+      destination: "/external/not-written.json",
+      templateId: "quick-start",
+      profileKind: "native-mobile",
+      dryRun: true,
+    }),
+    /quick-start.*desktop|native-mobile.*template/i,
+  );
+});
+
 test("CLI validate disambiguates catalog and scenario while dry-run stays useful", async () => {
   const script = path.resolve("scripts/highlights.mjs");
   const example = path.resolve("scripts/highlights/examples/quick-start.scenario.json");
@@ -568,6 +650,36 @@ test("CLI scaffold previews, writes once, and refuses overwrite", async () => {
   const collision = spawnSync(process.execPath, args, { encoding: "utf8" });
   assert.notEqual(collision.status, 0);
   assert.match(collision.stderr, /overwrite|exists/i);
+});
+
+test("CLI quick-start template needs no id or manual JSON edits", async () => {
+  const script = path.resolve("scripts/highlights.mjs");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "highlight-cli-template-"));
+  tempDirs.push(dir);
+  const destination = path.join(dir, "quick-start.scenario.json");
+  const args = [script, "scaffold", destination, "--template", "quick-start"];
+
+  const preview = spawnSync(process.execPath, [...args, "--dry-run"], {
+    encoding: "utf8",
+  });
+  assert.equal(preview.status, 0, preview.stderr);
+  assert.match(preview.stdout, /kandev\.highlight\.quick-start/);
+  assert.match(preview.stdout, /"delivery"/);
+  await assert.rejects(fs.access(destination), /ENOENT/);
+
+  const write = spawnSync(process.execPath, args, { encoding: "utf8" });
+  assert.equal(write.status, 0, write.stderr);
+  const scenario = JSON.parse(await fs.readFile(destination, "utf8"));
+  assert.equal(scenario.id, "quick-start");
+  assert.equal(scenario.delivery.mobileRequired, false);
+
+  const native = spawnSync(
+    process.execPath,
+    [...args, "--profile", "native-mobile", "--dry-run"],
+    { encoding: "utf8" },
+  );
+  assert.notEqual(native.status, 0);
+  assert.match(native.stderr, /quick-start.*desktop|native-mobile.*template/i);
 });
 
 function reverseKeys(value) {

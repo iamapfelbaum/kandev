@@ -5,6 +5,11 @@ import path from "node:path";
 export const SCENARIO_SCHEMA_VERSION = 1;
 export const SCENARIO_SCHEMA_ID = "https://kandev.com/schemas/highlight-scenario-v1.json";
 export const MAX_STORY_DURATION_MS = 15_000;
+export const SCENARIO_TEMPLATE_IDS = Object.freeze(["quick-start"]);
+
+const SCENARIO_TEMPLATE_URLS = Object.freeze({
+  "quick-start": new URL("./examples/quick-start.scenario.json", import.meta.url),
+});
 
 const PROFILE_KINDS = new Set(["desktop", "native-mobile"]);
 const ACTION_KINDS = new Set([
@@ -296,10 +301,46 @@ export function createScenarioScaffold({ id, title, profileKind = "desktop" } = 
   return assertValidScenario(scenario);
 }
 
-export async function writeScenarioScaffold({ destination, id, title, profileKind = "desktop", dryRun = false } = {}) {
+export async function readScenarioTemplate(templateId) {
+  if (!Object.hasOwn(SCENARIO_TEMPLATE_URLS, templateId)) {
+    throw new Error(
+      `unknown scenario template '${String(templateId)}'; available templates: ${SCENARIO_TEMPLATE_IDS.join(", ")}`,
+    );
+  }
+  const templateUrl = SCENARIO_TEMPLATE_URLS[templateId];
+  return readScenario(templateUrl.pathname);
+}
+
+async function createScenarioTemplateScaffold({ templateId, id, title, profileKind }) {
+  const template = await readScenarioTemplate(templateId);
+  if (profileKind !== undefined && profileKind !== template.profile.kind) {
+    throw new Error(
+      `scenario template '${templateId}' supports desktop only; native-mobile needs its own checked-in template`,
+    );
+  }
+  const scenario = structuredClone(template);
+  if (id !== undefined) scenario.id = id;
+  if (title !== undefined) {
+    scenario.title = title;
+  } else if (id !== undefined && id !== template.id) {
+    scenario.title = titleFromId(id);
+  }
+  return assertValidScenario(scenario);
+}
+
+export async function writeScenarioScaffold({
+  destination,
+  id,
+  title,
+  profileKind,
+  templateId,
+  dryRun = false,
+} = {}) {
   if (!destination) throw new Error("scaffold destination is required");
   const absolute = path.resolve(destination);
-  const scenario = createScenarioScaffold({ id, title, profileKind });
+  const scenario = templateId !== undefined
+    ? await createScenarioTemplateScaffold({ templateId, id, title, profileKind })
+    : createScenarioScaffold({ id, title, profileKind: profileKind ?? "desktop" });
   const contents = `${JSON.stringify(scenario, null, 2)}\n`;
   if (!dryRun) {
     await fs.mkdir(path.dirname(absolute), { recursive: true });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createHighlightRegistries } from "./registry";
+import { HIGHLIGHT_RUNTIME_BINDING_METADATA, createHighlightRegistries } from "./registry";
 
 test("quick-start seed recipe creates and proves one isolated task", async () => {
   const calls: unknown[][] = [];
@@ -14,7 +14,7 @@ test("quick-start seed recipe creates and proves one isolated task", async () =>
       calls.push(["getTask", taskId]);
       return {
         id: taskId,
-        title: "Declarative Highlight fixture",
+        title: "Review API",
         workflow_step_id: "step-start",
         state: "BACKLOG",
       };
@@ -25,7 +25,7 @@ test("quick-start seed recipe creates and proves one isolated task", async () =>
         tasks: [
           {
             id: "task-seed-1",
-            title: "Declarative Highlight fixture",
+            title: "Review API",
             workflow_step_id: "step-start",
           },
         ],
@@ -43,7 +43,7 @@ test("quick-start seed recipe creates and proves one isolated task", async () =>
   assert.deepEqual(calls[0], [
     "createTask",
     "workspace-1",
-    "Declarative Highlight fixture",
+    "Review API",
     { workflow_id: "workflow-1", workflow_step_id: "step-start" },
   ]);
   assert.equal(proof.seedId, "kandev.highlight.quick-start");
@@ -53,9 +53,75 @@ test("quick-start seed recipe creates and proves one isolated task", async () =>
     workflowId: "workflow-1",
     workflowStepId: "step-start",
     taskId: "task-seed-1",
-    title: "Declarative Highlight fixture",
+    title: "Review API",
     state: "BACKLOG",
     taskCount: 1,
+  });
+});
+
+test("quick-start seed digest is stable across isolated generated IDs", async () => {
+  const seed = async (suffix: string) => {
+    const title = "Review API";
+    const registries = createHighlightRegistries({
+      apiClient: {
+        async createTask() {
+          return {
+            id: `task-${suffix}`,
+            title,
+            workflow_step_id: `step-${suffix}`,
+          };
+        },
+        async getTask(taskId: string) {
+          return {
+            id: taskId,
+            title,
+            workflow_step_id: `step-${suffix}`,
+            state: "BACKLOG",
+          };
+        },
+        async listTasks() {
+          return {
+            tasks: [
+              {
+                id: `task-${suffix}`,
+                title,
+                workflow_step_id: `step-${suffix}`,
+              },
+            ],
+          };
+        },
+      },
+      seedData: {
+        workspaceId: `workspace-${suffix}`,
+        workflowId: `workflow-${suffix}`,
+        startStepId: `step-${suffix}`,
+      },
+      backend: { frontendUrl: "http://127.0.0.1:18080", port: 18080 },
+    });
+    return registries.seedRegistry["kandev.highlight.quick-start"]({ parameters: {} });
+  };
+
+  const first = await seed("one");
+  const second = await seed("two");
+  assert.equal(first.seedDigest, second.seedDigest);
+  assert.notEqual(first.invariants.workspaceId, second.invariants.workspaceId);
+  assert.notEqual(first.invariants.taskId, second.invariants.taskId);
+  assert.doesNotMatch(JSON.stringify(first), /fixture|\bE2E\b|mock/i);
+});
+
+test("registry metadata exactly matches the closed Node runtime catalog", async () => {
+  const { resolveHighlightRuntime } =
+    await import("../../../../scripts/highlights/runtime-catalog.mjs");
+  const catalog = resolveHighlightRuntime("kandev-isolated-e2e");
+
+  assert.deepEqual(HIGHLIGHT_RUNTIME_BINDING_METADATA, {
+    runtimeId: catalog.id,
+    profiles: catalog.profiles,
+    seedRecipes: catalog.seedRecipes,
+    routes: catalog.routes,
+    primitiveIds: catalog.primitiveIds,
+    scannerCoverage: catalog.scannerCoverage,
+    scenarioTemplate: catalog.scenarioTemplate,
   });
 });
 

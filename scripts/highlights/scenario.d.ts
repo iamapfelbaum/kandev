@@ -137,13 +137,16 @@ export interface ScenarioOptions { allowedExtensionIds?: Iterable<string>; fileP
 export const SCENARIO_SCHEMA_VERSION: 1;
 export const SCENARIO_SCHEMA_ID: string;
 export const MAX_STORY_DURATION_MS: number;
+export type ScenarioTemplateId = "quick-start";
+export const SCENARIO_TEMPLATE_IDS: readonly ScenarioTemplateId[];
 export function validateScenario(scenario: unknown, options?: ScenarioOptions): ScenarioValidationResult;
 export function assertValidScenario(scenario: unknown, options?: ScenarioOptions): HighlightScenarioV1;
 export function readScenario(filePath: string, options?: ScenarioOptions): Promise<HighlightScenarioV1>;
+export function readScenarioTemplate(templateId: ScenarioTemplateId): Promise<HighlightScenarioV1>;
 export function canonicalScenarioJson(scenario: HighlightScenarioV1, options?: ScenarioOptions): string;
 export function computeScenarioDigest(scenario: HighlightScenarioV1, options?: ScenarioOptions): string;
 export function requireDeliveryMetadata(scenario: HighlightScenarioV1, options?: ScenarioOptions): RequiredDeliveryMetadata;
 export function compileTimeline(scenario: HighlightScenarioV1, options?: ScenarioOptions): object;
 export function renderStoryboard(timeline: object, options?: { format?: "json" | "markdown" }): string;
 export function createScenarioScaffold(options: { id: string; title?: string; profileKind?: "desktop" | "native-mobile" }): HighlightScenarioV1;
-export function writeScenarioScaffold(options: { destination: string; id: string; title?: string; profileKind?: "desktop" | "native-mobile"; dryRun?: boolean }): Promise<{ destination: string; dryRun: boolean; scenario: HighlightScenarioV1; contents: string }>;
+export function writeScenarioScaffold(options: { destination: string; id?: string; title?: string; profileKind?: "desktop" | "native-mobile"; templateId?: ScenarioTemplateId; dryRun?: boolean }): Promise<{ destination: string; dryRun: boolean; scenario: HighlightScenarioV1; contents: string }>;

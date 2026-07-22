@@ -1,9 +1,9 @@
 {
-  "$schema": "../scenario.schema.json",
+  "$schema": "https://kandev.com/schemas/highlight-scenario-v1.json",
   "schemaVersion": 1,
   "id": "quick-start",
   "title": "Quick start",
-  "description": "Show a deterministic task creation interaction.",
+  "description": "Open the task composer from a deterministic seeded board.",
   "profile": {
     "kind": "desktop",
     "viewport": {
@@ -13,10 +13,8 @@
     "deviceScaleFactor": 2
   },
   "seed": {
-    "recipe": "kandev.empty-workspace",
-    "parameters": {
-      "workspaceName": "Highlight demo"
-    }
+    "recipe": "kandev.highlight.quick-start",
+    "parameters": {}
   },
   "setup": {
     "route": "workspace.board",
@@ -27,59 +25,51 @@
     "openingSettleMs": 600,
     "actions": [
       {
-        "kind": "moveCursor",
+        "kind": "waitForVisible",
         "target": {
-          "role": "button",
-          "name": "New task"
+          "testId": "create-task-button"
         },
-        "durationMs": 350
+        "timeoutMs": 5000,
+        "label": "Board controls are ready"
       },
       {
         "kind": "click",
         "target": {
-          "role": "button",
-          "name": "New task"
+          "testId": "create-task-button"
         },
-        "settleMs": 200
+        "cursorDurationMs": 420,
+        "settleMs": 200,
+        "label": "Open task composer"
       },
       {
         "kind": "waitForVisible",
         "target": {
-          "role": "dialog",
-          "name": "Create task"
+          "testId": "create-task-dialog"
         },
-        "timeoutMs": 1200
-      },
-      {
-        "kind": "type",
-        "target": {
-          "testId": "task-title"
-        },
-        "text": "Review API",
-        "keystrokeDelayMs": 35
-      },
-      {
-        "kind": "press",
-        "target": {
-          "testId": "task-title"
-        },
-        "key": "Enter",
-        "settleMs": 250
-      },
-      {
-        "kind": "waitForVisible",
-        "target": {
-          "role": "heading",
-          "name": "Review API"
-        },
-        "timeoutMs": 1200
+        "timeoutMs": 5000,
+        "label": "Task composer is open"
       },
       {
         "kind": "pause",
-        "durationMs": 500,
-        "label": "Show created task"
+        "durationMs": 400,
+        "label": "Hold readable result"
       }
     ],
     "endingSettleMs": 700
+  },
+  "delivery": {
+    "revision": "r1",
+    "releaseVersion": "0.81.0",
+    "summary": "Create focused work directly from the board.",
+    "caption": "Open the task composer from a deterministic seeded board.",
+    "featureFlags": [
+      "features.highlights"
+    ],
+    "docs": {
+      "page": "tasks-and-workflows.md",
+      "section": "Create a task"
+    },
+    "mobileDeclaration": "This quick-start template stages a desktop delivery; no native-mobile review is required.",
+    "mobileRequired": false
   }
 }
