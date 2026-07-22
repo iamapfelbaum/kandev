@@ -118,6 +118,11 @@ test("plans an external collision-free desktop runtime at native source dimensio
         argument.includes("WebTransport"),
     ),
   );
+  assert.ok(
+    plan.chromium.args.includes(
+      "--disable-blink-features=DirectSockets,WebTransport",
+    ),
+  );
   assert.deepEqual(plan.chromiumNetworkPolicy, {
     contract: "kandev-highlight-chromium-network-policy-v1",
     version: 1,
@@ -128,6 +133,7 @@ test("plans an external collision-free desktop runtime at native source dimensio
       "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
       "--webrtc-ip-handling-policy=disable_non_proxied_udp",
       "--disable-quic",
+      "--disable-blink-features=DirectSockets,WebTransport",
     ],
   });
   assert.equal(plan.chromium.env.DISPLAY, ":261.0");
@@ -239,6 +245,22 @@ test("runtime rejects Chromium argv drift from the recorded network policy befor
     {
       label: "disabled-feature override",
       apply: (args) => [...args, "--disable-features="],
+    },
+    {
+      label: "missing Blink transport switch",
+      apply: (args) =>
+        args.filter(
+          (argument) =>
+            argument !==
+            "--disable-blink-features=DirectSockets,WebTransport",
+        ),
+    },
+    {
+      label: "Blink transport override",
+      apply: (args) => [
+        ...args,
+        "--enable-blink-features=DirectSockets,WebTransport",
+      ],
     },
     {
       label: "WebRTC override",

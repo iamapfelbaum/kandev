@@ -27,6 +27,7 @@ const CHROMIUM_NETWORK_POLICY = Object.freeze({
     "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
     "--webrtc-ip-handling-policy=disable_non_proxied_udp",
     "--disable-quic",
+    "--disable-blink-features=DirectSockets,WebTransport",
   ]),
 });
 
@@ -84,9 +85,21 @@ export function chromiumNetworkCommandEvidence(
       argument.slice("--disable-features=".length).split(","),
     ),
   );
+  const disabledBlinkFeatureArguments = command.args.filter((argument) =>
+    argument.startsWith("--disable-blink-features="),
+  );
+  const disabledBlinkFeatures = new Set(
+    disabledBlinkFeatureArguments.flatMap((argument) =>
+      argument.slice("--disable-blink-features=".length).split(","),
+    ),
+  );
   if (
     disabledFeatureArguments.length !== 1 ||
     policy.disabledFeatures.some((feature) => !disabledFeatures.has(feature)) ||
+    disabledBlinkFeatureArguments.length !== 1 ||
+    policy.disabledFeatures.some(
+      (feature) => !disabledBlinkFeatures.has(feature),
+    ) ||
     command.args.some(
       (argument) =>
         argument === "--enable-quic" ||
@@ -96,6 +109,11 @@ export function chromiumNetworkCommandEvidence(
         (argument.startsWith("--enable-features=") &&
           argument
             .slice("--enable-features=".length)
+            .split(",")
+            .some((feature) => policy.disabledFeatures.includes(feature))) ||
+        (argument.startsWith("--enable-blink-features=") &&
+          argument
+            .slice("--enable-blink-features=".length)
             .split(",")
             .some((feature) => policy.disabledFeatures.includes(feature))) ||
         (argument.startsWith("--webrtc-ip-handling-policy") &&
