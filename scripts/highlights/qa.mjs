@@ -2,6 +2,12 @@ import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
+import {
+  defaultSensitiveScanner,
+  getTrustedSensitiveScannerCoverage,
+  validateSensitiveScanResult,
+} from "./sensitive-scan.mjs";
+
 function ratio(value, label) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   const match = /^(\d+)(?:\/(\d+))?$/.exec(String(value ?? ""));
@@ -526,18 +532,6 @@ export function buildQaCommands({ inputPath, qaOutputDir, fps = 25, frameCount }
   };
 }
 
-async function defaultSensitiveScanner({ scenario, camera }) {
-  const text = JSON.stringify({ scenario, camera });
-  const patterns = [
-    ["private-key", /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i],
-    ["access-token", /\b(?:ghp|github_pat|sk)-[A-Za-z0-9_-]{16,}\b/],
-    ["host-home", /\/(?:home|Users)\/[A-Za-z0-9._-]+\//],
-    ["localhost", /\b(?:localhost|127\.0\.0\.1)(?::\d+)?\b/i],
-  ];
-  const findings = patterns.filter(([, expression]) => expression.test(text)).map(([id]) => ({ id }));
-  return { passed: findings.length === 0, findings };
-}
-
 async function runCommand(runner, command) {
   const [executable, ...args] = command;
   const result = await runner(executable, args);
@@ -588,6 +582,8 @@ export async function runQualityAssurance({
   sensitiveScanner = defaultSensitiveScanner,
   cameraAuditor,
   qaOutputDir,
+  captureEvidence,
+  runtimeEvidence,
 } = {}) {
   if (!scenario || typeof scenario !== "object") throw new Error("QA needs scenario");
   if (!Array.isArray(artifacts) || artifacts.length === 0) throw new Error("QA needs delivery artifacts");
@@ -595,6 +591,10 @@ export async function runQualityAssurance({
   if (typeof readFile !== "function") throw new Error("QA needs artifact byte reader");
   if (typeof browserPlayback !== "function") throw new Error("QA needs injected browser playback hook");
   if (typeof sensitiveScanner !== "function") throw new Error("QA sensitive scanner must be a function");
+  const declaredSensitiveCoverage = getTrustedSensitiveScannerCoverage(sensitiveScanner);
+  if (!declaredSensitiveCoverage) {
+    throw new Error("QA sensitive scanner must come from the trusted sensitive-scanner builder");
+  }
   const resolvedQaDir = path.resolve(qaOutputDir ?? path.join(path.dirname(artifacts[0].path), "qa"));
   if (qaOutputDir) await mkdir(resolvedQaDir, { recursive: true });
   const artifactReports = [];
@@ -653,7 +653,27 @@ export async function runQualityAssurance({
   const landingAudit = typeof cameraAuditor === "function" ? cameraAuditor(camera) : camera?.motionAudit;
   const motion = auditCameraMotion({ camera, landingAudit });
   const containment = auditContainment({ camera, pointerTrack, targetIntervals });
-  const sensitiveData = await sensitiveScanner({ scenario, camera, artifacts: artifactReports });
+  const generatedProofEvidence = artifactReports.flatMap((artifact) => (
+    artifact.proofs?.skipped
+      ? []
+      : [{
+        artifactPath: artifact.path,
+        kind: artifact.kind,
+        keyframes: artifact.proofs.keyframes,
+        contactSheet: artifact.proofs.contactSheet,
+      }]
+  ));
+  const sensitiveData = validateSensitiveScanResult(
+    await sensitiveScanner({
+      scenario,
+      camera,
+      artifacts: artifactReports,
+      generatedProofEvidence,
+      captureEvidence,
+      runtimeEvidence,
+    }),
+    { expectedCoverage: declaredSensitiveCoverage },
+  );
   if (!sensitiveData?.passed) throw new Error(`sensitive-data scan failed: ${JSON.stringify(sensitiveData.findings ?? [])}`);
   const browser = await browserPlayback({ scenario, artifacts: artifactReports });
   if (!browser?.passed) throw new Error("browser playback QA failed");

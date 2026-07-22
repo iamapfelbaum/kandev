@@ -3,6 +3,8 @@ import { readFile as readDiskFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
+import * as sensitiveScan from "./sensitive-scan.mjs";
+
 import {
   auditCameraMotion,
   auditContainment,
@@ -231,6 +233,16 @@ test("automatic QA runs probe, full decode, cadence, proofs, hooks, hashes, and 
   };
   let browserCalls = 0;
   let scannerCalls = 0;
+  let scannerInput;
+  const sensitiveScanner = typeof sensitiveScan.createTrustedSensitiveScanner === "function"
+    ? sensitiveScan.createTrustedSensitiveScanner({
+      scan: async (hookInput) => {
+        scannerCalls += 1;
+        scannerInput = hookInput;
+        return [];
+      },
+    })
+    : null;
   const input = {
     scenario: { schemaVersion: 1, id: "qa-story", title: "Safe story", story: { actions: [] } },
     artifacts: [{ path: "/stage/qa-story.mp4", expected }],
@@ -253,8 +265,11 @@ test("automatic QA runs probe, full decode, cadence, proofs, hooks, hashes, and 
     runner,
     readFile: async () => mediaBytes,
     browserPlayback: async ({ artifacts }) => { browserCalls += 1; return { passed: artifacts.length === 1 }; },
-    sensitiveScanner: async () => { scannerCalls += 1; return { passed: true, findings: [] }; },
+    sensitiveScanner,
+    captureEvidence: { visibleDomText: ["Safe story"], browserConsole: [] },
+    runtimeEvidence: { logs: [] },
   };
+  assert.equal(typeof sensitiveScanner, "function");
   const first = await runQualityAssurance(input);
   const second = await runQualityAssurance(input);
 
@@ -265,6 +280,10 @@ test("automatic QA runs probe, full decode, cadence, proofs, hooks, hashes, and 
   assert.equal(first.artifacts[0].faststart.passed, true);
   assert.equal(browserCalls, 2);
   assert.equal(scannerCalls, 2);
+  assert.deepEqual(scannerInput.captureEvidence, input.captureEvidence);
+  assert.deepEqual(scannerInput.runtimeEvidence, input.runtimeEvidence);
+  assert.equal(scannerInput.generatedProofEvidence[0].keyframes.length, 7);
+  assert.match(scannerInput.generatedProofEvidence[0].contactSheet.sha256, /^[a-f0-9]{64}$/);
   assert.ok(calls.some((call) => call[0] === "ffmpeg" && call.includes("-f") && call.includes("null")));
   assert.ok(calls.some((call) => call[0] === "ffmpeg" && call.some((arg) => String(arg).includes("select="))));
   assert.ok(calls.some((call) => call[0] === "ffmpeg" && call.some((arg) => String(arg).includes("tile="))));
@@ -429,4 +448,56 @@ test("QA rejects successful FFmpeg commands when a proof output is missing", asy
     },
     browserPlayback: async () => ({ passed: true }),
   }), /proof output.*missing/i);
+});
+
+test("QA rejects a scanner outside the trusted coverage builder", async () => {
+  const mediaPath = "/stage/overclaimed.mp4";
+  const mediaBytes = Buffer.concat([
+    Buffer.from("0000ftyp0000moov0000mdat"),
+    Buffer.alloc(4072),
+  ]);
+  const runner = async (command, args) => {
+    if (command === "ffprobe" && args.some((value) => String(value).includes("stream=index"))) {
+      return { stdout: JSON.stringify(probe), stderr: "", exitCode: 0 };
+    }
+    if (command === "ffprobe") {
+      return {
+        stdout: Array.from({ length: 100 }, (_, index) => `${index * 512},${(index / 25).toFixed(2)}`).join("\n"),
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    return { stdout: "", stderr: "", exitCode: 0 };
+  };
+  let scannerInput;
+
+  await assert.rejects(runQualityAssurance({
+    scenario: { schemaVersion: 1, id: "overclaim", title: "Overclaim", story: { actions: [] } },
+    artifacts: [{ path: mediaPath, expected }],
+    camera: settledCamera(),
+    runner,
+    readFile: async (filePath) => {
+      if (filePath === mediaPath) return mediaBytes;
+      if (filePath.includes("/qa/") && filePath.endsWith(".png")) return Buffer.from(`proof:${path.basename(filePath)}`);
+      throw Object.assign(new Error(`ENOENT: ${filePath}`), { code: "ENOENT" });
+    },
+    browserPlayback: async () => ({ passed: true }),
+    sensitiveScanner: async (input) => {
+      scannerInput = input;
+      return {
+        contract: "kandev-highlight-sensitive-scan-v1",
+        passed: true,
+        coverage: {
+          metadata: true,
+          visibleDomText: false,
+          browserConsole: false,
+          runtimeLogs: false,
+          renderedPixelOcr: true,
+        },
+        findings: [],
+      };
+    },
+  }), /trusted sensitive-scanner builder/i);
+
+  assert.equal(scannerInput, undefined);
 });
