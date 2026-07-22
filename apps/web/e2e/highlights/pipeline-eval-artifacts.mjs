@@ -243,6 +243,7 @@ function normalizedRun(files, timeline, selectedFrames) {
       selectedStoryTimesMs: selectedFrames.map((frame) => frame.storyTimeMs),
     },
     selectedFrames,
+    renderedArtifacts: files.qa.value.artifacts,
   });
 }
 

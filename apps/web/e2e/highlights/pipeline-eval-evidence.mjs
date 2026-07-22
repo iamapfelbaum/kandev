@@ -67,6 +67,33 @@ function normalizeFrameTiming(frameTiming = {}) {
   return stableObject(normalized);
 }
 
+function normalizeFileIdentity(record = {}) {
+  const identity = {
+    bytes: record.bytes,
+    sha256: record.sha256,
+  };
+  if (Number.isInteger(record.frame)) identity.frame = record.frame;
+  return identity;
+}
+
+function normalizeRenderedArtifacts(artifacts = []) {
+  return [...artifacts]
+    .sort((left, right) => String(left?.kind).localeCompare(String(right?.kind)))
+    .map((artifact) => ({
+      kind: artifact.kind,
+      ...normalizeFileIdentity(artifact),
+      proofs: artifact.proofs?.skipped
+        ? {
+            skipped: true,
+            reason: artifact.proofs.reason,
+          }
+        : {
+            keyframes: (artifact.proofs?.keyframes ?? []).map(normalizeFileIdentity),
+            contactSheet: normalizeFileIdentity(artifact.proofs?.contactSheet),
+          },
+    }));
+}
+
 export function normalizeDeterminismEvidence(evidence = {}) {
   const cameraPlan = structuredClone(evidence.camera?.plan ?? {});
   delete cameraPlan.pointerTrack;
@@ -88,6 +115,7 @@ export function normalizeDeterminismEvidence(evidence = {}) {
       storyTimeMs: frame.storyTimeMs,
       sha256: frame.sha256,
     })),
+    renderedArtifacts: normalizeRenderedArtifacts(evidence.renderedArtifacts),
   };
 }
 

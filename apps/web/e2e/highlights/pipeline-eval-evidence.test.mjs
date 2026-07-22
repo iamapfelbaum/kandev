@@ -258,6 +258,75 @@ test("determinism assertion reports first semantic or decoded-frame mismatch", (
   );
 });
 
+test("determinism normalization retains delivery and QA proof hashes", () => {
+  const evidence = {
+    renderedArtifacts: [
+      {
+        kind: "mp4",
+        path: "/run-1/render/quick-start.mp4",
+        bytes: 12_345,
+        sha256: "1".repeat(64),
+        proofs: {
+          keyframes: [
+            {
+              frame: 0,
+              path: "/run-1/qa/mp4-keyframe-01.png",
+              bytes: 321,
+              sha256: "2".repeat(64),
+            },
+          ],
+          contactSheet: {
+            path: "/run-1/qa/mp4-contact-sheet.png",
+            bytes: 654,
+            sha256: "3".repeat(64),
+          },
+        },
+      },
+      {
+        kind: "poster",
+        path: "/run-1/render/quick-start.webp",
+        bytes: 4_321,
+        sha256: "4".repeat(64),
+        proofs: { skipped: true, reason: "still-image" },
+      },
+    ],
+  };
+  const relocated = structuredClone(evidence);
+  relocated.renderedArtifacts[0].path = "/run-2/render/quick-start.mp4";
+  relocated.renderedArtifacts[0].proofs.keyframes[0].path = "/run-2/qa/mp4-keyframe-01.png";
+  relocated.renderedArtifacts[0].proofs.contactSheet.path = "/run-2/qa/mp4-contact-sheet.png";
+  relocated.renderedArtifacts[1].path = "/run-2/render/quick-start.webp";
+
+  const normalized = normalizeDeterminismEvidence(evidence);
+  assert.deepEqual(normalized, normalizeDeterminismEvidence(relocated));
+  assert.deepEqual(
+    normalized.renderedArtifacts.map(({ kind, bytes, sha256 }) => ({
+      kind,
+      bytes,
+      sha256,
+    })),
+    [
+      { kind: "mp4", bytes: 12_345, sha256: "1".repeat(64) },
+      { kind: "poster", bytes: 4_321, sha256: "4".repeat(64) },
+    ],
+  );
+  assert.equal(JSON.stringify(normalized).includes("/run-"), false);
+
+  const deliveryMismatch = structuredClone(normalized);
+  deliveryMismatch.renderedArtifacts[0].sha256 = "5".repeat(64);
+  assert.throws(
+    () => assertDeterministicRuns(normalized, deliveryMismatch),
+    /renderedArtifacts\[0\]\.sha256/i,
+  );
+
+  const proofMismatch = structuredClone(normalized);
+  proofMismatch.renderedArtifacts[0].proofs.contactSheet.sha256 = "6".repeat(64);
+  assert.throws(
+    () => assertDeterministicRuns(normalized, proofMismatch),
+    /renderedArtifacts\[0\]\.proofs\.contactSheet\.sha256/i,
+  );
+});
+
 test("pointer projection compares planned trajectory timing, not browser clock jitter", () => {
   const execution = {
     storyDurationMs: 3_000,
