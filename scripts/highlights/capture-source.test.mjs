@@ -186,6 +186,13 @@ test("builds silent no-overwrite 25fps native X11 capture commands", () => {
       joined,
       new RegExp(`-video_size ${profile.sourceWidth}x${profile.sourceHeight}`),
     );
+    const inputQueueIndex = plan.args.indexOf("-thread_queue_size");
+    assert.notEqual(inputQueueIndex, -1, "X11 capture needs a bounded input queue");
+    assert.deepEqual(plan.args.slice(inputQueueIndex, inputQueueIndex + 3), [
+      "-thread_queue_size",
+      "16",
+      "-i",
+    ]);
     assert.match(joined, /-i :261\.0\+0,0/);
     assert.match(joined, /-an/);
     assert.match(joined, /-c:v libx264/);

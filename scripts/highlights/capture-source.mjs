@@ -45,6 +45,7 @@ const WEB_ROOT = path.join(REPOSITORY_ROOT, "apps", "web");
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SOURCE_SHA_PATTERN = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 const TRUSTED_CAPTURE_BUILD_VERIFIERS = new WeakMap();
+const CAPTURE_INPUT_QUEUE_FRAMES = 16;
 const CAPTURE_CONTENT_BOUNDS = Object.freeze({
   maxVisibleDomTextRecords: 512,
   maxVisibleDomTextBytes: 65_536,
@@ -161,6 +162,8 @@ export function buildFfmpegCapturePlan({
     String(captureProfile.fps),
     "-video_size",
     `${captureProfile.sourceWidth}x${captureProfile.sourceHeight}`,
+    "-thread_queue_size",
+    String(CAPTURE_INPUT_QUEUE_FRAMES),
     "-i",
     `${runtime.display}+0,0`,
     "-an",
