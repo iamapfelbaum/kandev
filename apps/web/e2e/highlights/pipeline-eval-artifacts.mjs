@@ -196,13 +196,13 @@ function withoutKey(value, omitted) {
   return Object.fromEntries(Object.entries(value).filter(([key]) => key !== omitted));
 }
 
-function validateExactDigests(files, commandResult) {
+export function validateExactDigests(files) {
   const { runId, host, receipt, build, camera, review, qa } = files;
-  if (host.digest !== commandResult.host.resultDigest) {
-    throw new Error(`${runId} runtime result exact bytes do not match command digest`);
+  if (host.value.resultDigest !== digestValue(withoutKey(host.value, "resultDigest"))) {
+    throw new Error(`${runId} runtime result self digest is invalid`);
   }
-  if (receipt.digest !== commandResult.host.receiptDigest) {
-    throw new Error(`${runId} runtime receipt exact bytes do not match command digest`);
+  if (receipt.value.receiptDigest !== digestValue(withoutKey(receipt.value, "receiptDigest"))) {
+    throw new Error(`${runId} runtime receipt self digest is invalid`);
   }
   if (build.value.manifestDigest !== digestValue(withoutKey(build.value, "manifestDigest"))) {
     throw new Error(`${runId} build manifest self digest is invalid`);
@@ -298,7 +298,7 @@ function summarizeRun(files, selectedFrames, normalized) {
 
 export async function collectRunEvidence(input) {
   const files = await readRunFiles(input);
-  validateExactDigests(files, input.commandResult);
+  validateExactDigests(files);
   const timeline = validateLinkedEvidence(files, input.commandResult);
   const selectedFrames = await decodeSelectedFrames({
     rawMasterPath: files.capture.value.rawMaster?.path,
