@@ -6,6 +6,7 @@ import path from "node:path";
 const SAFE_RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const WORKER_PREFIX = "worker-";
 const LEASE_NAME = "runtime-temp.lease.json";
+const CHROMIUM_TEMP_DIRECTORY = /^org\.chromium\.Chromium\.[A-Za-z0-9]{6}$/;
 const MAX_LEASE_BYTES = 16 * 1024;
 const CHROMIUM_SINGLETON_SUFFIX = path.join(
   "org.chromium.Chromium.XXXXXX",
@@ -847,6 +848,69 @@ async function openAnchoredDirectory(directoryPath, expectedIdentity, label) {
   }
 }
 
+function retainedEntriesError(entries) {
+  return new Error(
+    `refusing cleanup: runtime worker temp root has retained entries (${entries.filter((entry) => entry !== LEASE_NAME).join(", ") || "lease mismatch"})`,
+  );
+}
+
+async function removeEmptyChromiumTempDirectories(root, entries) {
+  if (!entries.includes(LEASE_NAME)) throw retainedEntriesError(entries);
+  const anchoredRoot = anchoredDirectoryPath(root.handle);
+  const candidates = [];
+  for (const entry of entries) {
+    if (entry === LEASE_NAME) continue;
+    if (!CHROMIUM_TEMP_DIRECTORY.test(entry)) {
+      throw retainedEntriesError(entries);
+    }
+    const entryPath = path.join(anchoredRoot, entry);
+    const entryStat = await fs.lstat(entryPath);
+    if (
+      !entryStat.isDirectory() ||
+      entryStat.isSymbolicLink() ||
+      entryStat.uid !== root.stat.uid ||
+      (entryStat.mode & 0o077) !== 0
+    ) {
+      throw retainedEntriesError(entries);
+    }
+    const candidate = await openAnchoredDirectory(
+      entryPath,
+      statIdentity(entryStat),
+      "Chromium runtime temp directory",
+    );
+    try {
+      if ((await fs.readdir(anchoredDirectoryPath(candidate.handle))).length) {
+        throw retainedEntriesError(entries);
+      }
+      candidates.push({ entryPath, identity: statIdentity(candidate.stat) });
+    } finally {
+      await candidate.handle.close().catch(() => {});
+    }
+  }
+
+  for (const candidate of candidates) {
+    const directory = await openAnchoredDirectory(
+      candidate.entryPath,
+      candidate.identity,
+      "Chromium runtime temp directory",
+    );
+    try {
+      if ((await fs.readdir(anchoredDirectoryPath(directory.handle))).length) {
+        throw retainedEntriesError(entries);
+      }
+      const current = await fs.lstat(candidate.entryPath);
+      if (!sameIdentity(statIdentity(current), candidate.identity)) {
+        throw new Error(
+          "Chromium runtime temp directory changed before cleanup (possible tamper)",
+        );
+      }
+      await fs.rmdir(candidate.entryPath);
+    } finally {
+      await directory.handle.close().catch(() => {});
+    }
+  }
+}
+
 async function removeVerifiedLeaseTree(lease, options = {}) {
   const root = await openAnchoredDirectory(
     lease.workerTempRoot,
@@ -874,10 +938,12 @@ async function removeVerifiedLeaseTree(lease, options = {}) {
     const entries = (
       await fs.readdir(anchoredDirectoryPath(root.handle))
     ).sort();
-    if (entries.length !== 1 || entries[0] !== LEASE_NAME) {
-      throw new Error(
-        `refusing cleanup: runtime worker temp root has retained entries (${entries.filter((entry) => entry !== LEASE_NAME).join(", ") || "lease mismatch"})`,
-      );
+    await removeEmptyChromiumTempDirectories(root, entries);
+    const retained = (
+      await fs.readdir(anchoredDirectoryPath(root.handle))
+    ).sort();
+    if (retained.length !== 1 || retained[0] !== LEASE_NAME) {
+      throw retainedEntriesError(retained);
     }
     const anchoredLeasePath = path.join(
       anchoredDirectoryPath(root.handle),

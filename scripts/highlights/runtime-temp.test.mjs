@@ -182,6 +182,84 @@ test("cleanup refuses a non-empty worker temp instead of traversing it", async (
   assert.equal((await fs.lstat(lease.workerTempRoot)).isDirectory(), true);
 });
 
+test("cleanup removes an empty private Chromium singleton directory", async (t) => {
+  const value = await fixture(t);
+  const lease = await reserveRuntimeWorkerTemp({
+    namespace: value.namespace,
+    runId: "chromium-empty",
+    artifactRoot: path.join(value.root, "artifacts"),
+  });
+  await fs.mkdir(
+    path.join(lease.workerTempRoot, "org.chromium.Chromium.aB3dE6"),
+    { mode: 0o700 },
+  );
+
+  const release = await releaseRuntimeWorkerTemp(lease);
+
+  assert.equal(release.removed, true);
+  await assert.rejects(fs.lstat(lease.workerTempRoot), { code: "ENOENT" });
+});
+
+test("cleanup refuses an unknown empty runtime-temp directory", async (t) => {
+  const value = await fixture(t);
+  const lease = await reserveRuntimeWorkerTemp({
+    namespace: value.namespace,
+    runId: "unknown-empty",
+    artifactRoot: path.join(value.root, "artifacts"),
+  });
+  const unknown = path.join(lease.workerTempRoot, "playwright-cache");
+  await fs.mkdir(unknown);
+
+  await assert.rejects(
+    releaseRuntimeWorkerTemp(lease),
+    /retained entries|refusing.*cleanup/i,
+  );
+  assert.equal((await fs.lstat(unknown)).isDirectory(), true);
+});
+
+test("cleanup refuses a Chromium-shaped symlink without touching its target", async (t) => {
+  const value = await fixture(t);
+  const lease = await reserveRuntimeWorkerTemp({
+    namespace: value.namespace,
+    runId: "chromium-symlink",
+    artifactRoot: path.join(value.root, "artifacts"),
+  });
+  const target = path.join(value.root, "chromium-target");
+  await fs.mkdir(target);
+  await fs.symlink(
+    target,
+    path.join(lease.workerTempRoot, "org.chromium.Chromium.Z9y8X7"),
+  );
+
+  await assert.rejects(
+    releaseRuntimeWorkerTemp(lease),
+    /retained entries|refusing.*cleanup/i,
+  );
+  assert.equal((await fs.lstat(target)).isDirectory(), true);
+});
+
+test("cleanup refuses a non-empty Chromium singleton directory", async (t) => {
+  const value = await fixture(t);
+  const lease = await reserveRuntimeWorkerTemp({
+    namespace: value.namespace,
+    runId: "chromium-nonempty",
+    artifactRoot: path.join(value.root, "artifacts"),
+  });
+  const chromiumTemp = path.join(
+    lease.workerTempRoot,
+    "org.chromium.Chromium.Q1w2E3",
+  );
+  await fs.mkdir(chromiumTemp, { mode: 0o700 });
+  const sentinel = path.join(chromiumTemp, "SingletonSocket");
+  await fs.writeFile(sentinel, "unexpected\n");
+
+  await assert.rejects(
+    releaseRuntimeWorkerTemp(lease),
+    /retained entries|refusing.*cleanup/i,
+  );
+  assert.equal(await fs.readFile(sentinel, "utf8"), "unexpected\n");
+});
+
 test("cleanup preserves an opened worker root renamed outside its namespace", async (t) => {
   const value = await fixture(t);
   const lease = await reserveRuntimeWorkerTemp({
