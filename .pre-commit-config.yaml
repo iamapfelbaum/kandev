@@ -18,6 +18,13 @@ repos:
         language: system
         pass_filenames: true
 
+      - id: highlight-eval-lint
+        name: Highlight eval and sandbox strict lint
+        entry: bash -c 'cd apps/web && pnpm run lint:highlight-eval'
+        language: system
+        files: ^(?:\.pre-commit-config\.yaml|apps/web/(?:package\.json|eslint\.config\.mjs|e2e/highlights/(?:run-pipeline-integration|pipeline-eval).*\.mjs)|scripts/highlights/(?:chromium-sandbox|capture-origin-isolation).*\.mjs)$
+        pass_filenames: false
+
   # Backend (Go) hooks
   - repo: local
     hooks:

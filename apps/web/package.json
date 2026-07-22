@@ -10,6 +10,7 @@
     "build:vite": "vite build",
     "start": "vite preview --host 0.0.0.0",
     "lint": "eslint --max-warnings 0",
+    "lint:highlight-eval": "cd ../.. && apps/web/node_modules/.bin/eslint --config apps/web/eslint.config.mjs --no-ignore --no-inline-config --max-warnings 0 apps/web/e2e/highlights/run-pipeline-integration*.mjs apps/web/e2e/highlights/pipeline-eval*.mjs scripts/highlights/chromium-sandbox*.mjs scripts/highlights/capture-origin-isolation*.mjs",
     "pretypecheck": "node scripts/generate-release-notes.mjs && node scripts/generate-changelog.mjs",
     "typecheck": "tsc --noEmit",
     "pretest": "node scripts/generate-release-notes.mjs && node scripts/generate-changelog.mjs",
