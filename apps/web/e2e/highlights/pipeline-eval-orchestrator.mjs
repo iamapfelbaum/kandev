@@ -8,7 +8,7 @@ import { assertDeterministicRuns } from "./pipeline-eval-evidence.mjs";
 import {
   assertRepositoryStateUnchanged,
   captureRepositoryState,
-  commitScenarioAndBindCurrentMain,
+  commitScenarioAsPrHead,
   installFrozenOfflineDependencies,
   snapshotCommittedRepository,
   verifyFrozenOfflineDependencies,
@@ -30,6 +30,7 @@ export const DEFAULT_REPO_ROOT = path.resolve(DEFAULT_WEB_ROOT, "../..");
 export const DEFAULT_LANDING_ROOT = path.resolve(DEFAULT_REPO_ROOT, "..", "landing");
 const QUICK_START_ID = "quick-start";
 const TRUSTED_SOURCE_KEY = "KANDEV_HIGHLIGHT_TRUSTED_SOURCE_SHA";
+const SYNTHETIC_EVAL_PR_NUMBER = 2_147_483_647;
 const GIT_OBJECT_PATTERN = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 
 export function clearInheritedTrustedSource(inheritedEnvironment) {
@@ -38,27 +39,22 @@ export function clearInheritedTrustedSource(inheritedEnvironment) {
   return environment;
 }
 
-export function authorizeTrustedSource(environment, currentMain) {
-  const trustedSourceSha = currentMain?.evalHead;
-  if (!GIT_OBJECT_PATTERN.test(trustedSourceSha ?? "")) {
-    throw new Error("trusted source authorization requires an exact lowercase Git object ID");
-  }
-  environment[TRUSTED_SOURCE_KEY] = trustedSourceSha;
-  return {
-    selector: "auto",
-    trustedSourceSha,
-    environmentKey: TRUSTED_SOURCE_KEY,
-  };
-}
-
 export function buildPipelineCommandSequence({
   cloneRoot,
   scenarioPath,
   artifactRoot,
   landingRoot,
   reviewPath,
+  prNumber,
+  prBaseSha,
   nodeExecutable = process.execPath,
 } = {}) {
+  if (!Number.isInteger(prNumber) || prNumber < 1) {
+    throw new Error("pipeline eval prNumber must be a positive integer");
+  }
+  if (!GIT_OBJECT_PATTERN.test(prBaseSha ?? "")) {
+    throw new Error("pipeline eval prBaseSha must be an exact Git SHA");
+  }
   const repository = requireAbsolute(cloneRoot, "cloneRoot");
   const scenario = requireAbsolute(scenarioPath, "scenarioPath");
   const artifacts = requireAbsolute(artifactRoot, "artifactRoot");
@@ -78,7 +74,11 @@ export function buildPipelineCommandSequence({
       "--artifact-root",
       artifacts,
       "--source",
-      "current_main",
+      "pr_head",
+      "--pr-number",
+      String(prNumber),
+      "--pr-base-sha",
+      prBaseSha,
       "--landing-root",
       landing,
       "--runtime",
@@ -282,17 +282,21 @@ async function setupEvaluation(input) {
     artifactRoot: context.artifactRoot,
     landingRoot: input.landing,
     reviewPath: context.placeholderReview,
+    prNumber: input.prNumber,
+    prBaseSha: context.snapshot.originMainSha,
   });
   const initial = await invokeInitialCommands(
     { logRoot: context.logRoot, env: context.environment },
     context.commands,
   );
   Object.assign(context, initial);
-  context.currentMain = await commitScenarioAndBindCurrentMain({
+  context.prHead = await commitScenarioAsPrHead({
     cloneRoot: context.cloneRoot,
     scenarioPath: context.scenarioPath,
   });
-  context.securityAuthorization = authorizeTrustedSource(context.environment, context.currentMain);
+  if (context.prHead.prBaseSha !== context.snapshot.originMainSha) {
+    throw new Error("synthetic pr_head base changed while scaffolding eval scenario");
+  }
   context.cloneBoundState = await captureRepositoryState(context.cloneRoot);
   await verifyProductionRepositories(context);
   return context;
@@ -388,6 +392,8 @@ async function executeDryRuns(context) {
     artifactRoot: context.artifactRoot,
     landingRoot: context.landing,
     reviewPath: context.first.reviewPath,
+    prNumber: context.prNumber,
+    prBaseSha: context.prHead.prBaseSha,
   });
   context.recoveryResult = await runRecoveryDryRun(context, commands[5]);
   await runPromotionDryRun(context, commands[6]);
@@ -426,9 +432,11 @@ async function writeEvaluationResult(context) {
       sourceHead: context.snapshot.sourceHead,
       cloneRoot: context.cloneRoot,
       originRoot: context.originRoot,
-      evalHead: context.currentMain.evalHead,
-      currentMainSha: context.currentMain.currentMainSha,
-      originMainSha: context.currentMain.originMainSha,
+      evalHead: context.prHead.evalHead,
+      currentMainSha: context.prHead.currentMainSha,
+      originMainSha: context.prHead.originMainSha,
+      sourceMode: "pr_head",
+      syntheticPrNumber: context.prNumber,
       localOnly: true,
       dependencies: context.dependencyInstall,
       dependencyVerification: context.dependencyVerification,
@@ -455,7 +463,7 @@ async function writeEvaluationResult(context) {
       repositoryUnchanged: true,
     },
     repositoryUnchanged: { source: true, landing: true, snapshot: true },
-    securityAuthorization: context.securityAuthorization,
+    securityBoundary: context.securityBoundary ?? null,
     completedAt: new Date().toISOString(),
   };
   const result = { ...resultBody, resultDigest: digestValue(resultBody) };
@@ -482,6 +490,8 @@ export async function runFreshAgentPipelineEvaluation({
   captureDeadlineMs = DEFAULT_CAPTURE_DEADLINE_MS,
   inheritedEnv = process.env,
   securityEnvironment = {},
+  prNumber = SYNTHETIC_EVAL_PR_NUMBER,
+  securityBoundary = null,
 } = {}) {
   const source = await canonicalDirectory(path.resolve(sourceRoot), "production source repository");
   const landing = await canonicalDirectory(path.resolve(landingRoot), "landing repository");
@@ -502,6 +512,8 @@ export async function runFreshAgentPipelineEvaluation({
           captureDeadlineMs,
           inheritedEnv,
           securityEnvironment,
+          prNumber,
+          securityBoundary,
         },
         markCaptureStarted,
       ),

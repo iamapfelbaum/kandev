@@ -4,14 +4,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import {
-  authorizeTrustedSource,
-  clearInheritedTrustedSource,
-} from "./pipeline-eval-orchestrator.mjs";
+import { clearInheritedTrustedSource } from "./pipeline-eval-orchestrator.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TRUSTED_SOURCE_KEY = "KANDEV_HIGHLIGHT_TRUSTED_SOURCE_SHA";
-const SHA = "a".repeat(40);
 
 test("trusted source input is absent until the exact eval commit exists", () => {
   const inherited = { [TRUSTED_SOURCE_KEY]: "f".repeat(40), SAFE: "kept" };
@@ -20,19 +16,11 @@ test("trusted source input is absent until the exact eval commit exists", () => 
   assert.equal(inherited[TRUSTED_SOURCE_KEY], "f".repeat(40));
 });
 
-test("trusted source authorization overwrites inherited input with exact eval HEAD", () => {
-  const environment = { [TRUSTED_SOURCE_KEY]: "f".repeat(40) };
-  const authorization = authorizeTrustedSource(environment, { evalHead: SHA });
-  assert.equal(environment[TRUSTED_SOURCE_KEY], SHA);
-  assert.deepEqual(authorization, {
-    selector: "auto",
-    trustedSourceSha: SHA,
-    environmentKey: TRUSTED_SOURCE_KEY,
-  });
-  assert.throws(
-    () => authorizeTrustedSource({}, { evalHead: "main" }),
-    /trusted source.*exact.*Git/i,
-  );
+test("eval never creates or defaults trusted source authorization", async () => {
+  const source = await fs.readFile(path.join(HERE, "pipeline-eval-orchestrator.mjs"), "utf8");
+  assert.doesNotMatch(source, /authorizeTrustedSource|environment\[TRUSTED_SOURCE_KEY\]\s*=/);
+  assert.match(source, /clearInheritedTrustedSource/);
+  assert.doesNotMatch(source, /commitScenarioAndBindCurrentMain|--source["'],\s*["']current_main/);
 });
 
 test("orchestrator re-verifies ignored dependencies after both runs and dry-runs", async () => {

@@ -2,11 +2,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { DEFAULT_LANDING_ROOT, DEFAULT_REPO_ROOT } from "./pipeline-eval-orchestrator.mjs";
 import {
-  DEFAULT_LANDING_ROOT,
-  DEFAULT_REPO_ROOT,
-  runFreshAgentPipelineEvaluation,
-} from "./pipeline-eval-orchestrator.mjs";
+  runFreshAgentPipelineEvaluationInDocker,
+  runInsideDockerBoundary,
+} from "./pipeline-eval-docker-launcher.mjs";
 import { DEFAULT_CAPTURE_DEADLINE_MS } from "./pipeline-eval-shared.mjs";
 
 export {
@@ -20,6 +20,7 @@ export {
   assertRepositoryStateUnchanged,
   captureRepositoryState,
   commitScenarioAndBindCurrentMain,
+  commitScenarioAsPrHead,
   installFrozenOfflineDependencies,
   linkIgnoredDependencies,
   snapshotCommittedRepository,
@@ -31,6 +32,10 @@ export {
   runWithEvalRetention,
 } from "./pipeline-eval-orchestrator.mjs";
 export { runBoundedSubprocess } from "./pipeline-eval-shared.mjs";
+export {
+  runFreshAgentPipelineEvaluationInDocker,
+  runInsideDockerBoundary,
+} from "./pipeline-eval-docker-launcher.mjs";
 
 function parseOptions(argv) {
   const values = {};
@@ -65,6 +70,14 @@ function parseOptions(argv) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  if (argv[0] === "--inside-docker-boundary") {
+    if (argv.length !== 2) {
+      throw new Error("--inside-docker-boundary requires exactly one fixed request path");
+    }
+    const result = await runInsideDockerBoundary({ requestPath: argv[1] });
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
   const options = parseOptions(argv);
   if (options.help) {
     process.stdout.write(
@@ -73,7 +86,7 @@ export async function main(argv = process.argv.slice(2)) {
     return;
   }
   try {
-    const result = await runFreshAgentPipelineEvaluation(options);
+    const result = await runFreshAgentPipelineEvaluationInDocker(options);
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } catch (error) {
     process.stderr.write(
@@ -85,6 +98,7 @@ export async function main(argv = process.argv.slice(2)) {
           phase: error.phase ?? null,
           evalRoot: error.evalRoot ?? null,
           failurePath: error.failurePath ?? null,
+          receiptPath: error.receiptPath ?? null,
         },
         null,
         2,

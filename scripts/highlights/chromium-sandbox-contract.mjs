@@ -1,11 +1,17 @@
 const POLICY_CONTRACT = "kandev-highlight-chromium-sandbox-policy-v1";
 const AUTHORIZATION_CONTRACT =
   "kandev-highlight-disabled-sandbox-authorization-v1";
+const OUTER_AUTHORIZATION_CONTRACT =
+  "kandev-highlight-disabled-sandbox-authorization-v2";
+const DOCKER_BOUNDARY_CONTRACT =
+  "kandev-highlight-docker-boundary-authorization-v1";
 const ORIGIN_GUARD_CONTRACT = "kandev-highlight-origin-isolation-v1";
 const MODES = Object.freeze(["native", "disabled"]);
 const STATUSES = Object.freeze(["available", "unavailable", "unknown"]);
 const LOOPBACK_HOSTS = Object.freeze(["localhost", "127.0.0.1", "[::1]"]);
 const SHA_PATTERN = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
+const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
+const CONTAINER_ID_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_REASON_LENGTH = 512;
 
 function exactKeys(value, expected, label) {
@@ -47,11 +53,7 @@ function validateAllowedOrigin(value, label) {
 }
 
 function validateProof(value) {
-  const proof = exactKeys(
-    value,
-    ["status", "reason"],
-    "chromiumSandbox proof",
-  );
+  const proof = exactKeys(value, ["status", "reason"], "chromiumSandbox proof");
   if (!STATUSES.includes(proof.status)) {
     throw new Error(
       "chromiumSandbox proof status must be available, unavailable, or unknown",
@@ -70,7 +72,46 @@ function validateProof(value) {
   return { status: proof.status, reason: proof.reason };
 }
 
+function validateOuterBoundary(value) {
+  const proof = exactKeys(
+    value,
+    [
+      "contract",
+      "requestDigest",
+      "containerId",
+      "imageId",
+      "boundarySourceSha",
+      "originMainSha",
+      "appArmorProfile",
+      "networkMode",
+      "authorizationPath",
+      "readOnlyMount",
+    ],
+    "chromiumSandbox outerBoundary",
+  );
+  const invalid = [
+    proof.contract !== DOCKER_BOUNDARY_CONTRACT,
+    !DIGEST_PATTERN.test(proof.requestDigest ?? ""),
+    !CONTAINER_ID_PATTERN.test(proof.containerId ?? ""),
+    !DIGEST_PATTERN.test(proof.imageId ?? ""),
+    !SHA_PATTERN.test(proof.boundarySourceSha ?? ""),
+    !SHA_PATTERN.test(proof.originMainSha ?? ""),
+    proof.appArmorProfile !== "docker-default",
+    proof.networkMode !== "none",
+    proof.authorizationPath !== "/kandev-boundary/authorization.json",
+    proof.readOnlyMount !== true,
+  ];
+  if (invalid.some(Boolean)) {
+    throw new Error(
+      "chromiumSandbox outerBoundary must prove exact Docker image, source, default AppArmor, network none, and read-only authorization",
+    );
+  }
+  return structuredClone(proof);
+}
+
 function validateAuthorization(value) {
+  const contract = value?.contract;
+  const outer = contract === OUTER_AUTHORIZATION_CONTRACT;
   const authorization = exactKeys(
     value,
     [
@@ -79,15 +120,21 @@ function validateAuthorization(value) {
       "sourceSha",
       "allowedOrigin",
       "guardContract",
+      ...(outer ? ["outerBoundary"] : []),
     ],
     "chromiumSandbox authorization",
   );
-  if (authorization.contract !== AUTHORIZATION_CONTRACT) {
+  if (
+    ![AUTHORIZATION_CONTRACT, OUTER_AUTHORIZATION_CONTRACT].includes(contract)
+  ) {
     throw new Error("chromiumSandbox authorization contract is unsupported");
   }
-  if (authorization.sourceMode !== "current_main") {
+  if (
+    (!outer && authorization.sourceMode !== "current_main") ||
+    (outer && authorization.sourceMode !== "pr_head")
+  ) {
     throw new Error(
-      "disabled chromiumSandbox authorization requires current_main source",
+      `disabled chromiumSandbox authorization requires ${outer ? "pr_head" : "current_main"} source`,
     );
   }
   if (!SHA_PATTERN.test(authorization.sourceSha ?? "")) {
@@ -100,9 +147,16 @@ function validateAuthorization(value) {
     "chromiumSandbox authorization allowedOrigin",
   );
   if (authorization.guardContract !== ORIGIN_GUARD_CONTRACT) {
-    throw new Error("chromiumSandbox authorization guardContract is unsupported");
+    throw new Error(
+      "chromiumSandbox authorization guardContract is unsupported",
+    );
   }
-  return structuredClone(authorization);
+  return {
+    ...structuredClone(authorization),
+    ...(outer
+      ? { outerBoundary: validateOuterBoundary(authorization.outerBoundary) }
+      : {}),
+  };
 }
 
 export function defaultChromiumSandboxPolicy() {
@@ -122,11 +176,22 @@ export function createDisabledChromiumSandboxAuthorization({
   sourceProof,
   trustedSourceSha,
   allowedOrigin,
+  outerBoundary,
 }) {
   if (sourceProof?.source === "pr_head") {
-    throw new Error(
-      "disabled Chromium sandbox forbids pr_head without independently attested whole-worker OS isolation",
-    );
+    if (!outerBoundary) {
+      throw new Error(
+        "disabled Chromium sandbox forbids pr_head without independently attested whole-worker OS isolation",
+      );
+    }
+    return validateAuthorization({
+      contract: OUTER_AUTHORIZATION_CONTRACT,
+      sourceMode: sourceProof.source,
+      sourceSha: sourceProof.selectedSha,
+      allowedOrigin,
+      guardContract: ORIGIN_GUARD_CONTRACT,
+      outerBoundary,
+    });
   }
   if (
     sourceProof?.source !== "current_main" ||

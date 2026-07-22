@@ -48,13 +48,14 @@ test("facade preserves the public eval contract", () => {
     "assertTechnicalReview",
     "buildPipelineCommandSequence",
     "captureRepositoryState",
-    "commitScenarioAndBindCurrentMain",
+    "commitScenarioAsPrHead",
     "installFrozenOfflineDependencies",
     "linkIgnoredDependencies",
     "normalizeDeterminismEvidence",
     "projectSemanticPointerEvidence",
     "runBoundedSubprocess",
     "runFreshAgentPipelineEvaluation",
+    "runFreshAgentPipelineEvaluationInDocker",
     "runWithEvalRetention",
     "snapshotCommittedRepository",
     "verifyFrozenOfflineDependencies",
@@ -64,6 +65,17 @@ test("facade preserves the public eval contract", () => {
   assert.equal(pipeline.linkIgnoredDependencies, pipeline.installFrozenOfflineDependencies);
 });
 
+test("CLI launches trusted Docker boundary and reserves direct orchestration for inner worker", async () => {
+  const source = await fs.readFile(path.join(HERE, "run-pipeline-integration.mjs"), "utf8");
+  assert.match(source, /runFreshAgentPipelineEvaluationInDocker\(options\)/);
+  assert.match(source, /--inside-docker-boundary/);
+  assert.match(source, /runInsideDockerBoundary/);
+  assert.doesNotMatch(
+    source,
+    /const result\s*=\s*await runFreshAgentPipelineEvaluation\(options\)/,
+  );
+});
+
 test("pipeline command sequence uses production CLI and exact safe arguments", async () => {
   const commands = pipeline.buildPipelineCommandSequence({
     cloneRoot: FIXTURE_SNAPSHOT,
@@ -71,6 +83,8 @@ test("pipeline command sequence uses production CLI and exact safe arguments", a
     artifactRoot: FIXTURE_ARTIFACTS,
     landingRoot: "/workspace/landing",
     reviewPath: `${FIXTURE_ARTIFACTS}/quick-start/stages/deadbeef/review.json`,
+    prNumber: 1,
+    prBaseSha: "b".repeat(40),
     nodeExecutable: "/usr/bin/node",
   });
 
@@ -101,7 +115,11 @@ test("pipeline command sequence uses production CLI and exact safe arguments", a
       "--artifact-root",
       FIXTURE_ARTIFACTS,
       "--source",
-      "current_main",
+      "pr_head",
+      "--pr-number",
+      "1",
+      "--pr-base-sha",
+      "b".repeat(40),
       "--landing-root",
       "/workspace/landing",
       "--runtime",
@@ -123,30 +141,34 @@ test("pipeline command sequence uses production CLI and exact safe arguments", a
   );
 });
 
-test("snapshot is exact committed HEAD and current_main binds the local scenario", async (t) => {
+test("snapshot keeps immutable main while scaffold commit becomes isolated pr_head", async (t) => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "highlight-pipeline-git-test-"));
   t.after(() => fs.rm(temp, { recursive: true, force: true }));
   const sourceRoot = path.join(temp, "source");
   const cloneRoot = path.join(temp, "snapshot");
   const sourceHead = await initRepository(sourceRoot);
+  const sourceMain = (await exec("git", ["rev-parse", "main"], { cwd: sourceRoot })).stdout.trim();
+  assert.notEqual(sourceHead, sourceMain);
   const sourceBefore = await pipeline.captureRepositoryState(sourceRoot);
 
   const snapshot = await pipeline.snapshotCommittedRepository({ sourceRoot, cloneRoot });
   assert.equal(snapshot.sourceHead, sourceHead);
   assert.equal(snapshot.snapshotHead, sourceHead);
+  assert.equal(snapshot.originMainSha, sourceMain);
   assert.equal(snapshot.localOnly, true);
   assert.equal(snapshot.originRoot, path.join(temp, "origin.git"));
   const bareHead = await exec("git", ["--git-dir", snapshot.originRoot, "rev-parse", MAIN_REF]);
-  assert.equal(bareHead.stdout.trim(), sourceHead);
+  assert.equal(bareHead.stdout.trim(), sourceMain);
 
   const scenarioPath = path.join(cloneRoot, "eval", "quick-start.scenario.json");
   await fs.mkdir(path.dirname(scenarioPath), { recursive: true });
   await fs.writeFile(scenarioPath, '{"schemaVersion":1}\n');
-  const bound = await pipeline.commitScenarioAndBindCurrentMain({ cloneRoot, scenarioPath });
+  const bound = await pipeline.commitScenarioAsPrHead({ cloneRoot, scenarioPath });
   assert.match(bound.evalHead, /^[a-f0-9]{40}$/);
   assert.equal(bound.headSha, bound.evalHead);
-  assert.equal(bound.currentMainSha, bound.evalHead);
-  assert.equal(bound.originMainSha, bound.evalHead);
+  assert.equal(bound.currentMainSha, sourceMain);
+  assert.equal(bound.originMainSha, sourceMain);
+  assert.equal(bound.prBaseSha, sourceMain);
   assert.equal(bound.clean, true);
   const boundBareHead = await exec("git", [
     "--git-dir",
@@ -154,7 +176,7 @@ test("snapshot is exact committed HEAD and current_main binds the local scenario
     "rev-parse",
     MAIN_REF,
   ]);
-  assert.equal(boundBareHead.stdout.trim(), bound.evalHead);
+  assert.equal(boundBareHead.stdout.trim(), sourceMain);
 
   await exec("git", ["update-ref", "refs/remotes/origin/main", sourceHead], { cwd: cloneRoot });
   assert.equal(
@@ -164,7 +186,7 @@ test("snapshot is exact committed HEAD and current_main binds the local scenario
   await exec("git", ["fetch", "--no-tags", "origin", "main"], { cwd: cloneRoot });
   assert.equal(
     (await exec("git", ["rev-parse", "origin/main"], { cwd: cloneRoot })).stdout.trim(),
-    bound.evalHead,
+    sourceMain,
   );
   await pipeline.assertRepositoryStateUnchanged(
     sourceBefore,

@@ -10,6 +10,8 @@ import { requireAbsolute } from "./runtime-host-contracts.mjs";
 export const CHROMIUM_SANDBOX_ENV = "KANDEV_HIGHLIGHT_CHROMIUM_SANDBOX";
 export const CHROMIUM_TRUSTED_SOURCE_SHA_ENV =
   "KANDEV_HIGHLIGHT_TRUSTED_SOURCE_SHA";
+export const CHROMIUM_DOCKER_BOUNDARY_AUTHORIZATION_ENV =
+  "KANDEV_HIGHLIGHT_DOCKER_BOUNDARY_AUTHORIZATION";
 const POLICY_CONTRACT = "kandev-highlight-chromium-sandbox-policy-v1";
 const EXPECTED_PROBE_STATUSES = Object.freeze([
   "available",
@@ -126,16 +128,16 @@ export async function probeNativeChromiumSandbox({
   }
   const [userNamespaces, appArmorRestriction, maximumUserNamespaces] =
     await Promise.all([
-    optionalKernelPolicy(
-      "/proc/sys/kernel/unprivileged_userns_clone",
-      readFile,
-    ),
-    optionalKernelPolicy(
-      "/proc/sys/kernel/apparmor_restrict_unprivileged_userns",
-      readFile,
-    ),
-    optionalKernelPolicy("/proc/sys/user/max_user_namespaces", readFile),
-  ]);
+      optionalKernelPolicy(
+        "/proc/sys/kernel/unprivileged_userns_clone",
+        readFile,
+      ),
+      optionalKernelPolicy(
+        "/proc/sys/kernel/apparmor_restrict_unprivileged_userns",
+        readFile,
+      ),
+      optionalKernelPolicy("/proc/sys/user/max_user_namespaces", readFile),
+    ]);
   return kernelPolicyProof({
     userNamespaces,
     appArmorRestriction,
@@ -157,9 +159,7 @@ function validateProbeProof(proof) {
 
 async function probeSandbox(probeNativeSandbox, chromiumExecutable) {
   try {
-    return validateProbeProof(
-      await probeNativeSandbox({ chromiumExecutable }),
-    );
+    return validateProbeProof(await probeNativeSandbox({ chromiumExecutable }));
   } catch (error) {
     if (error.message === "Chromium sandbox probe returned invalid evidence") {
       throw error;
@@ -189,6 +189,62 @@ function disabledPolicy(proof, authorizationInput) {
     authorization:
       createDisabledChromiumSandboxAuthorization(authorizationInput),
   });
+}
+
+function compactOuterBoundary(value, authorizationPath) {
+  if (
+    value?.contract !== "kandev-highlight-docker-boundary-authorization-v1" ||
+    value.containerId !== value.inspection?.containerId ||
+    value.imageId !== value.inspection?.imageId ||
+    value.requestDigest !== value.inspection?.requestDigest
+  ) {
+    throw new Error(
+      "Docker boundary authorization inspection binding is invalid",
+    );
+  }
+  return {
+    contract: value.contract,
+    requestDigest: value.requestDigest,
+    containerId: value.containerId,
+    imageId: value.imageId,
+    boundarySourceSha: value.sourceSha,
+    originMainSha: value.sourceOriginMainSha,
+    appArmorProfile: value.inspection.appArmorProfile,
+    networkMode: value.inspection.networkMode,
+    authorizationPath,
+    readOnlyMount: true,
+  };
+}
+
+async function loadOuterBoundaryAuthorization(inheritedEnv, readFile) {
+  const authorizationPath =
+    inheritedEnv[CHROMIUM_DOCKER_BOUNDARY_AUTHORIZATION_ENV];
+  if (authorizationPath !== "/kandev-boundary/authorization.json") {
+    throw new Error(
+      "disabled Chromium pr_head requires whole-worker OS isolation from Docker boundary authorization at the fixed read-only path",
+    );
+  }
+  let authorization;
+  let mountInfo;
+  try {
+    [authorization, mountInfo] = await Promise.all([
+      readFile(authorizationPath, "utf8").then((bytes) => JSON.parse(bytes)),
+      readFile("/proc/self/mountinfo", "utf8"),
+    ]);
+  } catch (error) {
+    throw new Error(
+      `cannot verify Docker boundary authorization: ${error.message}`,
+      {
+        cause: error,
+      },
+    );
+  }
+  if (!/(?:^|\n)[^\n]*\s\/kandev-boundary\s+ro(?:,|\s)/.test(mountInfo)) {
+    throw new Error(
+      "Docker boundary authorization must come from read-only /kandev-boundary mount",
+    );
+  }
+  return compactOuterBoundary(authorization, authorizationPath);
 }
 
 function resolveAutomaticPolicy(proof, authorizationInput) {
@@ -237,6 +293,7 @@ export async function resolveChromiumSandboxPolicy({
   trustedSourceSha,
   allowedOrigin,
   probeNativeSandbox = probeNativeChromiumSandbox,
+  readFile = fs.readFile,
 } = {}) {
   const requested = inheritedEnv[CHROMIUM_SANDBOX_ENV] ?? "native";
   if (!["native", "disabled", "auto"].includes(requested)) {
@@ -245,7 +302,16 @@ export async function resolveChromiumSandboxPolicy({
     );
   }
   const proof = await probeSandbox(probeNativeSandbox, chromiumExecutable);
-  const authorizationInput = { sourceProof, trustedSourceSha, allowedOrigin };
+  const outerBoundary =
+    sourceProof?.source === "pr_head" && proof.status === "unavailable"
+      ? await loadOuterBoundaryAuthorization(inheritedEnv, readFile)
+      : null;
+  const authorizationInput = {
+    sourceProof,
+    trustedSourceSha,
+    allowedOrigin,
+    outerBoundary,
+  };
   if (requested === "auto") {
     return resolveAutomaticPolicy(proof, authorizationInput);
   }

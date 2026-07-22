@@ -82,15 +82,22 @@ export async function snapshotCommittedRepository({ sourceRoot, cloneRoot, origi
     throw new Error(`source repository must be clean before snapshot: ${sourceState.status}`);
   }
   if (!SHA_PATTERN.test(sourceState.head)) throw new Error("source HEAD is not an exact Git SHA");
+  const sourceMainSha = await resolveSourceMain(source);
   await fs.mkdir(path.dirname(snapshot), { recursive: true });
-  await createSnapshotRepositories({ source, snapshot, origin, head: sourceState.head });
+  await createSnapshotRepositories({
+    source,
+    snapshot,
+    origin,
+    head: sourceState.head,
+    mainHead: sourceMainSha,
+  });
   const snapshotState = await captureRepositoryState(snapshot);
   const originHead = await bareMainHead(origin);
   if (snapshotState.head !== sourceState.head || snapshotState.status !== "") {
     throw new Error("local eval snapshot does not match the exact clean source HEAD");
   }
-  if (originHead !== sourceState.head) {
-    throw new Error("local bare origin main does not match source HEAD");
+  if (originHead !== sourceMainSha) {
+    throw new Error("local bare origin main does not match immutable source main");
   }
   return {
     sourceRoot: source,
@@ -103,11 +110,26 @@ export async function snapshotCommittedRepository({ sourceRoot, cloneRoot, origi
   };
 }
 
-async function createSnapshotRepositories({ source, snapshot, origin, head }) {
+async function resolveSourceMain(source) {
+  for (const reference of ["refs/remotes/origin/main^{commit}", "refs/heads/main^{commit}"]) {
+    try {
+      const result = await git(source, ["rev-parse", "--verify", reference], {
+        phase: "git-source-main",
+      });
+      const value = result.stdout.trim();
+      if (SHA_PATTERN.test(value)) return value;
+    } catch {
+      // A local-only fixture may have main without origin/main.
+    }
+  }
+  throw new Error("source repository needs exact origin/main or local main for eval PR base");
+}
+
+async function createSnapshotRepositories({ source, snapshot, origin, head, mainHead }) {
   await git(null, ["clone", "--bare", "--no-hardlinks", "--local", source, origin], {
     phase: "git-clone-origin",
   });
-  await git(null, ["--git-dir", origin, "update-ref", MAIN_REF, head], {
+  await git(null, ["--git-dir", origin, "update-ref", MAIN_REF, mainHead], {
     phase: "git-initialize-origin-main",
   });
   await git(null, ["clone", "--no-hardlinks", "--no-checkout", "--local", origin, snapshot], {
@@ -170,20 +192,6 @@ async function commitScenario(repository, relativeScenario) {
   return evalHead;
 }
 
-async function bindBareMain(repository, origin, evalHead) {
-  await git(null, ["--git-dir", origin, "fetch", "--no-tags", repository, evalHead], {
-    phase: "git-copy-eval-object",
-  });
-  await git(null, ["--git-dir", origin, "update-ref", MAIN_REF, evalHead], {
-    phase: "git-bind-origin-main",
-  });
-  await git(
-    repository,
-    ["fetch", "--no-tags", "origin", "+refs/heads/main:refs/remotes/origin/main"],
-    { phase: "git-fetch-origin-main" },
-  );
-}
-
 async function currentMainProof(repository, origin, evalHead) {
   const [head, currentMain, originMain, status] = await Promise.all([
     git(repository, ["rev-parse", "HEAD"]),
@@ -198,29 +206,34 @@ async function currentMainProof(repository, origin, evalHead) {
     headSha: head.stdout.trim(),
     currentMainSha: currentMain.stdout.trim(),
     originMainSha: originMain.stdout.trim(),
+    prBaseSha: originMain.stdout.trim(),
     originRoot: origin,
     clean: status.stdout.trim() === "",
   };
 }
 
-export async function commitScenarioAndBindCurrentMain({ cloneRoot, scenarioPath } = {}) {
+export async function commitScenarioAsPrHead({ cloneRoot, scenarioPath } = {}) {
   const repository = await canonicalDirectory(path.resolve(cloneRoot), "eval snapshot");
   const scenario = requireAbsolute(scenarioPath, "scenarioPath");
   const relativeScenario = await validateScenarioCommitInput(repository, scenario);
   const evalHead = await commitScenario(repository, relativeScenario);
   const origin = await localBareOrigin(repository);
-  await bindBareMain(repository, origin, evalHead);
   const proof = await currentMainProof(repository, origin, evalHead);
-  const bound = [proof.headSha, proof.currentMainSha, proof.originMainSha].every(
-    (value) => value === evalHead,
-  );
-  if (!bound || !proof.clean) {
+  if (
+    proof.headSha !== evalHead ||
+    proof.currentMainSha !== proof.originMainSha ||
+    proof.currentMainSha === evalHead ||
+    !proof.clean
+  ) {
     throw new Error(
-      "current_main eval proof must bind clean HEAD, fetched origin/main, and bare origin main",
+      "pr_head eval proof must keep immutable origin/main while binding clean synthetic HEAD",
     );
   }
   return proof;
 }
+
+/** @deprecated Safe compatibility alias; never mutates origin/main. */
+export const commitScenarioAndBindCurrentMain = commitScenarioAsPrHead;
 
 async function workspaceManifestPaths(repository) {
   const paths = [...REQUIRED_INPUTS];

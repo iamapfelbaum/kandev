@@ -23,6 +23,22 @@ const UNKNOWN = Object.freeze({
   status: "unknown",
   reason: "kernel policy unreadable",
 });
+const OUTER_BOUNDARY = Object.freeze({
+  contract: "kandev-highlight-docker-boundary-authorization-v1",
+  requestDigest: `sha256:${"1".repeat(64)}`,
+  containerId: "2".repeat(64),
+  imageId: `sha256:${"3".repeat(64)}`,
+  sourceSha: "4".repeat(40),
+  sourceOriginMainSha: "5".repeat(40),
+  inspection: {
+    containerId: "2".repeat(64),
+    imageId: `sha256:${"3".repeat(64)}`,
+    appArmorProfile: "docker-default",
+    networkMode: "none",
+    requestDigest: `sha256:${"1".repeat(64)}`,
+  },
+});
+const BOUNDARY_PATH = "/kandev-boundary/authorization.json";
 
 function sourceProof(source = "current_main") {
   return {
@@ -31,7 +47,11 @@ function sourceProof(source = "current_main") {
   };
 }
 
-function resolvePolicy({ requested = "native", probe = AVAILABLE, ...options } = {}) {
+function resolvePolicy({
+  requested = "native",
+  probe = AVAILABLE,
+  ...options
+} = {}) {
   return resolveChromiumSandboxPolicy({
     inheritedEnv: { KANDEV_HIGHLIGHT_CHROMIUM_SANDBOX: requested },
     chromiumExecutable: CHROMIUM_EXECUTABLE,
@@ -124,6 +144,78 @@ test("automatic selection uses disabled mode only with the same exact authorizat
   );
 });
 
+test("disabled pr_head requires independently attested read-only whole-worker Docker isolation", async () => {
+  const policy = await resolvePolicy({
+    requested: "disabled",
+    probe: UNAVAILABLE,
+    sourceProof: sourceProof("pr_head"),
+    trustedSourceSha: undefined,
+    inheritedEnv: {
+      KANDEV_HIGHLIGHT_CHROMIUM_SANDBOX: "disabled",
+      KANDEV_HIGHLIGHT_DOCKER_BOUNDARY_AUTHORIZATION: BOUNDARY_PATH,
+    },
+    readFile: async (filePath) => {
+      if (filePath === BOUNDARY_PATH) return JSON.stringify(OUTER_BOUNDARY);
+      if (filePath === "/proc/self/mountinfo") {
+        return "42 35 0:51 / /kandev-boundary ro,nosuid,nodev,noexec - ext4 /dev/sda ro\n";
+      }
+      throw new Error(`unexpected read ${filePath}`);
+    },
+  });
+  assert.deepEqual(policy.authorization, {
+    contract: "kandev-highlight-disabled-sandbox-authorization-v2",
+    sourceMode: "pr_head",
+    sourceSha: SOURCE_SHA,
+    allowedOrigin: ALLOWED_ORIGIN,
+    guardContract: "kandev-highlight-origin-isolation-v1",
+    outerBoundary: {
+      contract: OUTER_BOUNDARY.contract,
+      requestDigest: OUTER_BOUNDARY.requestDigest,
+      containerId: OUTER_BOUNDARY.containerId,
+      imageId: OUTER_BOUNDARY.imageId,
+      boundarySourceSha: OUTER_BOUNDARY.sourceSha,
+      originMainSha: OUTER_BOUNDARY.sourceOriginMainSha,
+      appArmorProfile: "docker-default",
+      networkMode: "none",
+      authorizationPath: BOUNDARY_PATH,
+      readOnlyMount: true,
+    },
+  });
+
+  for (const [label, inheritedEnv, readFile] of [
+    [
+      "missing",
+      { KANDEV_HIGHLIGHT_CHROMIUM_SANDBOX: "disabled" },
+      async () => "",
+    ],
+    [
+      "writable",
+      {
+        KANDEV_HIGHLIGHT_CHROMIUM_SANDBOX: "disabled",
+        KANDEV_HIGHLIGHT_DOCKER_BOUNDARY_AUTHORIZATION: BOUNDARY_PATH,
+      },
+      async (filePath) =>
+        filePath === BOUNDARY_PATH
+          ? JSON.stringify(OUTER_BOUNDARY)
+          : "42 35 0:51 / /kandev-boundary rw - ext4 /dev/sda rw\n",
+    ],
+  ]) {
+    await assert.rejects(
+      () =>
+        resolvePolicy({
+          requested: "disabled",
+          probe: UNAVAILABLE,
+          sourceProof: sourceProof("pr_head"),
+          trustedSourceSha: undefined,
+          inheritedEnv,
+          readFile,
+        }),
+      /pr_head.*whole-worker|Docker boundary.*read-only/i,
+      label,
+    );
+  }
+});
+
 test("closed sandbox selector rejects policy and argv injection", async () => {
   await assert.rejects(
     () => resolvePolicy({ requested: "disabled", probe: AVAILABLE }),
@@ -183,7 +275,10 @@ test("native probe requires an executable setuid helper", async () => {
   });
   assert.equal(nonExecutable.status, "unavailable");
   assert.match(nonExecutable.reason, /max_user_namespaces.*zero/i);
-  assert.equal(readPaths.some((value) => value.endsWith("max_user_namespaces")), true);
+  assert.equal(
+    readPaths.some((value) => value.endsWith("max_user_namespaces")),
+    true,
+  );
 });
 
 test("native probe fails closed when the namespace quota is zero or unknown", async () => {
