@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   MAX_QUICK_START_EVAL_DURATION_MS,
   clearInheritedTrustedSource,
+  configuredToolchainEnvironment,
 } from "./pipeline-eval-orchestrator.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -18,6 +19,34 @@ test("trusted source input is absent until the exact eval commit exists", () => 
   const environment = clearInheritedTrustedSource(inherited);
   assert.deepEqual(environment, { SAFE: "kept" });
   assert.equal(inherited[TRUSTED_SOURCE_KEY], "f".repeat(40));
+});
+
+test("toolchain discovery probes and preserves the request-bound writable Go cache", async () => {
+  const privateGoCache = "/kandev/eval/go-mod-cache";
+  const privateBuildCache = "/kandev/eval/go-build-cache";
+  const calls = [];
+  const environment = await configuredToolchainEnvironment(
+    {
+      GOMODCACHE: privateGoCache,
+      GOCACHE: privateBuildCache,
+      SAFE: "kept",
+    },
+    { GOROOT: "/kandev/toolchain/go" },
+    async (specification) => {
+      calls.push(specification);
+      return {
+        stdout: ["/ambient/go-build", "/kandev/toolchain/go-mod", "/ambient/go"].join("\n"),
+      };
+    },
+  );
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].env.GOMODCACHE, privateGoCache);
+  assert.equal(calls[0].env.GOCACHE, privateBuildCache);
+  assert.equal(environment.GOMODCACHE, privateGoCache);
+  assert.equal(environment.GOCACHE, privateBuildCache);
+  assert.equal(environment.GOPATH, "/ambient/go");
+  assert.equal(environment.SAFE, "kept");
 });
 
 test("eval never creates or defaults trusted source authorization", async () => {

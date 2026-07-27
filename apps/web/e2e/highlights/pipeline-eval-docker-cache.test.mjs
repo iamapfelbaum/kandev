@@ -93,3 +93,37 @@ test("read-only cache snapshot rejects a source that changes while copied", asyn
   );
   await assert.rejects(fs.access(targetRoot), /ENOENT/);
 });
+
+test("private snapshot cleanup removes preserved read-only directories only inside its owner root", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "highlight-docker-go-cache-cleanup-"));
+  t.after(async () => {
+    await fs.chmod(path.join(root, "shared", "module", ".github"), 0o700).catch(() => {});
+    await fs.chmod(path.join(root, "shared", "module"), 0o700).catch(() => {});
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  const sourceRoot = path.join(root, "shared");
+  const privateRoot = path.join(root, "private");
+  const targetRoot = path.join(privateRoot, "go-mod");
+  await fs.mkdir(path.join(sourceRoot, "module", ".github"), {
+    recursive: true,
+  });
+  await fs.writeFile(path.join(sourceRoot, "module", ".github", "config"), "read-only\n");
+  await fs.chmod(path.join(sourceRoot, "module", ".github"), 0o555);
+  await fs.chmod(path.join(sourceRoot, "module"), 0o555);
+  await cache.snapshotReadOnlyTree({ sourceRoot, targetRoot });
+
+  await cache.removePrivateTree({ targetRoot, privateRoot });
+
+  await assert.rejects(fs.access(targetRoot), /ENOENT/);
+  assert.equal(
+    await fs.readFile(path.join(sourceRoot, "module", ".github", "config"), "utf8"),
+    "read-only\n",
+  );
+  await assert.rejects(
+    cache.removePrivateTree({
+      targetRoot: sourceRoot,
+      privateRoot,
+    }),
+    /inside.*private|private.*root/i,
+  );
+});

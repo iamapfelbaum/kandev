@@ -20,6 +20,7 @@ import {
   writeTextExclusive,
 } from "./pipeline-eval-docker-boundary.mjs";
 import { prepareDockerInputRepositories } from "./pipeline-eval-docker-input.mjs";
+import { removePrivateTree } from "./pipeline-eval-docker-cache.mjs";
 import { validateRuntimeNetworkGateEvidence } from "./pipeline-eval-docker-network-gate.mjs";
 import { discoverDockerToolchain } from "./pipeline-eval-docker-toolchain.mjs";
 import {
@@ -476,6 +477,17 @@ async function inspectDockerDaemon(runCommand) {
   return validateDockerDaemonSecurity(value);
 }
 
+async function cleanupDockerInputRoots({ toolchainSnapshotRoot, inputContainerRoot, proofRoot }) {
+  await removePrivateTree({
+    targetRoot: toolchainSnapshotRoot,
+    privateRoot: inputContainerRoot,
+  });
+  await Promise.all([
+    fs.rm(proofRoot, { recursive: true, force: true }),
+    fs.rm(inputContainerRoot, { recursive: true, force: true }),
+  ]);
+}
+
 export async function runFreshAgentPipelineEvaluationInDocker({
   sourceRoot = DEFAULT_SOURCE_ROOT,
   landingRoot = DEFAULT_LANDING_ROOT,
@@ -501,6 +513,7 @@ export async function runFreshAgentPipelineEvaluationInDocker({
   const evidenceRoot = await fs.mkdtemp(
     path.join(canonicalParent, "kandev-highlight-docker-evidence-"),
   );
+  const toolchainSnapshotRoot = path.join(inputContainerRoot, "toolchain", "go-mod");
   await Promise.all([
     fs.chmod(evalRoot, 0o700),
     fs.chmod(proofRoot, 0o700),
@@ -518,7 +531,7 @@ export async function runFreshAgentPipelineEvaluationInDocker({
       inspectDockerDaemon(runCommand),
       discoverDockerToolchain({
         sourceRoot: source,
-        snapshotRoot: path.join(inputContainerRoot, "toolchain", "go-mod"),
+        snapshotRoot: toolchainSnapshotRoot,
         inheritedEnv,
         runCommand,
       }),
@@ -567,9 +580,10 @@ export async function runFreshAgentPipelineEvaluationInDocker({
       result: (await readJson(path.join(evalRoot, "boundary-result.json"))).result,
     };
   } finally {
-    await Promise.all([
-      fs.rm(proofRoot, { recursive: true, force: true }),
-      fs.rm(inputContainerRoot, { recursive: true, force: true }),
-    ]);
+    await cleanupDockerInputRoots({
+      toolchainSnapshotRoot,
+      inputContainerRoot,
+      proofRoot,
+    });
   }
 }

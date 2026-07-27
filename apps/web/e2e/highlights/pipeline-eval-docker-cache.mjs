@@ -105,6 +105,41 @@ export async function snapshotReadOnlyTree({ sourceRoot, targetRoot, copy = fs.c
   }
 }
 
+export async function removePrivateTree({ targetRoot, privateRoot } = {}) {
+  const target = path.resolve(targetRoot);
+  const owner = path.resolve(privateRoot);
+  if (target === owner || !isInside(owner, target)) {
+    throw new Error("private tree cleanup target must stay inside its private owner root");
+  }
+  const [ownerCanonical, ownerStat] = await Promise.all([fs.realpath(owner), fs.lstat(owner)]);
+  if (ownerCanonical !== owner || !ownerStat.isDirectory() || ownerStat.isSymbolicLink()) {
+    throw new Error("private tree cleanup owner must be a canonical non-symlink directory");
+  }
+  const stat = await fs
+    .lstat(target)
+    .catch((error) => (error.code === "ENOENT" ? null : Promise.reject(error)));
+  if (!stat) return false;
+  await captureTreeProof(target);
+  async function makeDirectoriesWritable(directory) {
+    await fs.chmod(directory, 0o700);
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const child = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) {
+        throw new Error(`private tree cleanup refuses a symlink: ${child}`);
+      }
+      if (entry.isDirectory()) {
+        await makeDirectoriesWritable(child);
+      } else if (!entry.isFile()) {
+        throw new Error(`private tree cleanup refuses an unsupported entry: ${child}`);
+      }
+    }
+  }
+  await makeDirectoriesWritable(target);
+  await fs.rm(target, { recursive: true, force: true });
+  return true;
+}
+
 function comparableProof(proof) {
   const { root: _root, ...value } = proof ?? {};
   return value;

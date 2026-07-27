@@ -170,12 +170,17 @@ export async function runWithEvalRetention({ evalRoot, task } = {}) {
   }
 }
 
-async function configuredToolchainEnvironment(inheritedEnv, securityEnvironment = {}) {
+export async function configuredToolchainEnvironment(
+  inheritedEnv,
+  securityEnvironment = {},
+  runCommand = runBoundedSubprocess,
+) {
   const environment = clearInheritedTrustedSource({ ...inheritedEnv, ...securityEnvironment });
   environment.KANDEV_HIGHLIGHT_CHROMIUM_SANDBOX = "auto";
-  const result = await runBoundedSubprocess({
+  const result = await runCommand({
     command: "go",
     args: ["env", "GOCACHE", "GOMODCACHE", "GOPATH"],
+    env: environment,
     phase: "go-env",
     deadlineMs: DEFAULT_SETUP_DEADLINE_MS,
   }).catch(() => null);
@@ -186,7 +191,9 @@ async function configuredToolchainEnvironment(inheritedEnv, securityEnvironment 
     GOMODCACHE: goModCache,
     GOPATH: goPath,
   })) {
-    if (value && path.isAbsolute(value)) environment[key] = value;
+    if (value && path.isAbsolute(value) && !Object.hasOwn(environment, key)) {
+      environment[key] = value;
+    }
   }
   return environment;
 }
