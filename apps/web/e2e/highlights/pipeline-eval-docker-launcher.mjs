@@ -189,6 +189,7 @@ function validateInnerGoModuleCache(state, inner) {
     isolation?.insideEvalRoot !== true,
     isolation?.noSymlinks !== true,
     inner.goModuleCache?.copy?.digest !== requested.input.digest,
+    canonicalJson(inner.goModuleCache?.provision) !== canonicalJson(requested.provision),
   ];
   if (invalid.some(Boolean)) {
     throw new Error("Docker eval worker did not prove its isolated private Go module cache");
@@ -357,6 +358,7 @@ function boundaryReceipt(state) {
     exit: state.exit,
     logs: state.logEvidence,
     networkGate: state.inner?.networkGate ?? null,
+    goModuleProvision: state.plan.request.goModuleCache?.provision ?? null,
     goModuleCache: state.inner?.goModuleCache ?? null,
     innerResultDigest: state.inner ? digestValue(state.inner) : null,
     error: state.failure?.message ?? null,
@@ -477,15 +479,47 @@ async function inspectDockerDaemon(runCommand) {
   return validateDockerDaemonSecurity(value);
 }
 
-async function cleanupDockerInputRoots({ toolchainSnapshotRoot, inputContainerRoot, proofRoot }) {
-  await removePrivateTree({
-    targetRoot: toolchainSnapshotRoot,
-    privateRoot: inputContainerRoot,
-  });
-  await Promise.all([
+async function cleanupDockerInputRoots({
+  toolchainBootstrapRoot,
+  toolchainSnapshotRoot,
+  inputContainerRoot,
+  proofRoot,
+}) {
+  const privateCleanup = await Promise.allSettled(
+    [toolchainBootstrapRoot, toolchainSnapshotRoot].map((targetRoot) =>
+      removePrivateTree({
+        targetRoot,
+        privateRoot: inputContainerRoot,
+      }),
+    ),
+  );
+  const errors = privateCleanup
+    .filter(({ status }) => status === "rejected")
+    .map(({ reason }) => reason);
+  const remainingCleanup = [
     fs.rm(proofRoot, { recursive: true, force: true }),
-    fs.rm(inputContainerRoot, { recursive: true, force: true }),
+    ...(errors.length === 0 ? [fs.rm(inputContainerRoot, { recursive: true, force: true })] : []),
+  ];
+  const remaining = await Promise.allSettled(remainingCleanup);
+  errors.push(
+    ...remaining.filter(({ status }) => status === "rejected").map(({ reason }) => reason),
+  );
+  if (errors.length > 0) {
+    throw new AggregateError(errors, "Docker private input cleanup did not complete");
+  }
+}
+
+async function createDockerEvalRoots(parent) {
+  const [evalRoot, proofRoot, inputContainerRoot, evidenceRoot] = await Promise.all([
+    fs.mkdtemp(path.join(parent, "kandev-highlight-docker-eval-")),
+    fs.mkdtemp(path.join(parent, "kandev-highlight-docker-proof-")),
+    fs.mkdtemp(path.join(parent, "kandev-highlight-docker-input-")),
+    fs.mkdtemp(path.join(parent, "kandev-highlight-docker-evidence-")),
   ]);
+  await Promise.all(
+    [evalRoot, proofRoot, inputContainerRoot, evidenceRoot].map((root) => fs.chmod(root, 0o700)),
+  );
+  return { evalRoot, proofRoot, inputContainerRoot, evidenceRoot };
 }
 
 export async function runFreshAgentPipelineEvaluationInDocker({
@@ -505,23 +539,12 @@ export async function runFreshAgentPipelineEvaluationInDocker({
   }
   await fs.mkdir(parent, { recursive: true, mode: 0o700 });
   const canonicalParent = await canonicalDirectory(parent, "Docker eval parent");
-  const evalRoot = await fs.mkdtemp(path.join(canonicalParent, "kandev-highlight-docker-eval-"));
-  const proofRoot = await fs.mkdtemp(path.join(canonicalParent, "kandev-highlight-docker-proof-"));
-  const inputContainerRoot = await fs.mkdtemp(
-    path.join(canonicalParent, "kandev-highlight-docker-input-"),
-  );
-  const evidenceRoot = await fs.mkdtemp(
-    path.join(canonicalParent, "kandev-highlight-docker-evidence-"),
-  );
+  const { evalRoot, proofRoot, inputContainerRoot, evidenceRoot } =
+    await createDockerEvalRoots(canonicalParent);
   const toolchainSnapshotRoot = path.join(inputContainerRoot, "toolchain", "go-mod");
-  await Promise.all([
-    fs.chmod(evalRoot, 0o700),
-    fs.chmod(proofRoot, 0o700),
-    fs.chmod(inputContainerRoot, 0o700),
-    fs.chmod(evidenceRoot, 0o700),
-  ]);
+  const toolchainBootstrapRoot = path.join(inputContainerRoot, "toolchain", "go-bootstrap");
   try {
-    const [prepared, image, daemonSecurity, toolchain] = await Promise.all([
+    const [prepared, image, daemonSecurity] = await Promise.all([
       prepareDockerInputRepositories({
         sourceRoot: source,
         landingRoot: landing,
@@ -529,13 +552,21 @@ export async function runFreshAgentPipelineEvaluationInDocker({
       }),
       inspectDockerImage(runCommand),
       inspectDockerDaemon(runCommand),
-      discoverDockerToolchain({
-        sourceRoot: source,
-        snapshotRoot: toolchainSnapshotRoot,
-        inheritedEnv,
-        runCommand,
-      }),
     ]);
+    const toolchain = await discoverDockerToolchain({
+      sourceRoot: prepared.sourceRoot,
+      sourceProof: prepared.sourceProof,
+      privateRoot: inputContainerRoot,
+      snapshotRoot: toolchainSnapshotRoot,
+      bootstrapRoot: toolchainBootstrapRoot,
+      inheritedEnv,
+      runCommand,
+    });
+    if (toolchain.cleanupRoot !== toolchainBootstrapRoot) {
+      throw new Error(
+        "Docker toolchain cleanup root did not bind the owned private bootstrap root",
+      );
+    }
     const plan = buildDockerCreatePlan({
       sourceRoot: prepared.sourceRoot,
       landingRoot: prepared.landingRoot,
@@ -581,6 +612,7 @@ export async function runFreshAgentPipelineEvaluationInDocker({
     };
   } finally {
     await cleanupDockerInputRoots({
+      toolchainBootstrapRoot,
       toolchainSnapshotRoot,
       inputContainerRoot,
       proofRoot,

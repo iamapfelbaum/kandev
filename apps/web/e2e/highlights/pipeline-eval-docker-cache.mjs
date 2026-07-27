@@ -119,18 +119,17 @@ export async function removePrivateTree({ targetRoot, privateRoot } = {}) {
     .lstat(target)
     .catch((error) => (error.code === "ENOENT" ? null : Promise.reject(error)));
   if (!stat) return false;
-  await captureTreeProof(target);
+  if (!stat.isDirectory() || stat.isSymbolicLink() || (await fs.realpath(target)) !== target) {
+    throw new Error("private tree cleanup target must be a canonical non-symlink directory");
+  }
   async function makeDirectoriesWritable(directory) {
     await fs.chmod(directory, 0o700);
     const entries = await fs.readdir(directory, { withFileTypes: true });
     for (const entry of entries) {
       const child = path.join(directory, entry.name);
-      if (entry.isSymbolicLink()) {
-        throw new Error(`private tree cleanup refuses a symlink: ${child}`);
-      }
-      if (entry.isDirectory()) {
+      if (entry.isDirectory() && !entry.isSymbolicLink()) {
         await makeDirectoriesWritable(child);
-      } else if (!entry.isFile()) {
+      } else if (!entry.isFile() && !entry.isSymbolicLink()) {
         throw new Error(`private tree cleanup refuses an unsupported entry: ${child}`);
       }
     }

@@ -5,6 +5,7 @@ import {
   PLAYWRIGHT_IMAGE_REFERENCE,
   buildDockerCreatePlan,
 } from "./pipeline-eval-docker-boundary.mjs";
+import { validateMountedGoToolchain } from "./pipeline-eval-docker-inner.mjs";
 import { runInsideDockerBoundary } from "./pipeline-eval-docker-launcher.mjs";
 
 const IMAGE_DIGEST = PLAYWRIGHT_IMAGE_REFERENCE.split("@").at(-1);
@@ -19,6 +20,102 @@ const CACHE_INPUT = {
   directoryCount: 3,
   bytes: 41,
   symlinkCount: 0,
+};
+const CACHE_PROVISION = {
+  contract: "kandev-highlight-go-module-provision-v1",
+  source: {
+    repository: {
+      headSha: "a".repeat(40),
+      tree: "b".repeat(40),
+      originMainSha: "c".repeat(40),
+      status: "",
+      identity: { device: "1", inode: "1", mode: 0o755 },
+    },
+    goMod: {
+      path: "apps/backend/go.mod",
+      bytes: 100,
+      digest: `sha256:${"1".repeat(64)}`,
+    },
+    goSum: {
+      path: "apps/backend/go.sum",
+      bytes: 200,
+      digest: `sha256:${"2".repeat(64)}`,
+    },
+  },
+  command: {
+    executable: "/kandev/toolchain/go/bin/go",
+    args: ["mod", "download", "all"],
+    cwd: "apps/backend",
+  },
+  offlineProof: {
+    executable: "/kandev/toolchain/go/bin/go",
+    args: ["mod", "download", "all"],
+    proxy: "off",
+    status: "passed",
+    cacheUnchanged: true,
+  },
+  telemetry: {
+    executable: "/kandev/toolchain/go/bin/go",
+    args: ["telemetry", "off"],
+    status: "passed",
+    runtimeSeparated: true,
+  },
+  toolchain: {
+    version: "go version go1.24.6 linux/amd64",
+    root: "/kandev/toolchain/go",
+    acquired: {
+      contract: "kandev-highlight-private-go-toolchain-v1",
+      required: { go: "1.24.6", toolchain: null },
+      version: "go version go1.24.6 linux/amd64",
+      os: "linux",
+      architecture: "amd64",
+      binary: {
+        bytes: 12_345,
+        digest: `sha256:${"3".repeat(64)}`,
+      },
+      tree: {
+        ...CACHE_INPUT,
+        digest: `sha256:${"4".repeat(64)}`,
+      },
+      acquisition: {
+        command: {
+          executable: "bootstrap-go",
+          args: ["env", "GOROOT"],
+        },
+        selected: "go1.24.6",
+        proxyPolicy: {
+          GOPROXY: "https://proxy.golang.org",
+          GOSUMDB: "sum.golang.org",
+          GOPRIVATE: "",
+          GONOPROXY: "",
+          GONOSUMDB: "",
+          GOENV: "off",
+          GOWORK: "off",
+        },
+        offlineProof: {
+          proxy: "off",
+          status: "passed",
+          treeUnchanged: true,
+        },
+        cache: {
+          ...CACHE_INPUT,
+          digest: `sha256:${"5".repeat(64)}`,
+        },
+      },
+    },
+  },
+  proxyPolicy: {
+    GOPROXY: "https://proxy.golang.org",
+    GOSUMDB: "sum.golang.org",
+    GOPRIVATE: "",
+    GONOPROXY: "",
+    GONOSUMDB: "",
+    GOWORK: "off",
+    GOENV: "off",
+    GOFLAGS: "-mod=readonly",
+    GOTOOLCHAIN: "local",
+  },
+  cache: CACHE_INPUT,
 };
 
 function input() {
@@ -60,6 +157,7 @@ function input() {
       sourceRoot: CONTAINER_CACHE_SOURCE,
       targetRoot: CONTAINER_CACHE_TARGET,
       input: CACHE_INPUT,
+      provision: CACHE_PROVISION,
     },
   };
 }
@@ -84,6 +182,7 @@ function authorization(plan) {
 
 test("inner worker uses only a request-bound private writable Go module cache", async () => {
   const plan = buildDockerCreatePlan(input());
+  assert.deepEqual(plan.request.goModuleCache.provision, CACHE_PROVISION);
   const auth = authorization(plan);
   const records = [];
   let preparedCalls = 0;
@@ -110,6 +209,11 @@ test("inner worker uses only a request-bound private writable Go module cache", 
         root === "/kandev/source" ? plan.request.source : plan.request.landing,
       capturePathIdentity: async (target) =>
         plan.request.mounts.find((mount) => mount.target === target).identity,
+      captureTreeProof: async () => ({
+        root: "/kandev/toolchain/go",
+        ...CACHE_PROVISION.toolchain.acquired.tree,
+      }),
+      captureFileProof: async () => structuredClone(CACHE_PROVISION.toolchain.acquired.binary),
       prepareGoModuleCache: async (options) => {
         preparedCalls += 1;
         assert.deepEqual(options, {
@@ -165,4 +269,76 @@ test("inner worker uses only a request-bound private writable Go module cache", 
   ).value;
   assert.equal(checkpoint.goModuleCache.sourceUnchanged, true);
   assert.equal(checkpoint.goModuleCache.copy.digest, TREE_DIGEST);
+  assert.deepEqual(checkpoint.goModuleCache.provision, CACHE_PROVISION);
+});
+
+test("request rejects tampered Go provisioning and acquisition evidence", () => {
+  assert.throws(
+    () =>
+      buildDockerCreatePlan({
+        ...input(),
+        goModuleCache: {
+          ...input().goModuleCache,
+          provision: {
+            ...CACHE_PROVISION,
+            proxyPolicy: {
+              ...CACHE_PROVISION.proxyPolicy,
+              GOPROXY: "https://credential.example",
+            },
+          },
+        },
+      }),
+    /provision|proxy policy/i,
+  );
+  assert.throws(
+    () =>
+      buildDockerCreatePlan({
+        ...input(),
+        goModuleCache: {
+          ...input().goModuleCache,
+          provision: {
+            ...CACHE_PROVISION,
+            toolchain: {
+              ...CACHE_PROVISION.toolchain,
+              acquired: {
+                ...CACHE_PROVISION.toolchain.acquired,
+                version: "go version go1.24.7 linux/amd64",
+              },
+            },
+          },
+        },
+      }),
+    /toolchain|binary|evidence/i,
+  );
+});
+
+test("inner boundary rejects a separately forged acquired Go binary digest", async () => {
+  const acquired = CACHE_PROVISION.toolchain.acquired;
+  await assert.rejects(
+    validateMountedGoToolchain(
+      {
+        goModuleCache: {
+          provision: {
+            toolchain: {
+              acquired: {
+                ...acquired,
+                binary: {
+                  ...acquired.binary,
+                  digest: `sha256:${"f".repeat(64)}`,
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        captureTreeProof: async () => ({
+          root: "/kandev/toolchain/go",
+          ...acquired.tree,
+        }),
+        captureFileProof: async () => structuredClone(acquired.binary),
+      },
+    ),
+    /binary.*changed/i,
+  );
 });

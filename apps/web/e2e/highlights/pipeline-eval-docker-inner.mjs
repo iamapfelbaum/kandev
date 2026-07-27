@@ -15,9 +15,11 @@ import {
   validateRuntimeNetworkGateEvidence,
 } from "./pipeline-eval-docker-network-gate.mjs";
 import {
+  captureTreeProof,
   finalizePrivateGoModuleCache,
   preparePrivateGoModuleCache,
 } from "./pipeline-eval-docker-cache.mjs";
+import { CONTAINER_GO_ROOT, compactTreeProof } from "./pipeline-eval-go-provision-contract.mjs";
 import { runBoundedSubprocess } from "./pipeline-eval-shared.mjs";
 
 function mountInfoMode(mountInfo, target) {
@@ -92,12 +94,36 @@ function innerDependencies(overrides = {}) {
     readFile: overrides.readFile ?? fs.readFile,
     captureRepositoryProof: overrides.captureRepositoryProof ?? captureDockerRepositoryProof,
     capturePathIdentity: overrides.capturePathIdentity ?? capturePathIdentity,
+    captureTreeProof: overrides.captureTreeProof ?? captureTreeProof,
+    captureFileProof:
+      overrides.captureFileProof ??
+      (async (filePath) => {
+        const bytes = await fs.readFile(filePath);
+        return { bytes: bytes.length, digest: digestBytes(bytes) };
+      }),
     writeJson: overrides.writeJson ?? writeJsonExclusive,
     runCommand: overrides.runCommand ?? runBoundedSubprocess,
     runEvaluation: overrides.runEvaluation,
     prepareGoModuleCache: overrides.prepareGoModuleCache ?? preparePrivateGoModuleCache,
     finalizeGoModuleCache: overrides.finalizeGoModuleCache ?? finalizePrivateGoModuleCache,
   };
+}
+
+export async function validateMountedGoToolchain(request, deps) {
+  const acquired = request.goModuleCache?.provision?.toolchain?.acquired;
+  if (!acquired) return;
+  const [tree, binary] = await Promise.all([
+    deps.captureTreeProof(CONTAINER_GO_ROOT).then(compactTreeProof),
+    deps.captureFileProof(`${CONTAINER_GO_ROOT}/bin/go`),
+  ]);
+  if (
+    canonicalJson(tree) !== canonicalJson(acquired.tree) ||
+    canonicalJson(binary) !== canonicalJson(acquired.binary)
+  ) {
+    throw new Error(
+      "Docker boundary acquired Go toolchain tree or binary changed before evaluation",
+    );
+  }
 }
 
 function streamEvidence(bytes, filePath) {
@@ -149,6 +175,7 @@ async function validateInnerBoundary(requestPath, deps) {
       throw new Error(`Docker boundary mount identity changed before evaluation: ${value.target}`);
     }
   }
+  await validateMountedGoToolchain(request, deps);
   const [source, landing] = await Promise.all([
     deps.captureRepositoryProof(request.inner.sourceRoot, { includeOrigin: true }),
     deps.captureRepositoryProof(request.inner.landingRoot),
@@ -233,7 +260,10 @@ export async function runInsideDockerBoundary({ requestPath, dependencies = {} }
   let goModuleCache = null;
   if (preparedGoModuleCache) {
     try {
-      goModuleCache = await deps.finalizeGoModuleCache(preparedGoModuleCache);
+      goModuleCache = {
+        ...(await deps.finalizeGoModuleCache(preparedGoModuleCache)),
+        provision: structuredClone(request.goModuleCache.provision),
+      };
     } catch (error) {
       evaluation.failure = evaluation.failure
         ? new AggregateError(

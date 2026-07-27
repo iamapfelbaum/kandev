@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { captureRepositoryState } from "./pipeline-eval-repository.mjs";
+import { validateGoModuleProvision } from "./pipeline-eval-go-provision-contract.mjs";
 import { git, isInside } from "./pipeline-eval-shared.mjs";
 
 const IMAGE_DIGEST = "sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48";
@@ -198,7 +199,7 @@ function treeProof(value, label) {
   };
 }
 
-function goModuleCache(value, mounts) {
+function goModuleCache(value, mounts, source) {
   if (value === undefined) return null;
   const sourceRoot = requireAbsolute(value?.sourceRoot, "Go module cache source");
   const targetRoot = requireAbsolute(value?.targetRoot, "Go module cache target");
@@ -212,10 +213,16 @@ function goModuleCache(value, mounts) {
   ) {
     throw new Error("private Go module cache target must stay at the fixed writable eval path");
   }
+  const input = treeProof(value.input, "Go module cache input");
   return {
     sourceRoot,
     targetRoot,
-    input: treeProof(value.input, "Go module cache input"),
+    input,
+    provision: validateGoModuleProvision({
+      value: value.provision,
+      input,
+      source,
+    }),
   };
 }
 
@@ -362,7 +369,7 @@ function createBoundaryRequest(input, trusted, mounts) {
     source: trusted.source,
     landing: trusted.landing,
     mounts,
-    goModuleCache: goModuleCache(input.goModuleCache, mounts),
+    goModuleCache: goModuleCache(input.goModuleCache, mounts, trusted.source),
     environment: trusted.environment,
     network: { mode: "none", application: "loopback-only" },
     security: {
