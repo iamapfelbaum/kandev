@@ -26,8 +26,9 @@ This skill supplies seed design and isolation. `/feature-highlight` owns
 validation, storyboard, capture, render, automatic QA, external staging, and
 immutable promotion. Continue with manual handoff to `/product-video-capture`
 only for long-form or currently unmodeled media outside the short Highlight DSL.
-The forthcoming full fresh-agent eval is `pnpm e2e:highlight-pipeline`;
-app-local `e2e:highlight-capture` is only a lower-level runtime fixture test.
+The full fresh-agent eval is
+`pnpm --dir apps/web e2e:highlight-pipeline`; app-local
+`e2e:highlight-capture` is only a lower-level runtime fixture test.
 
 Feature-PR Highlights use exact clean `pr_head` provenance so scenario and media
 ship with reviewed code. The current-main gate below applies to deliberate

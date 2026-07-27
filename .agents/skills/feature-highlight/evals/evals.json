@@ -13,7 +13,7 @@
         "Uses node scripts/highlights.mjs scaffold, validate, storyboard, run, and promote with --template quick-start",
         "Uses --runtime kandev-isolated-e2e and --source pr_head with --pr-number and --pr-base-sha",
         "Preserves the automatic run ID and uses --run-id for render, QA, or stage recovery",
-        "Identifies pnpm e2e:highlight-pipeline as the forthcoming canonical fresh-agent integration/eval",
+        "Identifies pnpm --dir apps/web e2e:highlight-pipeline as the canonical fresh-agent integration/eval",
         "Uses testId or role plus exact accessible name and no arbitrary JavaScript or shell",
         "States that default camera is centered 1x with no zoom by default",
         "Keeps raw masters and QA outside the repository",

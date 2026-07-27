@@ -29,9 +29,10 @@ Checked contracts:
   `apps/web/e2e/highlights/quick-start.scenario.json`
 - closed runtime catalog: `scripts/highlights/runtime-catalog.mjs`
 
-The forthcoming repository-level executable integration/eval command is
-`pnpm e2e:highlight-pipeline`. App-local `e2e:highlight-capture` is a lower-level
-runtime contract test, not the production authoring command.
+The repository-level executable integration/eval command is
+`pnpm --dir apps/web e2e:highlight-pipeline`. App-local
+`e2e:highlight-capture` is a lower-level runtime contract test, not the
+production authoring command.
 
 ## Validate and storyboard
 

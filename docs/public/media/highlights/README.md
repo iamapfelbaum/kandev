@@ -34,9 +34,9 @@ node scripts/activate-highlights-release.mjs 0.20.0
 separate `--id` scaffold for customization. `kandev-isolated-e2e` is the only
 closed runtime and the default; its exact allowlist is
 `scripts/highlights/runtime-catalog.mjs`. The explicit flag above makes the
-trust boundary reviewable. The forthcoming repository integration/eval command
-is `pnpm e2e:highlight-pipeline`; app-local `e2e:highlight-capture` remains a
-lower-level runtime fixture test.
+trust boundary reviewable. The repository integration/eval command is
+`pnpm --dir apps/web e2e:highlight-pipeline`; app-local
+`e2e:highlight-capture` remains a lower-level runtime fixture test.
 
 Scenario v1 permits only stable `testId` or exact `role` + accessible-name
 targets. Setup and extension primitives require an explicit caller allowlist;

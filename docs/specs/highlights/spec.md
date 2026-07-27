@@ -225,9 +225,10 @@ node scripts/activate-highlights-release.mjs 0.20.0
 node scripts/highlight-pr-snippet.mjs docs/public/media/highlights/my-highlight <40-char-sha>
 ```
 
-The forthcoming canonical fresh-agent executable evaluation is
-`pnpm e2e:highlight-pipeline`. The app-local `e2e:highlight-capture` command is a
-lower-level runtime fixture test and is not a substitute for the pipeline eval.
+The canonical fresh-agent executable evaluation is
+`pnpm --dir apps/web e2e:highlight-pipeline`. The app-local
+`e2e:highlight-capture` command is a lower-level runtime fixture test and is not
+a substitute for the pipeline eval.
 
 `validate-public-docs.mjs` also validates the Highlights tree when present.
 The opt-in GitHub workflow runs the PR gate on pull-request label and head

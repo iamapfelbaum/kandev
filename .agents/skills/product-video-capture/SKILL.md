@@ -22,9 +22,9 @@ node scripts/highlights.mjs promote /external/highlights/<id>/stages/<manifest-d
 
 `kandev-isolated-e2e` is the only closed Highlight runtime and the default;
 `scripts/highlights/runtime-catalog.mjs` is its allowlist. Use
-`pnpm e2e:highlight-pipeline` as the forthcoming canonical fresh-agent
-integration/eval. App-local `e2e:highlight-capture` remains a lower-level
-runtime fixture test.
+`pnpm --dir apps/web e2e:highlight-pipeline` as the canonical fresh-agent
+integration/eval. App-local `e2e:highlight-capture` remains a lower-level runtime
+fixture test.
 
 Raw and QA stay outside repositories in content-addressed staging. A
 `technical_pass` review is not promotable until the stable reviewer ID is

@@ -30,9 +30,40 @@ const authoringSpec = readOrEmpty(
 const mediaReadme = readOrEmpty(
   path.join(repoRoot, "docs/public/media/highlights/README.md"),
 );
+const productVideoCaptureSkill = readOrEmpty(
+  path.join(repoRoot, ".agents/skills/product-video-capture/SKILL.md"),
+);
+const productDemoSeedingSkill = readOrEmpty(
+  path.join(repoRoot, ".agents/skills/product-demo-seeding/SKILL.md"),
+);
 const docsBundle = `${spec}\n${authoringSpec}\n${mediaReadme}`;
 const completeBundle = `${bundle}\n${docsBundle}`;
 const evals = readOrEmpty(path.join(evalDir, "evals.json"));
+
+test("documents the executable app-local pipeline eval command everywhere", () => {
+  const command = "pnpm --dir apps/web e2e:highlight-pipeline";
+  const sources = {
+    spec,
+    authoringSpec,
+    mediaReadme,
+    productVideoCaptureSkill,
+    productDemoSeedingSkill,
+    evals,
+  };
+  assert.equal(
+    fs.existsSync(path.join(repoRoot, "package.json")),
+    false,
+    "repository root intentionally has no package.json",
+  );
+  for (const [label, source] of Object.entries(sources)) {
+    assert.match(source, new RegExp(command.replaceAll("/", "\\/")), label);
+    assert.doesNotMatch(
+      source,
+      /forthcoming[^\n]{0,120}(?:highlight-pipeline|fresh-agent|integration|eval)/i,
+      label,
+    );
+  }
+});
 
 test("separates the immutable quick-start template from customizable scaffolds", () => {
   assert.match(
@@ -192,7 +223,10 @@ test("covers operational failures and the canonical executable evaluation", () =
   ]) {
     assert.match(completeBundle, new RegExp(failure, "i"));
   }
-  assert.match(completeBundle, /pnpm e2e:highlight-pipeline/);
+  assert.match(
+    completeBundle,
+    /pnpm --dir apps\/web e2e:highlight-pipeline/,
+  );
   assert.match(
     completeBundle,
     /e2e:highlight-capture[^\n]{0,120}(?:lower-level|fixture|runtime contract test)/i,
@@ -430,5 +464,5 @@ test("grades the fresh agent on the trusted runtime and review-v2 workflow", () 
   assert.match(evals, /kandev-highlight-review-stage-v2/);
   assert.match(evals, /runtimeLogs[^\n]{0,40}false/);
   assert.match(evals, /renderedPixelOcr[^\n]{0,40}false/);
-  assert.match(evals, /pnpm e2e:highlight-pipeline/);
+  assert.match(evals, /pnpm --dir apps\/web e2e:highlight-pipeline/);
 });
