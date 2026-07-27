@@ -231,19 +231,28 @@ export async function provisionPrivateGoModuleCache(input = {}) {
       await prepareOwnedPrivateTarget(input.privateRoot, `${context.target}.runtime`)
     ).target;
     provisioned = await executeProvision(context, runCommand);
-    const [proof, repositoryAfter, goModAfter, goSumAfter] = await Promise.all([
+    const [proof, goModAfter, goSumAfter] = await Promise.all([
       captureTreeProof(context.target),
-      captureSourceProof(verified.source, {
-        includeOrigin: Boolean(input.sourceProof.originMainSha),
-      }),
       sourceFileProof(verified.backend, "go.mod"),
       sourceFileProof(verified.backend, "go.sum"),
     ]);
+    const changedFiles = [
+      !sameFileProof(goModAfter, source.goMod) ? source.goMod.path : null,
+      !sameFileProof(goSumAfter, source.goSum) ? source.goSum.path : null,
+    ].filter(Boolean);
+    if (changedFiles.length > 0) {
+      throw new Error(
+        `${changedFiles.join(
+          " and ",
+        )} are incomplete for the exact Go toolchain; run \`cd apps/backend && go mod download all\`, review the lockfile-only delta, and commit it`,
+      );
+    }
+    const repositoryAfter = await captureSourceProof(verified.source, {
+      includeOrigin: Boolean(input.sourceProof.originMainSha),
+    });
     const changed = [
       proof.digest !== provisioned.digest,
       !samePreparedSource(repositoryAfter, repositoryBefore),
-      !sameFileProof(goModAfter, source.goMod),
-      !sameFileProof(goSumAfter, source.goSum),
     ];
     if (changed.some(Boolean)) {
       throw new Error(

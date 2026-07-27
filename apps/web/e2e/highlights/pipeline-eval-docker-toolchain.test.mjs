@@ -193,3 +193,28 @@ test("offline failure or prepared-source drift removes only the exact partial ca
   );
   await assert.rejects(fs.access(drift.targetRoot), /ENOENT/);
 });
+
+test("incomplete checked-in Go sums fail with the exact repair command", async (t) => {
+  const value = await fixture(t);
+  await assert.rejects(
+    provisionPrivateGoModuleCache({
+      ...value,
+      sourceSha: SOURCE_SHA,
+      sourceProof: value.sourceProof,
+      goVersion: GO_VERSION,
+      captureSourceProof: async () => structuredClone(value.sourceProof),
+      runCommand: async (specification) => {
+        await cacheWriter([])(specification);
+        if (specification.phase === "docker-toolchain-go-mod-download") {
+          await fs.appendFile(
+            path.join(value.backendRoot, "go.sum"),
+            "example.invalid/new v1.0.0 h1:missing\\n",
+          );
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+    }),
+    /apps\/backend\/go\.sum.*go mod download all/i,
+  );
+  await assert.rejects(fs.access(value.targetRoot), /ENOENT/);
+});
