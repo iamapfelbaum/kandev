@@ -28,6 +28,7 @@ import {
   startCaptureRuntime,
 } from "./capture-runtime.mjs";
 import { compileTimeline, computeScenarioDigest } from "./scenario.mjs";
+import { publishImmutableJson } from "./immutable-evidence.mjs";
 
 export {
   bindCaptureNavigation,
@@ -250,8 +251,7 @@ export function buildEncoderProbePlan({
     master: encoding.master,
     sourceDurationMs,
     startupAllowanceMs: ENCODER_PROBE_STARTUP_ALLOWANCE_MS,
-    maximumElapsedMs:
-      sourceDurationMs + ENCODER_PROBE_STARTUP_ALLOWANCE_MS,
+    maximumElapsedMs: sourceDurationMs + ENCODER_PROBE_STARTUP_ALLOWANCE_MS,
   };
 }
 
@@ -848,9 +848,7 @@ export async function startFfmpegRecorder({
 }
 
 function browserIsDisconnected(browser) {
-  return (
-    typeof browser?.isConnected === "function" && !browser.isConnected()
-  );
+  return typeof browser?.isConnected === "function" && !browser.isConnected();
 }
 
 function withDeadline(operation, timeoutMs, label) {
@@ -903,7 +901,9 @@ export async function connectCaptureBrowser({
     closeTimeoutMs < 1 ||
     closeTimeoutMs > 10_000
   ) {
-    throw new Error("browser close timeout must be an integer from 1 to 10000ms");
+    throw new Error(
+      "browser close timeout must be an integer from 1 to 10000ms",
+    );
   }
   const browser = await chromiumApi.connectOverCDP(endpoint);
   const context = browser.contexts()[0];
@@ -962,8 +962,11 @@ export async function connectCaptureBrowser({
           }
         }
         if (playwrightCloseError && (chromiumCloseError || detachError)) {
-          const errors = [chromiumCloseError, detachError, playwrightCloseError]
-            .filter(Boolean);
+          const errors = [
+            chromiumCloseError,
+            detachError,
+            playwrightCloseError,
+          ].filter(Boolean);
           throw new AggregateError(
             errors,
             errors.map((error) => error.message).join("; "),
@@ -1073,18 +1076,9 @@ export async function collectCaptureReceipt({
 }
 
 export async function writeCaptureEvidence(destination, evidence) {
-  const absolute = path.resolve(destination);
-  await fs.mkdir(path.dirname(absolute), { recursive: true });
-  try {
-    await fs.writeFile(absolute, `${JSON.stringify(evidence, null, 2)}\n`, {
-      flag: "wx",
-    });
-  } catch (error) {
-    if (error.code === "EEXIST")
-      throw new Error(`refusing to overwrite capture evidence: ${absolute}`);
-    throw error;
-  }
-  return absolute;
+  return publishImmutableJson(destination, evidence, {
+    collisionLabel: "capture evidence",
+  });
 }
 
 function runtimeEvidence(plan, teardown) {
@@ -1942,8 +1936,7 @@ export async function captureScenario({
         );
         const scheduledEnd = {
           frameCount: storyMediaStart.frameCount + expectedStoryFrames,
-          mediaTimeMs:
-            storyMediaStart.mediaTimeMs + result.storyDurationMs,
+          mediaTimeMs: storyMediaStart.mediaTimeMs + result.storyDurationMs,
         };
         await recorder.sample({
           minimumFrameCount: scheduledEnd.frameCount,

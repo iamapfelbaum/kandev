@@ -14,6 +14,10 @@ import {
   RUNTIME_NETWORK_GATE,
   validateRuntimeNetworkGateEvidence,
 } from "./pipeline-eval-docker-network-gate.mjs";
+import {
+  finalizePrivateGoModuleCache,
+  preparePrivateGoModuleCache,
+} from "./pipeline-eval-docker-cache.mjs";
 import { runBoundedSubprocess } from "./pipeline-eval-shared.mjs";
 
 function mountInfoMode(mountInfo, target) {
@@ -91,6 +95,8 @@ function innerDependencies(overrides = {}) {
     writeJson: overrides.writeJson ?? writeJsonExclusive,
     runCommand: overrides.runCommand ?? runBoundedSubprocess,
     runEvaluation: overrides.runEvaluation,
+    prepareGoModuleCache: overrides.prepareGoModuleCache ?? preparePrivateGoModuleCache,
+    finalizeGoModuleCache: overrides.finalizeGoModuleCache ?? finalizePrivateGoModuleCache,
   };
 }
 
@@ -207,19 +213,44 @@ export async function runInsideDockerBoundary({ requestPath, dependencies = {} }
     deps.runEvaluation ??
     (await import("./pipeline-eval-orchestrator.mjs")).runFreshAgentPipelineEvaluation;
   const environment = insideEnvironment(request.environment);
-  const { result, failure, networkGate } = await executeBoundaryEvaluation({
+  let preparedGoModuleCache = null;
+  if (request.goModuleCache) {
+    preparedGoModuleCache = await deps.prepareGoModuleCache({
+      sourceRoot: request.goModuleCache.sourceRoot,
+      targetRoot: request.goModuleCache.targetRoot,
+      evalRoot: request.inner.evalParent,
+      expected: request.goModuleCache.input,
+    });
+    environment.GOMODCACHE = request.goModuleCache.targetRoot;
+  }
+  const evaluation = await executeBoundaryEvaluation({
     deps,
     request,
     authorization,
     environment,
     runEvaluation,
   });
+  let goModuleCache = null;
+  if (preparedGoModuleCache) {
+    try {
+      goModuleCache = await deps.finalizeGoModuleCache(preparedGoModuleCache);
+    } catch (error) {
+      evaluation.failure = evaluation.failure
+        ? new AggregateError(
+            [evaluation.failure, error],
+            "Docker evaluation and private Go module cache postflight failed",
+          )
+        : error;
+    }
+  }
+  const { result, failure, networkGate } = evaluation;
   const record = {
     contract: "kandev-highlight-docker-boundary-inner-result-v1",
     status: failure ? "failed" : "passed",
     requestDigest: request.requestDigest,
     containerId: authorization.containerId,
     networkGate,
+    goModuleCache,
     result,
     failure: failureEvidence(failure),
   };

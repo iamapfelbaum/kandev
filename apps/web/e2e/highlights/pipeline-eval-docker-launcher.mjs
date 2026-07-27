@@ -178,6 +178,22 @@ async function readInnerResultIfPresent(state) {
   }
 }
 
+function validateInnerGoModuleCache(state, inner) {
+  const requested = state.plan.request.goModuleCache;
+  if (!requested) return;
+  const isolation = inner.goModuleCache?.isolation;
+  const invalid = [
+    inner.goModuleCache?.sourceUnchanged !== true,
+    isolation?.writableCopy !== true,
+    isolation?.insideEvalRoot !== true,
+    isolation?.noSymlinks !== true,
+    inner.goModuleCache?.copy?.digest !== requested.input.digest,
+  ];
+  if (invalid.some(Boolean)) {
+    throw new Error("Docker eval worker did not prove its isolated private Go module cache");
+  }
+}
+
 function validateInnerResult(state, exitCode) {
   const inner = state.inner;
   if (!inner) return;
@@ -196,6 +212,7 @@ function validateInnerResult(state, exitCode) {
   if (exitCode === 0 && !inner.networkGate) {
     throw new Error("Docker eval worker passed without its runtime network gate checkpoint");
   }
+  validateInnerGoModuleCache(state, inner);
 }
 
 function failedWorkerError(state, exitCode) {
@@ -339,6 +356,7 @@ function boundaryReceipt(state) {
     exit: state.exit,
     logs: state.logEvidence,
     networkGate: state.inner?.networkGate ?? null,
+    goModuleCache: state.inner?.goModuleCache ?? null,
     innerResultDigest: state.inner ? digestValue(state.inner) : null,
     error: state.failure?.message ?? null,
   };
@@ -498,7 +516,12 @@ export async function runFreshAgentPipelineEvaluationInDocker({
       }),
       inspectDockerImage(runCommand),
       inspectDockerDaemon(runCommand),
-      discoverDockerToolchain({ sourceRoot: source, inheritedEnv, runCommand }),
+      discoverDockerToolchain({
+        sourceRoot: source,
+        snapshotRoot: path.join(inputContainerRoot, "toolchain", "go-mod"),
+        inheritedEnv,
+        runCommand,
+      }),
     ]);
     const plan = buildDockerCreatePlan({
       sourceRoot: prepared.sourceRoot,
@@ -516,6 +539,7 @@ export async function runFreshAgentPipelineEvaluationInDocker({
       gid: typeof process.getgid === "function" ? process.getgid() : null,
       captureDeadlineMs,
       toolchainMounts: toolchain.mounts,
+      goModuleCache: toolchain.goModuleCache,
       environment: toolchain.environment,
       daemonSecurity,
     });

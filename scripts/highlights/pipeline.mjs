@@ -35,6 +35,7 @@ import {
   verifySourceGate as defaultVerifySourceGate,
 } from "./source-gate.mjs";
 import { runBrowserPlaybackQa } from "./browser-qa.mjs";
+import { publishImmutableJson } from "./immutable-evidence.mjs";
 
 const execFileAsync = promisify(execFile);
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
@@ -254,17 +255,9 @@ async function reserveAttempt(paths) {
 }
 
 async function writeJsonExclusive(filePath, value) {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  try {
-    await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, {
-      flag: "wx",
-    });
-  } catch (error) {
-    if (error.code === "EEXIST")
-      throw new Error(`refusing to overwrite immutable manifest: ${filePath}`);
-    throw error;
-  }
-  return filePath;
+  return publishImmutableJson(filePath, value, {
+    collisionLabel: "immutable manifest",
+  });
 }
 
 async function writePhaseRecord(paths, phase, value, deps) {
@@ -1652,12 +1645,51 @@ async function recoverContext(context) {
       { newAttempt: true },
     );
   }
-  const captureRecord = await readPhaseRecord(
-    paths,
-    "capture",
-    recovery,
-    "capture",
-  );
+  const capturePhasePath = path.join(paths.evidenceRoot, "capture.json");
+  const capturePhaseStat = await fs.lstat(capturePhasePath).catch((error) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  let captureRecord;
+  if (capturePhaseStat) {
+    captureRecord = await readPhaseRecord(
+      paths,
+      "capture",
+      recovery,
+      "capture",
+    );
+  } else {
+    const lowerReceiptPath = path.join(
+      paths.captureRoot,
+      "evidence",
+      "capture.json",
+    );
+    let receipt;
+    try {
+      receipt = await readJsonRegular(
+        lowerReceiptPath,
+        "durable source capture receipt",
+      );
+    } catch (error) {
+      throw recoveryError(recovery, error.message, "capture");
+    }
+    const candidate = {
+      contract: "kandev-highlight-capture-result-v1",
+      rawMasterPath: receipt.rawMaster?.path,
+      captureManifestPath: lowerReceiptPath,
+      receipt,
+      execution: receipt.execution,
+      timeline: recovery.timeline,
+    };
+    await validateRecoveredCapture(recovery, validateRecord.value, candidate);
+    await writePhaseRecord(paths, "capture", candidate, recovery.deps);
+    captureRecord = await readPhaseRecord(
+      paths,
+      "capture",
+      recovery,
+      "capture",
+    );
+  }
   if (captureRecord.value?.receipt?.scenarioDigest !== context.scenarioDigest) {
     throw recoveryError(
       recovery,
@@ -2204,15 +2236,24 @@ export async function writeContentAddressedStage(input = {}) {
       stageRoot,
       manifest.stageDigest.slice("sha256:".length),
     );
+    let recovered = false;
     try {
       await fs.rename(building, stageDir);
     } catch (error) {
       if (error.code === "EEXIST" || error.code === "ENOTEMPTY") {
-        throw new Error(
-          `refusing to overwrite content-addressed stage collision: ${stageDir}`,
-        );
+        try {
+          await assertIdenticalStageDirectories(building, stageDir);
+        } catch (verificationError) {
+          throw new Error(
+            `refusing to overwrite content-addressed stage collision: ${stageDir}: ${verificationError.message}`,
+            { cause: verificationError },
+          );
+        }
+        await fs.rm(building, { recursive: true, force: true });
+        recovered = true;
+      } else {
+        throw error;
       }
-      throw error;
     }
     return {
       contract: "kandev-highlight-stage-result-v1",
@@ -2224,9 +2265,56 @@ export async function writeContentAddressedStage(input = {}) {
       stageDigest: manifest.stageDigest,
       manifest,
       input,
+      ...(recovered ? { recovered: true } : {}),
     };
   } catch (error) {
     await fs.rm(building, { recursive: true, force: true });
     throw error;
+  }
+}
+
+async function stageDirectoryEntries(root) {
+  const rootStat = await fs.lstat(root).catch(() => null);
+  if (!rootStat?.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new Error("stage root is not a regular directory");
+  }
+  const entries = [];
+  async function visit(directory) {
+    const children = await fs.readdir(directory, { withFileTypes: true });
+    children.sort((left, right) => left.name.localeCompare(right.name));
+    for (const child of children) {
+      const absolute = path.join(directory, child.name);
+      const relative = path.relative(root, absolute).split(path.sep).join("/");
+      const stat = await fs.lstat(absolute);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`stage contains symlink: ${relative}`);
+      }
+      if (stat.isDirectory()) {
+        entries.push({ kind: "directory", path: relative });
+        await visit(absolute);
+        continue;
+      }
+      if (!stat.isFile()) {
+        throw new Error(`stage contains unsupported entry: ${relative}`);
+      }
+      entries.push({
+        kind: "file",
+        path: relative,
+        bytes: stat.size,
+        sha256: await hashFile(absolute),
+      });
+    }
+  }
+  await visit(root);
+  return entries;
+}
+
+async function assertIdenticalStageDirectories(candidate, published) {
+  const [candidateEntries, publishedEntries] = await Promise.all([
+    stageDirectoryEntries(candidate),
+    stageDirectoryEntries(published),
+  ]);
+  if (canonicalJson(candidateEntries) !== canonicalJson(publishedEntries)) {
+    throw new Error("published stage tree is not byte-identical");
   }
 }

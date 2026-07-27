@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { capturePathIdentity } from "./pipeline-eval-docker-boundary.mjs";
+import { captureTreeProof, snapshotReadOnlyTree } from "./pipeline-eval-docker-cache.mjs";
 import { runBoundedSubprocess } from "./pipeline-eval-shared.mjs";
 
 const CONTAINER_GO_ROOT = "/kandev/toolchain/go";
@@ -38,9 +39,13 @@ async function commandOutput(runCommand, specification) {
 
 export async function discoverDockerToolchain({
   sourceRoot,
+  snapshotRoot,
   inheritedEnv = process.env,
   runCommand = runBoundedSubprocess,
 } = {}) {
+  if (!path.isAbsolute(snapshotRoot ?? "")) {
+    throw new Error("Docker toolchain requires an absolute private snapshot root");
+  }
   const appsRoot = path.join(sourceRoot, "apps");
   const packageJson = JSON.parse(await fs.readFile(path.join(appsRoot, "package.json"), "utf8"));
   const pnpmVersion = PNPM_VERSION_PATTERN.exec(packageJson.packageManager ?? "")?.[1];
@@ -86,11 +91,16 @@ export async function discoverDockerToolchain({
     ffprobe: "/usr/bin/ffprobe",
     "pkg-config": "/usr/bin/pkg-config",
   };
+  const goModuleCacheSnapshot = await snapshotReadOnlyTree({
+    sourceRoot: goModCache,
+    targetRoot: snapshotRoot,
+  });
+  const goModuleCacheProof = await captureTreeProof(snapshotRoot);
   const mounts = await Promise.all([
     toolMount(pnpmRoot, "/kandev/toolchain/pnpm"),
     toolMount(pnpmStore, "/kandev/toolchain/pnpm-store/v3"),
     toolMount(goRoot, CONTAINER_GO_ROOT),
-    toolMount(goModCache, "/kandev/toolchain/go-mod"),
+    toolMount(snapshotRoot, "/kandev/toolchain/go-mod"),
     toolMount("/usr/lib/gcc", "/usr/lib/gcc"),
     toolMount("/usr/libexec/gcc", "/usr/libexec/gcc"),
     toolMount("/usr/include", "/usr/include"),
@@ -104,6 +114,19 @@ export async function discoverDockerToolchain({
   ]);
   return {
     mounts,
+    goModuleCache: {
+      sourceRoot: "/kandev/toolchain/go-mod",
+      targetRoot: "/kandev/eval/go-mod-cache",
+      input: {
+        contract: goModuleCacheProof.contract,
+        digest: goModuleCacheProof.digest,
+        fileCount: goModuleCacheProof.fileCount,
+        directoryCount: goModuleCacheProof.directoryCount,
+        bytes: goModuleCacheProof.bytes,
+        symlinkCount: goModuleCacheProof.symlinkCount,
+      },
+      hostSnapshot: goModuleCacheSnapshot,
+    },
     environment: {
       GOROOT: CONTAINER_GO_ROOT,
       npm_config_store_dir: "/kandev/toolchain/pnpm-store/v3",

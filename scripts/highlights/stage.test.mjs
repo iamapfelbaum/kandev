@@ -1,31 +1,47 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import test, { after } from "node:test";
+import test from "node:test";
 import { spawnSync } from "node:child_process";
 
-const tempDirs = [];
-
-after(async () => {
-  await Promise.all(tempDirs.map((dir) => fs.rm(dir, { recursive: true, force: true })));
-});
+import {
+  createStage,
+  fixtureSeedDigest,
+  probeFixture,
+  relativeFiles,
+} from "./stage.test-fixtures.mjs";
 
 test("reads a content-addressed external stage and verifies source, capture, QA, and deliveries", async () => {
   const fixture = await createStage();
-  const declarations = await fs.readFile(new URL("./stage.d.ts", import.meta.url), "utf8");
+  const declarations = await fs.readFile(
+    new URL("./stage.d.ts", import.meta.url),
+    "utf8",
+  );
   const { readStageManifest } = await import("./stage.mjs");
-  const result = await readStageManifest(fixture.manifestPath, { repoRoot: fixture.repoRoot });
+  const result = await readStageManifest(fixture.manifestPath, {
+    repoRoot: fixture.repoRoot,
+  });
   assert.equal(result.manifest.highlight.id, "stage-demo");
-  assert.equal(result.manifest.stageDigest, `sha256:${path.basename(fixture.stageDir)}`);
+  assert.equal(
+    result.manifest.stageDigest,
+    `sha256:${path.basename(fixture.stageDir)}`,
+  );
   assert.equal(result.scenario.id, "quick-start");
   assert.equal(result.manifest.provenance.seedId, result.scenario.seed.recipe);
-  assert.equal(result.manifest.provenance.seedDigest, fixtureSeedDigest(result.scenario.seed));
+  assert.equal(
+    result.manifest.provenance.seedDigest,
+    fixtureSeedDigest(result.scenario.seed),
+  );
   assert.match(declarations, /export interface HighlightStageManifestV1/);
-  assert.match(declarations, /landingAdapter: \{ sourceSha: string; contractVersion: string \}/);
+  assert.match(
+    declarations,
+    /landingAdapter: \{ sourceSha: string; contractVersion: string \}/,
+  );
 
-  await fs.appendFile(path.join(fixture.stageDir, fixture.manifest.capture.path), "tampered");
+  await fs.appendFile(
+    path.join(fixture.stageDir, fixture.manifest.capture.path),
+    "tampered",
+  );
   await assert.rejects(
     readStageManifest(fixture.manifestPath, { repoRoot: fixture.repoRoot }),
     /capture.*digest|hash/i,
@@ -48,8 +64,14 @@ test("stage provenance requires exact landing adapter SHA and contract version",
     landingAdapter: { sourceSha: "dirty", contractVersion: "" },
   });
   const { readStageManifest } = await import("./stage.mjs");
-  await assert.rejects(readStageManifest(missing.manifestPath, { repoRoot: missing.repoRoot }), /landing adapter.*(?:required|object)|landingAdapter/i);
-  await assert.rejects(readStageManifest(malformed.manifestPath, { repoRoot: malformed.repoRoot }), /landing adapter.*SHA|contract version|landingAdapter/i);
+  await assert.rejects(
+    readStageManifest(missing.manifestPath, { repoRoot: missing.repoRoot }),
+    /landing adapter.*(?:required|object)|landingAdapter/i,
+  );
+  await assert.rejects(
+    readStageManifest(malformed.manifestPath, { repoRoot: malformed.repoRoot }),
+    /landing adapter.*SHA|contract version|landingAdapter/i,
+  );
 });
 
 test("rejects non-accepted QA even when the stage digest is internally consistent", async () => {
@@ -62,7 +84,10 @@ test("rejects non-accepted QA even when the stage digest is internally consisten
 });
 
 test("manifest acceptance cannot override a rejected staged QA report", async () => {
-  const fixture = await createStage({ qaStatus: "accepted", reportStatus: "rejected" });
+  const fixture = await createStage({
+    qaStatus: "accepted",
+    reportStatus: "rejected",
+  });
   const { readStageManifest } = await import("./stage.mjs");
   await assert.rejects(
     readStageManifest(fixture.manifestPath, { repoRoot: fixture.repoRoot }),
@@ -81,7 +106,10 @@ test("new declarative stages reject legacy-sized desktop deliveries", async () =
 
 test("stage sources must be regular files and cannot escape through symlinks", async () => {
   const fixture = await createStage();
-  const scenarioPath = path.join(fixture.stageDir, fixture.manifest.scenario.path);
+  const scenarioPath = path.join(
+    fixture.stageDir,
+    fixture.manifest.scenario.path,
+  );
   const outside = path.join(fixture.base, "outside-scenario.json");
   await fs.rename(scenarioPath, outside);
   await fs.symlink(outside, scenarioPath);
@@ -135,17 +163,31 @@ test("atomically promotes only deliveries, scenario, and compact provenance", as
   assert.equal(result.descriptor.status, "queued");
   assert.equal(result.descriptor.qa_status, "accepted");
   assert.equal(result.descriptor.mobile.available, true);
-  assert.equal(result.descriptor.mobile.declaration, "Feature has a native mobile surface.");
-  assert.equal(result.descriptor.provenance.scenario_digest, fixture.manifest.scenario.digest);
-  assert.equal(result.descriptor.provenance.capture_digest, fixture.manifest.capture.digest);
-  assert.equal(result.descriptor.provenance.stage_digest, fixture.manifest.stageDigest);
+  assert.equal(
+    result.descriptor.mobile.declaration,
+    "Feature has a native mobile surface.",
+  );
+  assert.equal(
+    result.descriptor.provenance.scenario_digest,
+    fixture.manifest.scenario.digest,
+  );
+  assert.equal(
+    result.descriptor.provenance.capture_digest,
+    fixture.manifest.capture.digest,
+  );
+  assert.equal(
+    result.descriptor.provenance.stage_digest,
+    fixture.manifest.stageDigest,
+  );
   assert.deepEqual(result.descriptor.provenance.landing_adapter, {
     source_sha: "89abcdef0123456789abcdef0123456789abcdef",
     contract_version: "1.0.0",
   });
   assert.match(result.descriptor.source_digest, /^sha256:[a-f0-9]{64}$/);
 
-  const promotedFiles = await relativeFiles(path.join(fixture.highlightsDir, "stage-demo"));
+  const promotedFiles = await relativeFiles(
+    path.join(fixture.highlightsDir, "stage-demo"),
+  );
   assert.deepEqual(promotedFiles, [
     "highlight.json",
     "revisions/r1/desktop.mp4",
@@ -157,16 +199,20 @@ test("atomically promotes only deliveries, scenario, and compact provenance", as
     "revisions/r1/provenance.json",
     "revisions/r1/scenario.json",
   ]);
-  assert(!promotedFiles.some((file) => file.includes("raw") || file.includes("qa")));
+  assert(
+    !promotedFiles.some((file) => file.includes("raw") || file.includes("qa")),
+  );
 
-  await assert.rejects(
-    promoteStagedHighlight({
-      manifestPath: fixture.manifestPath,
-      repoRoot: fixture.repoRoot,
-      highlightsDir: fixture.highlightsDir,
-      probe: probeFixture,
-    }),
-    /revision.*exists|collision|overwrite/i,
+  const retried = await promoteStagedHighlight({
+    manifestPath: fixture.manifestPath,
+    repoRoot: fixture.repoRoot,
+    highlightsDir: fixture.highlightsDir,
+    probe: probeFixture,
+  });
+  assert.equal(retried.recovered, true);
+  assert.equal(
+    retried.descriptor.source_digest,
+    result.descriptor.source_digest,
   );
 });
 
@@ -178,12 +224,21 @@ test("failed validation leaves no partial destination", async () => {
       manifestPath: fixture.manifestPath,
       repoRoot: fixture.repoRoot,
       highlightsDir: fixture.highlightsDir,
-      probe: async () => { throw new Error("decode failed"); },
+      probe: async () => {
+        throw new Error("decode failed");
+      },
     }),
     /decode failed/,
   );
-  await assert.rejects(fs.access(path.join(fixture.highlightsDir, "stage-demo")));
-  assert.equal((await fs.readdir(fixture.highlightsDir)).filter((name) => name.startsWith(".promote-")).length, 0);
+  await assert.rejects(
+    fs.access(path.join(fixture.highlightsDir, "stage-demo")),
+  );
+  assert.equal(
+    (await fs.readdir(fixture.highlightsDir)).filter((name) =>
+      name.startsWith(".promote-"),
+    ).length,
+    0,
+  );
 });
 
 test("promotion reclaims a lock whose recorded owner is provably gone", async () => {
@@ -223,16 +278,24 @@ test("promotion refuses a lock owned by the active PID and start token", async (
       highlightsDir: fixture.highlightsDir,
       probe: probeFixture,
     }),
-    new RegExp(`active.*promotion.*lock.*PID ${process.pid}|promotion.*lock.*PID ${process.pid}.*active`, "i"),
+    new RegExp(
+      `active.*promotion.*lock.*PID ${process.pid}|promotion.*lock.*PID ${process.pid}.*active`,
+      "i",
+    ),
   );
-  await assert.rejects(fs.access(path.join(fixture.highlightsDir, "stage-demo")));
-  assert.equal(JSON.parse(await fs.readFile(lockPath, "utf8")).owner.startToken, startToken);
+  await assert.rejects(
+    fs.access(path.join(fixture.highlightsDir, "stage-demo")),
+  );
+  assert.equal(
+    JSON.parse(await fs.readFile(lockPath, "utf8")).owner.startToken,
+    startToken,
+  );
 });
 
 test("promotion refuses malformed or ambiguous lock ownership", async () => {
   const fixture = await createStage();
   const lockPath = promotionLockPath(fixture);
-  await fs.writeFile(lockPath, "{\"contract\":\"unknown\"}\n", { flag: "wx" });
+  await fs.writeFile(lockPath, '{"contract":"unknown"}\n', { flag: "wx" });
   const { promoteStagedHighlight } = await import("./stage.mjs");
 
   await assert.rejects(
@@ -244,7 +307,7 @@ test("promotion refuses malformed or ambiguous lock ownership", async () => {
     }),
     /malformed|ambiguous|cannot prove.*owner/i,
   );
-  assert.equal(await fs.readFile(lockPath, "utf8"), "{\"contract\":\"unknown\"}\n");
+  assert.equal(await fs.readFile(lockPath, "utf8"), '{"contract":"unknown"}\n');
 });
 
 test("promotion refuses a symlinked lock without touching its target", async () => {
@@ -267,7 +330,10 @@ test("promotion refuses a symlinked lock without touching its target", async () 
     }),
     /symlink|ambiguous|regular.*lock/i,
   );
-  assert.equal(JSON.parse(await fs.readFile(outside, "utf8")).owner.pid, 2_147_483_647);
+  assert.equal(
+    JSON.parse(await fs.readFile(outside, "utf8")).owner.pid,
+    2_147_483_647,
+  );
 });
 
 test("promotion surfaces lock cleanup failure after successful promotion", async () => {
@@ -292,8 +358,13 @@ test("promotion surfaces lock cleanup failure after successful promotion", async
     }),
     /promotion.*lock.*cleanup|cleanup.*promotion.*lock/i,
   );
-  await fs.access(path.join(fixture.highlightsDir, "stage-demo/highlight.json"));
-  assert.equal(await fs.readFile(path.join(lockPath, "foreign-owner"), "utf8"), "preserve");
+  await fs.access(
+    path.join(fixture.highlightsDir, "stage-demo/highlight.json"),
+  );
+  assert.equal(
+    await fs.readFile(path.join(lockPath, "foreign-owner"), "utf8"),
+    "preserve",
+  );
 });
 
 test("promotion aggregates primary and lock cleanup failures", async () => {
@@ -318,10 +389,23 @@ test("promotion aggregates primary and lock cleanup failures", async () => {
 
   assert(failure instanceof AggregateError);
   assert.match(failure.message, /promotion.*cleanup/i);
-  assert(failure.errors.some((error) => /decode failed before promotion/.test(error.message)));
-  assert(failure.errors.some((error) => /lock.*changed|lock.*cleanup|cleanup.*lock/i.test(error.message)));
-  await assert.rejects(fs.access(path.join(fixture.highlightsDir, "stage-demo")));
-  assert.equal(await fs.readFile(path.join(lockPath, "foreign-owner"), "utf8"), "preserve");
+  assert(
+    failure.errors.some((error) =>
+      /decode failed before promotion/.test(error.message),
+    ),
+  );
+  assert(
+    failure.errors.some((error) =>
+      /lock.*changed|lock.*cleanup|cleanup.*lock/i.test(error.message),
+    ),
+  );
+  await assert.rejects(
+    fs.access(path.join(fixture.highlightsDir, "stage-demo")),
+  );
+  assert.equal(
+    await fs.readFile(path.join(lockPath, "foreign-owner"), "utf8"),
+    "preserve",
+  );
 });
 
 test("adds a new immutable revision without changing prior revision bytes", async () => {
@@ -334,8 +418,14 @@ test("adds a new immutable revision without changing prior revision bytes", asyn
     probe: probeFixture,
     now: "2026-07-22T12:00:00.000Z",
   });
-  const oldBytes = await fs.readFile(path.join(first.highlightsDir, "stage-demo/revisions/r1/desktop.mp4"));
-  const second = await createStage({ revision: "r2", existing: first, payloadSuffix: "-r2" });
+  const oldBytes = await fs.readFile(
+    path.join(first.highlightsDir, "stage-demo/revisions/r1/desktop.mp4"),
+  );
+  const second = await createStage({
+    revision: "r2",
+    existing: first,
+    payloadSuffix: "-r2",
+  });
   const result = await promoteStagedHighlight({
     manifestPath: second.manifestPath,
     repoRoot: first.repoRoot,
@@ -345,21 +435,40 @@ test("adds a new immutable revision without changing prior revision bytes", asyn
   });
 
   assert.equal(result.descriptor.active_revision, "r2");
-  assert.deepEqual(result.descriptor.revision_history.map((entry) => entry.revision), ["r1", "r2"]);
-  assert.deepEqual(await fs.readFile(path.join(first.highlightsDir, "stage-demo/revisions/r1/desktop.mp4")), oldBytes);
-  assert.notDeepEqual(await fs.readFile(path.join(first.highlightsDir, "stage-demo/revisions/r2/desktop.mp4")), oldBytes);
+  assert.deepEqual(
+    result.descriptor.revision_history.map((entry) => entry.revision),
+    ["r1", "r2"],
+  );
+  assert.deepEqual(
+    await fs.readFile(
+      path.join(first.highlightsDir, "stage-demo/revisions/r1/desktop.mp4"),
+    ),
+    oldBytes,
+  );
+  assert.notDeepEqual(
+    await fs.readFile(
+      path.join(first.highlightsDir, "stage-demo/revisions/r2/desktop.mp4"),
+    ),
+    oldBytes,
+  );
 });
 
 test("CLI promote refuses a legacy accepted-stage manifest", async () => {
   const fixture = await createStage();
   const script = path.resolve("scripts/highlights.mjs");
-  const result = spawnSync(process.execPath, [script, "promote", fixture.manifestPath, "--dry-run"], {
-    cwd: fixture.repoRoot,
-    encoding: "utf8",
-  });
+  const result = spawnSync(
+    process.execPath,
+    [script, "promote", fixture.manifestPath, "--dry-run"],
+    {
+      cwd: fixture.repoRoot,
+      encoding: "utf8",
+    },
+  );
   assert.notEqual(result.status, 0, result.stdout);
   assert.match(result.stderr, /promote.*review.*v2|review.*manifest.*only/i);
-  await assert.rejects(fs.access(path.join(fixture.highlightsDir, "stage-demo")));
+  await assert.rejects(
+    fs.access(path.join(fixture.highlightsDir, "stage-demo")),
+  );
 });
 
 test("CLI promote refuses a self-hashed legacy stage backed only by technical_pass", async () => {
@@ -370,181 +479,41 @@ test("CLI promote refuses a self-hashed legacy stage backed only by technical_pa
     reportPassed: true,
   });
   const script = path.resolve("scripts/highlights.mjs");
-  const result = spawnSync(process.execPath, [script, "promote", fixture.manifestPath, "--dry-run"], {
-    cwd: fixture.repoRoot,
-    encoding: "utf8",
-  });
+  const result = spawnSync(
+    process.execPath,
+    [script, "promote", fixture.manifestPath, "--dry-run"],
+    {
+      cwd: fixture.repoRoot,
+      encoding: "utf8",
+    },
+  );
 
   assert.notEqual(result.status, 0, result.stdout);
   assert.match(result.stderr, /promote.*review.*v2|review.*manifest.*only/i);
-  await assert.rejects(fs.access(path.join(fixture.highlightsDir, "stage-demo")));
+  await assert.rejects(
+    fs.access(path.join(fixture.highlightsDir, "stage-demo")),
+  );
 });
-
-async function createStage({ revision = "r1", qaStatus = "accepted", reportStatus = qaStatus, reportPassed, seedId, seedDigest, existing, payloadSuffix = "", desktopWidth = 1920, desktopHeight = 1200, landingAdapter = { sourceSha: "89abcdef0123456789abcdef0123456789abcdef", contractVersion: "1.0.0" } } = {}) {
-  let base;
-  let repoRoot;
-  let highlightsDir;
-  let stagesRoot;
-  if (existing) {
-    ({ base, repoRoot, highlightsDir, stagesRoot } = existing);
-  } else {
-    base = await fs.mkdtemp(path.join(os.tmpdir(), "kandev-highlight-stage-"));
-    tempDirs.push(base);
-    repoRoot = path.join(base, "repo");
-    highlightsDir = path.join(repoRoot, "docs/public/media/highlights");
-    stagesRoot = path.join(base, "stages");
-    await fs.mkdir(highlightsDir, { recursive: true });
-    await fs.mkdir(stagesRoot, { recursive: true });
-    await fs.writeFile(path.join(repoRoot, "docs/public/guide.md"), "# Guide\n\n## Create a task\n\nDocs.\n");
-  }
-
-  const workDir = await fs.mkdtemp(path.join(stagesRoot, ".building-"));
-  const files = {
-    "scenario.json": await fs.readFile(path.resolve("scripts/highlights/examples/quick-start.scenario.json")),
-    "raw/capture.webm": Buffer.from(`raw-capture${payloadSuffix}`),
-    "qa/report.json": Buffer.from(`${JSON.stringify({
-      status: reportStatus,
-      ...(reportPassed === undefined ? {} : { passed: reportPassed }),
-      checks: ["codec", "containment"],
-    })}\n`),
-    "deliveries/desktop.webm": Buffer.from(`desktop-webm${payloadSuffix}`),
-    "deliveries/desktop.mp4": Buffer.from(`desktop-mp4${payloadSuffix}`),
-    "deliveries/desktop.webp": Buffer.from(`desktop-webp${payloadSuffix}`),
-    "deliveries/mobile.webm": Buffer.from(`mobile-webm${payloadSuffix}`),
-    "deliveries/mobile.mp4": Buffer.from(`mobile-mp4${payloadSuffix}`),
-    "deliveries/mobile.webp": Buffer.from(`mobile-webp${payloadSuffix}`),
-    "raw/secret.txt": Buffer.from("must stay outside repository"),
-  };
-  await Promise.all(Object.entries(files).map(async ([relative, bytes]) => {
-    const target = path.join(workDir, relative);
-    await fs.mkdir(path.dirname(target), { recursive: true });
-    await fs.writeFile(target, bytes);
-  }));
-  const { computeScenarioDigest } = await import("./scenario.mjs");
-  const scenario = JSON.parse(files["scenario.json"]);
-  const scenarioDigest = computeScenarioDigest(scenario);
-  const mediaRecord = (relative, codec, width, height, fps, duration) => ({
-    path: relative,
-    bytes: files[relative].length,
-    sha256: sha(files[relative]),
-    codec,
-    width,
-    height,
-    fps,
-    duration,
-    audio: false,
-  });
-  const manifest = {
-    schemaVersion: 1,
-    revision,
-    highlight: {
-      id: "stage-demo",
-      title: "Create a task",
-      summary: "Create focused work without leaving the board.",
-      caption: "Open the task dialog, enter a title, and create the task.",
-      releaseVersion: "0.99.0",
-      featureFlags: ["features.highlights"],
-      docs: { page: "guide.md", section: "Create a task" },
-      mobileDeclaration: "Feature has a native mobile surface.",
-    },
-    scenario: { path: "scenario.json", digest: scenarioDigest },
-    capture: { path: "raw/capture.webm", digest: `sha256:${sha(files["raw/capture.webm"])}` },
-    qa: {
-      status: qaStatus,
-      reportPath: "qa/report.json",
-      reportDigest: `sha256:${sha(files["qa/report.json"])}`,
-      acceptedAt: "2026-07-22T11:00:00.000Z",
-    },
-    provenance: {
-      captureMode: "pr_head",
-      sourceSha: "0123456789abcdef0123456789abcdef01234567",
-      capturedAt: "2026-07-22T10:00:00.000Z",
-      seedId: seedId ?? scenario.seed.recipe,
-      seedDigest: seedDigest ?? fixtureSeedDigest(scenario.seed),
-      toolVersion: "highlights/1",
-      ...(landingAdapter ? { landingAdapter } : {}),
-      prNumber: 42,
-      prBaseSha: "fedcba9876543210fedcba9876543210fedcba98",
-      prHeadSha: "0123456789abcdef0123456789abcdef01234567",
-    },
-    assets: {
-      desktop: {
-        webm: mediaRecord("deliveries/desktop.webm", "vp9", desktopWidth, desktopHeight, 25, 6.2),
-        mp4: mediaRecord("deliveries/desktop.mp4", "h264", desktopWidth, desktopHeight, 25, 6.2),
-        poster: mediaRecord("deliveries/desktop.webp", "webp", desktopWidth, desktopHeight, null, null),
-      },
-      mobile: {
-        webm: mediaRecord("deliveries/mobile.webm", "vp9", 1290, 2796, 25, 6.2),
-        mp4: mediaRecord("deliveries/mobile.mp4", "h264", 1290, 2796, 25, 6.2),
-        poster: mediaRecord("deliveries/mobile.webp", "webp", 1290, 2796, null, null),
-      },
-    },
-  };
-  const { computeStageManifestDigest } = await import("./stage.mjs");
-  manifest.stageDigest = computeStageManifestDigest(manifest);
-  await fs.writeFile(path.join(workDir, "stage.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-  const stageDir = path.join(stagesRoot, manifest.stageDigest.slice("sha256:".length));
-  await fs.rename(workDir, stageDir);
-  return { base, repoRoot, highlightsDir, stagesRoot, stageDir, manifestPath: path.join(stageDir, "stage.json"), manifest };
-}
-
-function sha(bytes) {
-  return createHash("sha256").update(bytes).digest("hex");
-}
-
-function fixtureSeedDigest(seed) {
-  return `sha256:${sha(Buffer.from(canonicalJson(seed)))}`;
-}
-
-function canonicalJson(value) {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
 
 function promotionLockPath(fixture) {
   return path.join(fixture.highlightsDir, ".promote-stage-demo.lock");
 }
 
 async function writePromotionLock(lockPath, { pid, startToken }) {
-  await fs.writeFile(lockPath, `${JSON.stringify({
-    contract: "kandev-highlight-promotion-lock-v1",
-    highlightId: "stage-demo",
-    owner: { pid, startToken },
-    createdAt: "2026-07-22T09:00:00.000Z",
-  })}\n`, { flag: "wx" });
+  await fs.writeFile(
+    lockPath,
+    `${JSON.stringify({
+      contract: "kandev-highlight-promotion-lock-v1",
+      highlightId: "stage-demo",
+      owner: { pid, startToken },
+      createdAt: "2026-07-22T09:00:00.000Z",
+    })}\n`,
+    { flag: "wx" },
+  );
 }
 
 async function replacePromotionLock(lockPath) {
   await fs.rm(lockPath, { recursive: true, force: true });
   await fs.mkdir(lockPath);
   await fs.writeFile(path.join(lockPath, "foreign-owner"), "preserve");
-}
-
-async function probeFixture(filePath) {
-  const mobile = filePath.includes("mobile.");
-  const poster = filePath.endsWith(".webp");
-  return {
-    codec: poster ? "webp" : filePath.endsWith(".webm") ? "vp9" : "h264",
-    width: mobile ? 1290 : 1920,
-    height: mobile ? 2796 : 1200,
-    fps: poster ? null : 25,
-    duration: poster ? null : 6.2,
-    audio: false,
-  };
-}
-
-async function relativeFiles(root) {
-  const files = [];
-  async function visit(directory) {
-    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
-      const target = path.join(directory, entry.name);
-      if (entry.isDirectory()) await visit(target);
-      else files.push(path.relative(root, target).split(path.sep).join("/"));
-    }
-  }
-  await visit(root);
-  return files.sort();
 }

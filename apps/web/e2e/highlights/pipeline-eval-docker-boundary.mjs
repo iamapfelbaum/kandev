@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { captureRepositoryState } from "./pipeline-eval-repository.mjs";
-import { git } from "./pipeline-eval-shared.mjs";
+import { git, isInside } from "./pipeline-eval-shared.mjs";
 
 const IMAGE_DIGEST = "sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48";
 const IMAGE_ID_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -174,6 +174,51 @@ function mount(source, target, readOnly, mountIdentity) {
   };
 }
 
+function treeProof(value, label) {
+  if (
+    value?.contract !== "kandev-highlight-readonly-tree-v1" ||
+    !/^sha256:[a-f0-9]{64}$/.test(value.digest ?? "") ||
+    !Number.isInteger(value.fileCount) ||
+    value.fileCount < 1 ||
+    !Number.isInteger(value.directoryCount) ||
+    value.directoryCount < 0 ||
+    !Number.isInteger(value.bytes) ||
+    value.bytes < 1 ||
+    value.symlinkCount !== 0
+  ) {
+    throw new Error(`${label} must bind a symlink-free content tree digest`);
+  }
+  return {
+    contract: value.contract,
+    digest: value.digest,
+    fileCount: value.fileCount,
+    directoryCount: value.directoryCount,
+    bytes: value.bytes,
+    symlinkCount: 0,
+  };
+}
+
+function goModuleCache(value, mounts) {
+  if (value === undefined) return null;
+  const sourceRoot = requireAbsolute(value?.sourceRoot, "Go module cache source");
+  const targetRoot = requireAbsolute(value?.targetRoot, "Go module cache target");
+  const sourceMount = mounts.find(({ target }) => target === sourceRoot);
+  if (!sourceMount?.readOnly) {
+    throw new Error("Go module cache source must be an exact read-only toolchain mount");
+  }
+  if (
+    targetRoot !== `${CONTAINER_EVAL_ROOT}/go-mod-cache` ||
+    !isInside(CONTAINER_EVAL_ROOT, targetRoot)
+  ) {
+    throw new Error("private Go module cache target must stay at the fixed writable eval path");
+  }
+  return {
+    sourceRoot,
+    targetRoot,
+    input: treeProof(value.input, "Go module cache input"),
+  };
+}
+
 function imageDigestFromRepoDigests(repoDigests) {
   const match = (repoDigests ?? []).find((value) => value.endsWith(`@${IMAGE_DIGEST}`));
   return match ? IMAGE_DIGEST : null;
@@ -317,6 +362,7 @@ function createBoundaryRequest(input, trusted, mounts) {
     source: trusted.source,
     landing: trusted.landing,
     mounts,
+    goModuleCache: goModuleCache(input.goModuleCache, mounts),
     environment: trusted.environment,
     network: { mode: "none", application: "loopback-only" },
     security: {

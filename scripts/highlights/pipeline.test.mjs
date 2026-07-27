@@ -1164,6 +1164,62 @@ test("published render without a phase record finalizes without re-encoding", as
   await fs.access(renderPhasePath);
 });
 
+test("lower capture receipt finalizes a missing capture phase without recapture", async (t) => {
+  const value = scenario();
+  const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
+  const dependencies = baseDependencies(value);
+  const runId = "capture-finalize-001";
+  const common = {
+    scenarioPath,
+    artifactRoot,
+    landingRoot: path.join(path.dirname(repoRoot), "landing"),
+    runId,
+    repoRoot,
+    dependencies,
+  };
+  await runDeclarativeHighlightCommand({
+    ...common,
+    command: "capture",
+    source: "pr_head",
+    prNumber: 42,
+    prBaseSha: BASE_SHA,
+  });
+  const attemptRoot = path.join(artifactRoot, value.id, "runs", runId);
+  const phasePath = path.join(attemptRoot, "evidence", "capture.json");
+  const phase = JSON.parse(await fs.readFile(phasePath, "utf8"));
+  const lowerPath = path.join(
+    attemptRoot,
+    "capture",
+    "evidence",
+    "capture.json",
+  );
+  await fs.mkdir(path.dirname(lowerPath), { recursive: true });
+  await fs.writeFile(
+    lowerPath,
+    `${JSON.stringify(phase.value.receipt, null, 2)}\n`,
+    { flag: "wx" },
+  );
+  await fs.unlink(phasePath);
+  dependencies.captureScenario = async () => {
+    throw new Error("completed capture must not rerun");
+  };
+
+  const recovered = await runDeclarativeHighlightCommand({
+    ...common,
+    command: "render",
+  });
+
+  assert.equal(
+    recovered.phases.render.manifest.contract,
+    "kandev-highlight-render-v1",
+  );
+  const finalized = JSON.parse(await fs.readFile(phasePath, "utf8"));
+  assert.equal(
+    finalized.value.receipt.rawMaster.digest,
+    phase.value.receipt.rawMaster.digest,
+  );
+});
+
 test("run rejects missing delivery metadata before source, landing, or capture work", async (t) => {
   const value = scenario("desktop", { delivery: false });
   const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
@@ -1244,7 +1300,7 @@ test("native-mobile run creates digest review bundle and never relabels it as de
   );
 });
 
-test("content-addressed review stage refuses same digest collision", async (t) => {
+test("content-addressed review stage verifies and recovers an identical existing stage", async (t) => {
   const value = scenario();
   const { repoRoot, artifactRoot, scenarioPath } = await roots(t, value);
   const dependencies = baseDependencies(value);
@@ -1261,6 +1317,15 @@ test("content-addressed review stage refuses same digest collision", async (t) =
     dependencies,
   });
   const input = first.phases.stage.input;
+  const recovered = await writeContentAddressedStage(input);
+  assert.equal(recovered.stageDir, first.phases.stage.stageDir);
+  assert.equal(recovered.stageDigest, first.phases.stage.stageDigest);
+  assert.equal(recovered.recovered, true);
+
+  await fs.appendFile(
+    path.join(first.phases.stage.stageDir, "qa/report.json"),
+    "tampered",
+  );
   await assert.rejects(
     writeContentAddressedStage(input),
     /refusing to overwrite|collision/i,
