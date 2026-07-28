@@ -144,6 +144,28 @@ func TestIsChangesWalkthroughRequest(t *testing.T) {
 	}
 }
 
+func TestHighlightQuickChatPromptReturnsFixedProductCopy(t *testing.T) {
+	e, updates := newTestEmitter()
+	prompt := strings.Join([]string{
+		"What should I check before turning an idea into a task?",
+		"",
+		"<kandev-system>",
+		"deterministic injected context",
+		"</kandev-system>",
+	}, "\n")
+
+	handlePrompt(e, prompt, "mock-fast")
+
+	recorded := updates.getUpdates()
+	if len(recorded) != 1 {
+		t.Fatalf("expected one fixed response update, got %d", len(recorded))
+	}
+	want := "Clarify the goal, confirm the relevant repository, and define a testable outcome. Create a task when the work needs tracking."
+	if got := getTextContent(recorded[0]); got != want {
+		t.Fatalf("response = %q, want %q", got, want)
+	}
+}
+
 func TestDelayRange(t *testing.T) {
 	tests := []struct {
 		model     string

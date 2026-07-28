@@ -3,6 +3,57 @@ import test from "node:test";
 
 import { HIGHLIGHT_RUNTIME_BINDING_METADATA, createHighlightRegistries } from "./registry";
 
+function quickChatSeedFixture(suffix: string) {
+  const workspaceId = `workspace-${suffix}`;
+  const workflowId = `workflow-${suffix}`;
+  const startStepId = `step-${suffix}`;
+  const createdProfileId = `profile-product-guide-${suffix}`;
+  const calls: unknown[][] = [];
+  let defaultAgentProfileId: string | null = null;
+  const profiles = [{ id: `profile-default-${suffix}`, name: "Default", model: "mock-default" }];
+  const apiClient = {
+    async listWorkspaces() {
+      calls.push(["listWorkspaces"]);
+      return {
+        workspaces: [{ id: workspaceId, default_agent_profile_id: defaultAgentProfileId }],
+        total: 1,
+      };
+    },
+    async listWorkflows(requestedWorkspaceId: string) {
+      calls.push(["listWorkflows", requestedWorkspaceId]);
+      return { workflows: [{ id: workflowId }] };
+    },
+    async listTasks(requestedWorkspaceId: string) {
+      calls.push(["listTasks", requestedWorkspaceId]);
+      return { tasks: [] };
+    },
+    async listAgents() {
+      calls.push(["listAgents"]);
+      return {
+        agents: [{ id: "mock-agent", name: "mock-agent", profiles: structuredClone(profiles) }],
+        total: 1,
+      };
+    },
+    async createAgentProfile(agentId: string, name: string, options: { model: string }) {
+      calls.push(["createAgentProfile", agentId, name, options]);
+      profiles.push({ id: createdProfileId, name, model: options.model });
+      return { id: createdProfileId, cli_flags: [] };
+    },
+    async updateWorkspace(
+      requestedWorkspaceId: string,
+      updates: { default_agent_profile_id?: string },
+    ) {
+      calls.push(["updateWorkspace", requestedWorkspaceId, updates]);
+      defaultAgentProfileId = updates.default_agent_profile_id ?? null;
+    },
+  };
+  return {
+    apiClient,
+    calls,
+    seedData: { workspaceId, workflowId, startStepId },
+  };
+}
+
 test("quick-start seed recipe creates and proves one isolated task", async () => {
   const calls: unknown[][] = [];
   const apiClient = {
@@ -107,6 +158,92 @@ test("quick-start seed digest is stable across isolated generated IDs", async ()
   assert.notEqual(first.invariants.workspaceId, second.invariants.workspaceId);
   assert.notEqual(first.invariants.taskId, second.invariants.taskId);
   assert.doesNotMatch(JSON.stringify(first), /fixture|\bE2E\b|mock/i);
+});
+
+test("quick-chat seed creates one safe default profile and proves fresh baseline counts", async () => {
+  const fixture = quickChatSeedFixture("one");
+  const registries = createHighlightRegistries({
+    apiClient: fixture.apiClient,
+    seedData: fixture.seedData,
+    backend: { frontendUrl: "http://127.0.0.1:18080", port: 18080 },
+  });
+  const recipe = (
+    registries.seedRegistry as unknown as Record<
+      string,
+      ((input: { parameters?: unknown }) => Promise<unknown>) | undefined
+    >
+  )["kandev.highlight.quick-chat"];
+
+  assert.equal(typeof recipe, "function", "Quick Chat seed recipe must be registered");
+  if (!recipe) return;
+  const proof = (await recipe({ parameters: {} })) as {
+    seedId: string;
+    seedDigest: string;
+    invariants: unknown;
+  };
+
+  assert.deepEqual(
+    fixture.calls.filter(([operation]) =>
+      ["createAgentProfile", "updateWorkspace"].includes(String(operation)),
+    ),
+    [
+      ["createAgentProfile", "mock-agent", "Product Guide", { model: "mock-fast" }],
+      [
+        "updateWorkspace",
+        "workspace-one",
+        { default_agent_profile_id: "profile-product-guide-one" },
+      ],
+    ],
+  );
+  assert.equal(proof.seedId, "kandev.highlight.quick-chat");
+  assert.match(proof.seedDigest, /^sha256:[a-f0-9]{64}$/);
+  assert.deepEqual(proof.invariants, {
+    workspaceId: "workspace-one",
+    workflowId: "workflow-one",
+    workflowStepId: "step-one",
+    agentProfileId: "profile-product-guide-one",
+    profileName: "Product Guide",
+    baselineCounts: {
+      workspaces: 1,
+      workflows: 1,
+      tasks: 0,
+      agents: 1,
+      agentProfiles: 1,
+    },
+    resultCounts: {
+      workspaces: 1,
+      workflows: 1,
+      tasks: 0,
+      agents: 1,
+      agentProfiles: 2,
+    },
+    workspaceDefaultAgentProfileId: "profile-product-guide-one",
+  });
+  assert.doesNotMatch(JSON.stringify(proof), /fixture|\bE2E\b|\bmock\b/i);
+});
+
+test("quick-chat seed digest is stable across isolated generated IDs", async () => {
+  const seed = async (suffix: string) => {
+    const fixture = quickChatSeedFixture(suffix);
+    const registries = createHighlightRegistries({
+      apiClient: fixture.apiClient,
+      seedData: fixture.seedData,
+      backend: { frontendUrl: "http://127.0.0.1:18080", port: 18080 },
+    });
+    const recipe = (
+      registries.seedRegistry as unknown as Record<
+        string,
+        ((input: { parameters?: unknown }) => Promise<{ seedDigest: string }>) | undefined
+      >
+    )["kandev.highlight.quick-chat"];
+    assert.equal(typeof recipe, "function", "Quick Chat seed recipe must be registered");
+    if (!recipe) throw new Error("Quick Chat seed recipe missing");
+    return recipe({ parameters: {} });
+  };
+
+  const first = await seed("one");
+  const second = await seed("two");
+  assert.equal(first.seedDigest, second.seedDigest);
 });
 
 test("registry metadata exactly matches the closed Node runtime catalog", async () => {

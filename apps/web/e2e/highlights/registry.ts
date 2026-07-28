@@ -18,15 +18,58 @@ type SeededTask = {
   state?: string;
 };
 
-type ApiClientLike = {
-  createTask?: (
+type QuickStartApi = {
+  createTask: (
     workspaceId: string,
     title: string,
     options: { workflow_id: string; workflow_step_id: string },
   ) => Promise<SeededTask>;
-  getTask?: (taskId: string) => Promise<SeededTask>;
-  listTasks?: (workspaceId: string) => Promise<{ tasks: SeededTask[] }>;
+  getTask: (taskId: string) => Promise<SeededTask>;
+  listTasks: (workspaceId: string) => Promise<{ tasks: SeededTask[] }>;
 };
+
+type SeededAgentProfile = { id: string; name: string; model: string };
+type SeededAgent = {
+  id: string;
+  name: string;
+  profiles: SeededAgentProfile[];
+};
+type SeededWorkspace = {
+  id: string;
+  default_agent_profile_id?: string | null;
+};
+type SeedCounts = {
+  workspaces: number;
+  workflows: number;
+  tasks: number;
+  agents: number;
+  agentProfiles: number;
+};
+type QuickChatSnapshot = {
+  workspaceListing: { workspaces: SeededWorkspace[]; total: number };
+  workflowListing: { workflows: Array<{ id: string }> };
+  taskListing: { tasks: SeededTask[] };
+  agentListing: { agents: SeededAgent[]; total: number };
+  counts: SeedCounts;
+};
+
+type QuickChatApi = {
+  listWorkspaces: () => Promise<{ workspaces: SeededWorkspace[]; total: number }>;
+  listWorkflows: (workspaceId: string) => Promise<{ workflows: Array<{ id: string }> }>;
+  listTasks: (workspaceId: string) => Promise<{ tasks: SeededTask[] }>;
+  listAgents: () => Promise<{ agents: SeededAgent[]; total: number }>;
+  createAgentProfile: (
+    agentId: string,
+    name: string,
+    options: { model: string },
+  ) => Promise<{ id: string }>;
+  updateWorkspace: (
+    workspaceId: string,
+    updates: { default_agent_profile_id: string },
+  ) => Promise<unknown>;
+};
+
+type ApiClientLike = Partial<QuickStartApi & QuickChatApi>;
 
 type PageLike = {
   goto: (url: string, options: { waitUntil: "domcontentloaded" }) => Promise<unknown>;
@@ -107,7 +150,7 @@ function boundVisibleText(values: string[]) {
   return { records, truncated };
 }
 
-function assertApi(apiClient: ApiClientLike): asserts apiClient is Required<ApiClientLike> {
+function assertApi(apiClient: ApiClientLike): asserts apiClient is ApiClientLike & QuickStartApi {
   if (
     typeof apiClient.createTask !== "function" ||
     typeof apiClient.getTask !== "function" ||
@@ -117,10 +160,29 @@ function assertApi(apiClient: ApiClientLike): asserts apiClient is Required<ApiC
   }
 }
 
+function assertQuickChatApi(
+  apiClient: ApiClientLike,
+): asserts apiClient is ApiClientLike & QuickChatApi {
+  const methods: Array<keyof QuickChatApi> = [
+    "listWorkspaces",
+    "listWorkflows",
+    "listTasks",
+    "listAgents",
+    "createAgentProfile",
+    "updateWorkspace",
+  ];
+  if (methods.some((method) => typeof apiClient[method] !== "function")) {
+    throw new Error(`quick-chat seed needs ApiClient ${methods.join("/")} methods`);
+  }
+}
+
 export const HIGHLIGHT_RUNTIME_BINDING_METADATA = {
   runtimeId: "kandev-isolated-e2e",
   profiles: ["desktop", "native-mobile"],
-  seedRecipes: [{ id: "kandev.highlight.quick-start", parameterKeys: [] }],
+  seedRecipes: [
+    { id: "kandev.highlight.quick-start", parameterKeys: [] },
+    { id: "kandev.highlight.quick-chat", parameterKeys: [] },
+  ],
   routes: ["workspace.board"],
   primitiveIds: [],
   scannerCoverage: {
@@ -173,6 +235,151 @@ async function seedQuickStart(apiClient: ApiClientLike, seedData: SeedData) {
         title: actual.title,
         state: actual.state ?? "BACKLOG",
         taskCount: listing.tasks.length,
+      },
+    }),
+    invariants,
+  };
+}
+
+function countAgentProfiles(agents: SeededAgent[]) {
+  return agents.reduce((count, agent) => count + agent.profiles.length, 0);
+}
+
+function matchesCounts(actual: SeedCounts, expected: SeedCounts) {
+  return (Object.keys(expected) as Array<keyof SeedCounts>).every(
+    (key) => actual[key] === expected[key],
+  );
+}
+
+async function readQuickChatSnapshot(
+  apiClient: QuickChatApi,
+  workspaceId: string,
+): Promise<QuickChatSnapshot> {
+  const [workspaceListing, workflowListing, taskListing, agentListing] = await Promise.all([
+    apiClient.listWorkspaces(),
+    apiClient.listWorkflows(workspaceId),
+    apiClient.listTasks(workspaceId),
+    apiClient.listAgents(),
+  ]);
+  return {
+    workspaceListing,
+    workflowListing,
+    taskListing,
+    agentListing,
+    counts: {
+      workspaces: workspaceListing.workspaces.length,
+      workflows: workflowListing.workflows.length,
+      tasks: taskListing.tasks.length,
+      agents: agentListing.agents.length,
+      agentProfiles: countAgentProfiles(agentListing.agents),
+    },
+  };
+}
+
+function assertFreshQuickChatBaseline(
+  snapshot: QuickChatSnapshot,
+  seedData: SeedData,
+  expectedCounts: SeedCounts,
+) {
+  const controlledAgent = snapshot.agentListing.agents.find(
+    (agent) => agent.id === "mock-agent" && agent.name === "mock-agent",
+  );
+  if (!controlledAgent) {
+    throw new Error(
+      "quick-chat seed invariant failed: expected one fresh workspace, workflow, controlled agent, profile, and zero tasks",
+    );
+  }
+  const checks = [
+    snapshot.workspaceListing.total === 1,
+    snapshot.workspaceListing.workspaces[0]?.id === seedData.workspaceId,
+    !snapshot.workspaceListing.workspaces[0]?.default_agent_profile_id,
+    snapshot.workflowListing.workflows[0]?.id === seedData.workflowId,
+    snapshot.agentListing.total === 1,
+    matchesCounts(snapshot.counts, expectedCounts),
+  ];
+  if (!checks.every(Boolean)) {
+    throw new Error(
+      "quick-chat seed invariant failed: expected one fresh workspace, workflow, controlled agent, profile, and zero tasks",
+    );
+  }
+  return controlledAgent;
+}
+
+function assertConfiguredQuickChat(
+  snapshot: QuickChatSnapshot,
+  seedData: SeedData,
+  profile: { id: string; name: string; model: string },
+  expectedCounts: SeedCounts,
+) {
+  const configuredProfile = snapshot.agentListing.agents
+    .flatMap((agent) => agent.profiles)
+    .find((candidate) => candidate.id === profile.id);
+  const checks = [
+    snapshot.workspaceListing.workspaces[0]?.default_agent_profile_id === profile.id,
+    snapshot.workflowListing.workflows[0]?.id === seedData.workflowId,
+    configuredProfile?.name === profile.name,
+    configuredProfile?.model === profile.model,
+    matchesCounts(snapshot.counts, expectedCounts),
+  ];
+  if (!checks.every(Boolean)) {
+    throw new Error(
+      "quick-chat seed invariant failed: expected Product Guide as workspace default with no task mutation",
+    );
+  }
+}
+
+async function seedQuickChat(apiClient: ApiClientLike, seedData: SeedData) {
+  assertQuickChatApi(apiClient);
+  const baseline = await readQuickChatSnapshot(apiClient, seedData.workspaceId);
+  const expectedBaselineCounts = {
+    workspaces: 1,
+    workflows: 1,
+    tasks: 0,
+    agents: 1,
+    agentProfiles: 1,
+  };
+  const controlledAgent = assertFreshQuickChatBaseline(baseline, seedData, expectedBaselineCounts);
+
+  const profileName = "Product Guide";
+  const profileModel = "mock-fast";
+  const profile = await apiClient.createAgentProfile(controlledAgent.id, profileName, {
+    model: profileModel,
+  });
+  await apiClient.updateWorkspace(seedData.workspaceId, {
+    default_agent_profile_id: profile.id,
+  });
+
+  const result = await readQuickChatSnapshot(apiClient, seedData.workspaceId);
+  const expectedResultCounts = { ...expectedBaselineCounts, agentProfiles: 2 };
+  assertConfiguredQuickChat(
+    result,
+    seedData,
+    { id: profile.id, name: profileName, model: profileModel },
+    expectedResultCounts,
+  );
+
+  const invariants = {
+    workspaceId: seedData.workspaceId,
+    workflowId: seedData.workflowId,
+    workflowStepId: seedData.startStepId,
+    agentProfileId: profile.id,
+    profileName,
+    baselineCounts: baseline.counts,
+    resultCounts: result.counts,
+    workspaceDefaultAgentProfileId: profile.id,
+  };
+  return {
+    seedId: "kandev.highlight.quick-chat",
+    seedDigest: digest({
+      recipe: "kandev.highlight.quick-chat",
+      parameters: {},
+      invariants: {
+        agentId: controlledAgent.id,
+        profileName,
+        profileModel,
+        baselineCounts: baseline.counts,
+        resultCounts: result.counts,
+        workspaceDefaultConfigured: true,
       },
     }),
     invariants,
@@ -242,6 +449,8 @@ export function createHighlightRegistries({
     seedRegistry: {
       "kandev.highlight.quick-start": async (_input: { parameters?: unknown }) =>
         seedQuickStart(apiClient, seedData),
+      "kandev.highlight.quick-chat": async (_input: { parameters?: unknown }) =>
+        seedQuickChat(apiClient, seedData),
     },
     primitiveRegistry: {},
     async navigateRoute(route: string, { page }: { page: PageLike }) {

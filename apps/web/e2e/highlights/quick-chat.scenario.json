@@ -1,0 +1,184 @@
+{
+  "$schema": "https://kandev.com/schemas/highlight-scenario-v1.json",
+  "schemaVersion": 1,
+  "id": "quick-chat",
+  "title": "Quick Chat",
+  "description": "Ask a focused question without adding a task to the board.",
+  "profile": {
+    "kind": "desktop",
+    "viewport": {
+      "width": 1920,
+      "height": 1200
+    },
+    "deviceScaleFactor": 2
+  },
+  "seed": {
+    "recipe": "kandev.highlight.quick-chat",
+    "parameters": {}
+  },
+  "setup": {
+    "route": "workspace.board",
+    "primitives": []
+  },
+  "story": {
+    "recipe": "kandev.short-feature",
+    "openingSettleMs": 600,
+    "actions": [
+      {
+        "kind": "waitForVisible",
+        "target": {
+          "testId": "sidebar-quick-chat-shortcut"
+        },
+        "timeoutMs": 5000,
+        "label": "Board and Quick Chat shortcut are ready"
+      },
+      {
+        "kind": "click",
+        "target": {
+          "testId": "sidebar-quick-chat-shortcut"
+        },
+        "cursorDurationMs": 500,
+        "settleMs": 300,
+        "label": "Open Quick Chat"
+      },
+      {
+        "kind": "waitForVisible",
+        "target": {
+          "testId": "quick-chat-setup"
+        },
+        "timeoutMs": 5000,
+        "label": "Quick Chat setup is ready"
+      },
+      {
+        "kind": "waitForState",
+        "target": {
+          "testId": "quick-chat-start"
+        },
+        "state": "enabled",
+        "timeoutMs": 5000,
+        "label": "Product Guide is selected"
+      },
+      {
+        "kind": "click",
+        "target": {
+          "testId": "quick-chat-start"
+        },
+        "cursorDurationMs": 900,
+        "settleMs": 3000,
+        "label": "Start with Product Guide"
+      },
+      {
+        "kind": "waitForVisible",
+        "target": {
+          "testId": "chat-input-editor"
+        },
+        "timeoutMs": 5000,
+        "label": "Conversation input is ready"
+      },
+      {
+        "kind": "waitForState",
+        "target": {
+          "testId": "chat-input-editor"
+        },
+        "state": "enabled",
+        "timeoutMs": 5000,
+        "label": "Product Guide is ready"
+      },
+      {
+        "kind": "type",
+        "target": {
+          "testId": "chat-input-editor"
+        },
+        "text": "What should I check before turning an idea into a task?",
+        "clear": true,
+        "keystrokeDelayMs": 18,
+        "cursorDurationMs": 400,
+        "settleMs": 100,
+        "label": "Ask when an idea should become a task"
+      },
+      {
+        "kind": "waitForState",
+        "target": {
+          "testId": "submit-message-button"
+        },
+        "state": "enabled",
+        "timeoutMs": 2000,
+        "label": "Question is ready to send"
+      },
+      {
+        "kind": "click",
+        "target": {
+          "testId": "submit-message-button"
+        },
+        "cursorDurationMs": 350,
+        "label": "Send the question"
+      },
+      {
+        "kind": "waitForVisible",
+        "target": {
+          "testId": "cancel-agent-button"
+        },
+        "timeoutMs": 5000,
+        "label": "Product Guide is answering"
+      },
+      {
+        "kind": "pause",
+        "durationMs": 500,
+        "label": "Let Product Guide finish"
+      },
+      {
+        "kind": "waitForState",
+        "target": {
+          "testId": "cancel-agent-button"
+        },
+        "state": "hidden",
+        "timeoutMs": 5000,
+        "label": "Product Guide completed the response"
+      },
+      {
+        "kind": "waitForVisible",
+        "target": {
+          "testId": "agent-turn-complete"
+        },
+        "timeoutMs": 5000,
+        "label": "A completed guidance turn is rendered"
+      },
+      {
+        "kind": "waitForState",
+        "target": {
+          "testId": "chat-input-editor"
+        },
+        "state": "enabled",
+        "timeoutMs": 5000,
+        "label": "Conversation is ready for follow-up"
+      },
+      {
+        "kind": "waitForVisible",
+        "target": {
+          "testId": "quick-chat-messages"
+        },
+        "timeoutMs": 2000,
+        "label": "Guidance is visible"
+      },
+      {
+        "kind": "pause",
+        "durationMs": 1500,
+        "label": "Hold the readable guidance"
+      }
+    ],
+    "endingSettleMs": 800
+  },
+  "delivery": {
+    "revision": "r1",
+    "releaseVersion": "0.81.0",
+    "summary": "Ask an agent about an idea without adding a task to the board.",
+    "caption": "Open Quick Chat, ask a planning question, and get a concise next step.",
+    "featureFlags": ["features.highlights"],
+    "docs": {
+      "page": "developer-tools.md",
+      "section": "Quick Chat"
+    },
+    "mobileDeclaration": "This Highlight revision reviews the desktop Quick Chat workflow; no mobile delivery is included.",
+    "mobileRequired": false
+  }
+}

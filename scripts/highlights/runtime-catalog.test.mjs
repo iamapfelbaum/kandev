@@ -43,6 +43,7 @@ test("catalog exposes one deeply immutable built-in runtime", async () => {
     profiles: ["desktop", "native-mobile"],
     seedRecipes: [
       { id: "kandev.highlight.quick-start", parameterKeys: [] },
+      { id: "kandev.highlight.quick-chat", parameterKeys: [] },
     ],
     routes: ["workspace.board"],
     primitiveIds: [],
@@ -58,6 +59,22 @@ test("catalog exposes one deeply immutable built-in runtime", async () => {
   assert.equal(Object.isFrozen(runtime), true);
   assert.equal(Object.isFrozen(runtime.seedRecipes[0]), true);
   assert.throws(() => runtime.profiles.push("custom"), /read only|not extensible/i);
+});
+
+test("runtime preflight accepts the registered Quick Chat seed binding", async () => {
+  const { preflightHighlightRuntime } = await runtimeModule();
+  const scenario = await quickStartScenario();
+  const result = preflightHighlightRuntime({
+    runtimeId: "kandev-isolated-e2e",
+    scenario: {
+      ...scenario,
+      id: "quick-chat",
+      title: "Quick Chat",
+      seed: { recipe: "kandev.highlight.quick-chat", parameters: {} },
+    },
+  });
+
+  assert.equal(result.seedRecipe, "kandev.highlight.quick-chat");
 });
 
 test("runtime lookup rejects unknown IDs and path or module injection", async () => {
@@ -180,6 +197,7 @@ test("runtime declarations expose only typed catalog and preflight APIs", async 
     "utf8",
   );
   assert.match(declarations, /"kandev-isolated-e2e"/);
+  assert.match(declarations, /"kandev\.highlight\.quick-chat"/);
   assert.match(declarations, /preflightHighlightRuntime/);
   assert.match(declarations, /renderedPixelOcr: false/);
   assert.doesNotMatch(declarations, /modulePath|shellCommand|javascript/i);

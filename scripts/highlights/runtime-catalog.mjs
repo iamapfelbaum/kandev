@@ -11,6 +11,10 @@ const BUILTIN_RUNTIME = deepFreeze({
       id: "kandev.highlight.quick-start",
       parameterKeys: [],
     },
+    {
+      id: "kandev.highlight.quick-chat",
+      parameterKeys: [],
+    },
   ],
   routes: ["workspace.board"],
   primitiveIds: [],

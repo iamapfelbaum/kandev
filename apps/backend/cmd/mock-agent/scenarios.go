@@ -44,6 +44,16 @@ var scenarioRegistry = map[string]func(e *emitter){
 	"empty-turn":              scenarioEmptyTurn,
 }
 
+const (
+	highlightQuickChatPrompt = "What should I check before turning an idea into a task?"
+	highlightQuickChatReply  = "Clarify the goal, confirm the relevant repository, and define a testable outcome. Create a task when the work needs tracking."
+)
+
+func scenarioHighlightQuickChat(e *emitter) {
+	fixedDelay(1250)
+	e.text(highlightQuickChatReply)
+}
+
 // scenarioEmptyTurn emits no content and no tool calls, so the turn ends
 // cleanly with no agent output. Reproduces the case where an agent treats a
 // prompt (e.g. an unsupported slash command) as a no-op and returns an empty

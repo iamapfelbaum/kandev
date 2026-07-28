@@ -233,6 +233,10 @@ func handlePrompt(e *emitter, prompt, model string) {
 		scenarioWalkthroughRequested(e)
 		return
 	}
+	if cmd == highlightQuickChatPrompt {
+		scenarioHighlightQuickChat(e)
+		return
+	}
 
 	switch {
 	case strings.EqualFold(cmd, "all") || strings.EqualFold(cmd, "/all"):

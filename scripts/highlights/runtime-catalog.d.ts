@@ -18,7 +18,7 @@ export interface HighlightRuntimeDescriptor {
   readonly host: "playwright-isolated-e2e";
   readonly profiles: readonly HighlightRuntimeProfile[];
   readonly seedRecipes: readonly {
-    readonly id: "kandev.highlight.quick-start";
+    readonly id: "kandev.highlight.quick-start" | "kandev.highlight.quick-chat";
     readonly parameterKeys: readonly [];
   }[];
   readonly routes: readonly ["workspace.board"];
@@ -31,7 +31,7 @@ export interface HighlightRuntimePreflight {
   contract: "kandev-highlight-runtime-preflight-v1";
   runtimeId: HighlightRuntimeId;
   profile: HighlightRuntimeProfile;
-  seedRecipe: "kandev.highlight.quick-start";
+  seedRecipe: "kandev.highlight.quick-start" | "kandev.highlight.quick-chat";
   route: "workspace.board";
   primitiveIds: string[];
   scannerCoverage: HighlightRuntimeScannerCoverage;
