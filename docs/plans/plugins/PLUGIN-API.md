@@ -284,7 +284,7 @@ interface PluginRegistry {
 
   // Named slot injection. Host renders all components registered for a slot via
   // <PluginSlot name="..." slotProps={...}/>. Initial slots: "task-sidebar",
-  // "settings-nav", "main-nav-footer", "chat-input-actions", "chat-top-bar",
+  // "settings-nav", "chat-input-actions", "chat-top-bar",
   // "main-top-bar", "app-status-bar-left", "app-status-bar-right",
   // "plugin-settings", and "task-card-indicators".
   // "task-card-indicators" renders a small icon/badge beside the PR status

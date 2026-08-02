@@ -52,10 +52,10 @@ export function AgentGeneratedTaskTitleSettings() {
         <div className="flex min-h-11 items-center justify-between gap-4">
           <div className="min-w-0 space-y-0.5">
             <Label htmlFor="agent-generated-task-titles">
-              {t("settings:useTheAgentForNewTaskTitles")}
+              {t("settings:useAgentForNewTaskTitles")}
             </Label>
             <p className="text-xs text-muted-foreground">
-              {t("settings:disabledByDefaultSaveThisSettingBeforeOpeningACreationDialog")}
+              {t("settings:agentGeneratedTaskTitlesDisabledHint")}
             </p>
           </div>
           <Switch

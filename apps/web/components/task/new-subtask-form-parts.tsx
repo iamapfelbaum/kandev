@@ -27,6 +27,7 @@ import {
 } from "./session-dialog-shared";
 import { ContextZone } from "./chat/context-items/context-zone";
 import { clampTaskTitleInput } from "@/lib/task-title";
+import { useTranslation } from "react-i18next";
 
 export function WorktreeBadge({ show, branch }: { show: boolean; branch: string | null }) {
   if (!show || !branch) return null;

@@ -35,5 +35,7 @@
   "title": "Title",
   "unknownPanel": "Unknown panel: {{component}}",
   "workspace": "Workspace",
-  "workspaces": "Workspaces"
+  "workspaces": "Workspaces",
+  "title": "Title",
+  "subtaskTitle": "Subtask title"
 }

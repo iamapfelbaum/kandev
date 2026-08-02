@@ -2,6 +2,10 @@
 
 Scoped guidance for `apps/web/`. Repo-wide rules (commit format, code-quality limits, etc.) live in the root `AGENTS.md`.
 
+## Plugin authoring
+
+For plugin UI work, begin with the [canonical plugin authoring guide](../../docs/public/plugins-authoring.md). Follow: choose recipe → edit `manifest.yaml` → implement → validate → package → smoke test. The frontend contract pair is `../../docs/plans/plugins/PLUGIN-API.md` plus `lib/plugins/types.ts`; concrete shared Host UI exports are in `lib/plugins/host-api.ts`, and registration/cleanup behavior is in `lib/plugins/registry.ts` and `lib/plugins/host.ts`. Keep the guide and that contract pair synchronized; do not invent hooks such as task panels, task-menu actions, per-user `host.storage`, rich-text components, or Kanban-card injection when they are absent from the current source.
+
 ## UI Components
 
 **Shadcn Components:** Import from `@kandev/ui` package:
@@ -274,8 +278,7 @@ plugin leaks a stale registration.
   (`session-mobile-bottom-nav.tsx`) rendering the same `Component` with `presentation: "mobile"`.
 - **Kanban card contributions:** `registerTaskMenuAction({ group: "edit", ... })` turns the card's
   flat `Edit` item into an `Edit` submenu (`kanban-card-edit-submenu.tsx`);
-  `registerComponent("task-card-indicators", ...)` renders beside `PRTaskIcon` via the existing
-  `<PluginSlot/>` mechanism — no new slot primitive needed.
+  `registerComponent("task-card-indicators", ...)` renders beside `PRTaskIcon` via `<PluginSlot/>`.
 - **`host.storage`:** authenticated per-user key/value storage (`lib/plugins/host-api.ts`), backed by
   `/api/plugins/{id}/user-state/...` (see `docs/decisions/2026-08-01-per-user-plugin-storage.md`).
   `host.storage.subscribe` (`lib/plugins/user-state-sync.ts`) wraps `registerWsHandler` with

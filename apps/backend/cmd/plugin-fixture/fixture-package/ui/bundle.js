@@ -6,7 +6,7 @@
  * registers a nav item, a top-level route, a `task-sidebar` slot component,
  * a `main-top-bar` slot component, a `task.created` WS handler, and the
  * `open-demo` keybinding (declared in manifest.yaml's `ui.keybindings`,
- * default `mod+shift+k`) which opens a `host.openModal(...)` demo modal.
+ * default `mod+shift+j`) which opens a `host.openModal(...)` demo modal.
  * Uses only host.React/host.jsx.
  *
  * It also registers the plugin-hooks surface this fixture exists to drive
