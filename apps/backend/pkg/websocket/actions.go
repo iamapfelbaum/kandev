@@ -387,6 +387,7 @@ const (
 	ActionMCPPublishReviewFindings      = "mcp.publish_review_findings"
 	ActionMCPClarificationTimeout       = "mcp.clarification_timeout"
 	ActionMCPSetTaskTitle               = "mcp.set_task_title"
+	ActionMCPGetDiagnosticBundle        = "mcp.get_diagnostic_bundle"
 
 	// Office task handoffs (cross-task context).
 	ActionMCPListRelatedTasks  = "mcp.list_related_tasks"
@@ -454,6 +455,7 @@ const (
 	ActionGitHubPRFilesGet           = "github.pr_files.get"
 	ActionGitHubPRCommitsGet         = "github.pr_commits.get"
 	ActionGitHubTaskPRUpdated        = "github.task_pr.updated"         // Notification
+	ActionGitHubTaskPRDeleted        = "github.task_pr.deleted"         // Notification
 	ActionGitHubTaskCIOptionsUpdated = "github.task_ci_options.updated" // Notification
 	ActionGitHubRateLimitUpdated     = "github.rate_limit.updated"      // Notification
 	ActionGitHubPRFeedbackNotify     = "github.pr_feedback.notify"      // Notification
@@ -461,6 +463,7 @@ const (
 	ActionGitHubTaskPRSync           = "github.task_pr.sync"
 	ActionGitHubStats                = "github.stats"
 	ActionGitHubCheckSessionPR       = "github.check_session_pr"
+	ActionGitLabCheckSessionMR       = "gitlab.check_session_mr"
 
 	// Issue watch actions
 	ActionGitHubIssueWatchesList = "github.issue_watches.list"

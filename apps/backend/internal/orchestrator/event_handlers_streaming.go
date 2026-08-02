@@ -22,7 +22,17 @@ func (s *Service) handleAgentStreamEvent(ctx context.Context, payload *lifecycle
 	if payload == nil || payload.Data == nil {
 		return
 	}
-
+	if payload.SessionID != "" {
+		// Serialize stream side effects with cancellation/interrupt decisions.
+		// Checking the terminal-execution marker alone is insufficient: a stream
+		// handler can pass that check, then block while persisting a message while
+		// a coordinator stop marks the execution terminal. Holding the shared
+		// per-session guard makes the check and its side effects one decision.
+		lock, release := s.acquireCancelInFlightGuard(payload.SessionID)
+		defer release()
+		lock.Lock()
+		defer lock.Unlock()
+	}
 	taskID := payload.TaskID
 	sessionID := payload.SessionID
 	eventType := payload.Data.Type
@@ -2630,7 +2640,7 @@ func (s *Service) persistSessionRuntimeConfigOnSession(ctx context.Context, sess
 		s.runtimeModelBySession.Store(sessionID, cfg.Model)
 	}
 	if cfg.Model != "" && cfg.Model != previousModel {
-		if err := s.repo.SetSessionMetadataKey(writeCtx, sessionID, "context_window", nil); err != nil {
+		if err := s.clearContextWindowForReset(writeCtx, sessionID); err != nil {
 			s.logger.Warn("failed to clear stale context window after runtime model change",
 				zap.String("session_id", sessionID),
 				zap.String("previous_model", previousModel),

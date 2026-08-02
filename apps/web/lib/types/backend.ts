@@ -1,4 +1,5 @@
 import type { TaskPlanEventPayload, TaskPlanRevisionEventPayload } from "./task-plan-events";
+import type { CaptureRequest } from "@/lib/logger/capture";
 
 export type BackendMessageType = keyof BackendMessageMap;
 
@@ -21,7 +22,12 @@ import type {
 } from "@/lib/types/http";
 import type { SecretListItem } from "@/lib/types/http-secrets";
 import type { GitEventPayload } from "@/lib/types/git-events";
-import type { GitHubRateLimitUpdate, TaskCIAutomationOptions, TaskPR } from "@/lib/types/github";
+import type {
+  GitHubRateLimitUpdate,
+  TaskCIAutomationOptions,
+  TaskPR,
+  TaskPRDeletedEvent,
+} from "@/lib/types/github";
 import type { TaskMR } from "@/lib/types/gitlab";
 import type { TaskStatusSummary } from "@/lib/types/task-status-summary";
 import type { SystemMetricsSnapshot } from "./system";
@@ -398,7 +404,6 @@ export type UserSettingsUpdatedPayload = Omit<
   workspace_id: string;
   repository_ids: string[];
 };
-
 export type ShellOutputPayload = {
   task_id: string;
   session_id: string;
@@ -519,6 +524,10 @@ export type BackendMessageMap = OfficeBackendMessageMap &
     "session.git.event": BackendMessage<"session.git.event", GitEventPayload>;
     "system.job.update": BackendMessage<"system.job.update", import("./system").SystemJob>;
     "system.metrics.updated": BackendMessage<"system.metrics.updated", SystemMetricsSnapshot>;
+    "system.logs.capture_requested": BackendMessage<
+      "system.logs.capture_requested",
+      CaptureRequest
+    >;
     "system.update_available": BackendMessage<"system.update_available", UpdateAvailablePayload>;
     "workspace.created": BackendMessage<"workspace.created", WorkspacePayload>;
     "workspace.updated": BackendMessage<"workspace.updated", WorkspacePayload>;
@@ -623,6 +632,7 @@ export type BackendMessageMap = OfficeBackendMessageMap &
       QueueStatusChangedPayload
     >;
     "github.task_pr.updated": BackendMessage<"github.task_pr.updated", TaskPR>;
+    "github.task_pr.deleted": BackendMessage<"github.task_pr.deleted", TaskPRDeletedEvent>;
     "github.task_ci_options.updated": BackendMessage<
       "github.task_ci_options.updated",
       TaskCIAutomationOptions

@@ -37,7 +37,7 @@ export function createDefaultUserSettings(): UserSettingsState {
     reviewAutoMarkOnScroll: true,
     confirmTaskArchive: true,
     unreadDivider: false,
-    agentGeneratedTaskTitles: false,
+    agentGeneratedTaskTitles: true,
     mcpTaskAgentProfileDefault: "current_task",
     showAnchoredPromptBar: false,
     showScrollToLastPrompt: true,
@@ -65,6 +65,7 @@ export function createDefaultUserSettings(): UserSettingsState {
     githubSavedPresets: undefined,
     githubDefaultQueryPresets: undefined,
     gitlabSavedPresets: undefined,
+    azureDevOpsBrowsePreferences: undefined,
     defaultUtilityAgentId: null,
     keyboardShortcuts: {},
     terminalLinkBehavior: "new_tab",
@@ -229,7 +230,7 @@ function buildBehaviorFields(s: UserSettingsData, current: UserSettingsState) {
     reviewAutoMarkOnScroll: s.review_auto_mark_on_scroll ?? current.reviewAutoMarkOnScroll,
     confirmTaskArchive: s.confirm_task_archive ?? current.confirmTaskArchive,
     unreadDivider: s.unread_divider ?? current.unreadDivider,
-    agentGeneratedTaskTitles: s.agent_generated_task_titles ?? false,
+    agentGeneratedTaskTitles: s.agent_generated_task_titles ?? current.agentGeneratedTaskTitles,
     mcpTaskAgentProfileDefault: mapDefined(
       s.mcp_task_agent_profile_default,
       current.mcpTaskAgentProfileDefault,
@@ -290,6 +291,11 @@ export function buildCoreFields(
     gitlabSavedPresets: mapDefined(
       s.gitlab_saved_presets,
       current.gitlabSavedPresets,
+      (value) => value,
+    ),
+    azureDevOpsBrowsePreferences: mapDefined(
+      s.azure_devops_browse_preferences,
+      current.azureDevOpsBrowsePreferences,
       (value) => value,
     ),
     appStatusBarOrder: mapDefined(

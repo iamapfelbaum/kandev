@@ -473,15 +473,24 @@ func (s *Service) StartCreatedSession(
 	if err != nil {
 		return nil, fmt.Errorf("failed to reload task after on_turn_start: %w", err)
 	}
+	configMode := false
+	if cm, ok := session.Metadata["config_mode"].(bool); ok && cm {
+		configMode = true
+	}
+	titleOwner := false
+	if !configMode {
+		titleOwner, err = s.ClaimTaskTitleSession(ctx, taskID, sessionID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to claim first-turn task title: %w", err)
+		}
+	}
 	effectivePrompt, planModeActive, promptReferenceContext := s.applyWorkflowAndPlanMode(
 		ctx, effectivePrompt, taskID, sessionID, dbTask.WorkflowStepID,
 		planMode, task.IsEphemeral, session.IsPassthrough,
 	)
 
 	// Inject config context for config-mode sessions (dedicated settings chat)
-	configMode := false
-	if cm, ok := session.Metadata["config_mode"].(bool); ok && cm {
-		configMode = true
+	if configMode {
 		effectivePrompt = sysprompt.InjectConfigContext(sessionID, effectivePrompt)
 	}
 
@@ -495,7 +504,7 @@ func (s *Service) StartCreatedSession(
 	if effectivePrompt != "" || len(attachments) > 0 {
 		effectivePrompt = s.wrapCreatedSessionPrompt(
 			ctx, effectivePrompt, taskID, sessionID, session, dbTask,
-			isOfficeTask, configMode, references, promptReferenceContext,
+			isOfficeTask, configMode, titleOwner, references, promptReferenceContext,
 		)
 	}
 
@@ -537,14 +546,14 @@ func (s *Service) wrapCreatedSessionPrompt(
 	prompt, taskID, sessionID string,
 	session *models.TaskSession,
 	dbTask *models.Task,
-	isOfficeTask, configMode bool,
+	isOfficeTask, configMode, titleOwner bool,
 	references []v1.EntityReference,
 	promptReferenceContext string,
 ) string {
 	referenceContext := EntityReferenceContext(references)
 	switch {
 	case session.IsPassthrough:
-		if !configMode && models.IsAgentTitlePending(dbTask.Metadata) {
+		if !configMode && titleOwner {
 			return sysprompt.PendingTaskTitlePassthroughInstruction() + "\n\n" + prompt
 		}
 		return prompt
@@ -556,7 +565,7 @@ func (s *Service) wrapCreatedSessionPrompt(
 		return sysprompt.InjectKandevContextWithOptions(taskID, sessionID, prompt, sysprompt.KandevContextOptions{
 			RequiresCompletionSignal:       s.WorkflowStepRequiresCompletionSignal(ctx, dbTask.WorkflowStepID),
 			IncludeCoordinatorTaskControls: !configMode,
-			IncludeTaskTitleTool:           !configMode && models.IsAgentTitlePending(dbTask.Metadata),
+			IncludeTaskTitleTool:           !configMode && titleOwner,
 		}, referenceContext, promptReferenceContext)
 	}
 }
@@ -905,6 +914,13 @@ func (s *Service) startTask(ctx context.Context, taskID string, agentProfileID s
 		configMode = true
 		effectivePrompt = sysprompt.InjectConfigContext(sessionID, effectivePrompt)
 	}
+	titleOwner := false
+	if !configMode && !isOfficeTask {
+		titleOwner, err = s.ClaimTaskTitleSession(ctx, task.ID, sessionID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to claim first-turn task title: %w", err)
+		}
+	}
 
 	// Wrap the first prompt with the Kandev MCP system block (task/session IDs +
 	// tool list). Done at the orchestrator layer so recordInitialMessage persists
@@ -931,7 +947,7 @@ func (s *Service) startTask(ctx context.Context, taskID string, agentProfileID s
 			isPassthrough:        skipKandevMCPWrap,
 			configMode:           configMode,
 			referenceContext:     promptReferenceContext,
-			includeTaskTitleTool: !configMode && models.IsAgentTitlePending(task.Metadata),
+			includeTaskTitleTool: !configMode && titleOwner,
 			spawnOrigin:          opts.SpawnOrigin,
 		})
 	}
@@ -1960,6 +1976,9 @@ func (s *Service) startAgentOnPreparedWorkspace(ctx context.Context, sessionID s
 	if err != nil {
 		return fmt.Errorf("failed to get task for prepared session: %w", err)
 	}
+	if _, err := s.ClaimTaskTitleSession(launchCtx, session.TaskID, sessionID); err != nil {
+		return fmt.Errorf("failed to claim first-turn task title: %w", err)
+	}
 	if _, err = s.executor.LaunchPreparedSession(launchCtx, task, sessionID, executor.LaunchOptions{
 		AgentProfileID: session.AgentProfileID,
 		ExecutorID:     session.ExecutorID,
@@ -2443,6 +2462,9 @@ func coordinatorStopSessionID(session *models.TaskSession) string {
 }
 
 func (s *Service) stopTaskSessionForCoordinator(ctx context.Context, taskID, sessionID string) (bool, error) {
+	endCancel := s.beginCancelInFlight(sessionID)
+	defer endCancel()
+
 	lock, release := s.acquireCancelInFlightGuard(sessionID)
 	lock.Lock()
 
@@ -3916,20 +3938,50 @@ func (s *Service) acquireCancelInFlightGuard(sessionID string) (*sync.Mutex, fun
 	return &guard.mu, release
 }
 
-// isCancelInFlight reports whether sessionID's cancelInFlight guard is
-// currently held by someone else, without itself claiming it — a
-// TryLock-then-immediately-Unlock peek rather than a real acquisition. The
-// guard entry this creates to perform the peek is released (and pruned if
-// nothing else references it) before this returns, so a passive readiness
-// probe never leaves permanent state behind.
+// beginCancelInFlight records that a cancellation operation for sessionID is
+// active (or waiting to claim the shared per-session guard). This is separate
+// from cancelInFlight itself: stream handlers also hold that mutex while
+// persisting output, but must not make boot-ready handling mistake their work
+// for a cancellation. The returned release function is idempotent so callers
+// can safely use it with both explicit and deferred cleanup.
+func (s *Service) beginCancelInFlight(sessionID string) func() {
+	if sessionID == "" {
+		return func() {}
+	}
+
+	s.cancelOperationsMu.Lock()
+	if s.cancelOperations == nil {
+		s.cancelOperations = make(map[string]int)
+	}
+	s.cancelOperations[sessionID]++
+	s.cancelOperationsMu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.cancelOperationsMu.Lock()
+			count := s.cancelOperations[sessionID]
+			if count <= 1 {
+				delete(s.cancelOperations, sessionID)
+			} else {
+				s.cancelOperations[sessionID] = count - 1
+			}
+			s.cancelOperationsMu.Unlock()
+		})
+	}
+}
+
+// isCancelInFlight reports whether an actual cancellation operation for
+// sessionID is active or waiting on the shared guard. It deliberately does
+// not inspect the guard mutex itself because stream/lifecycle handlers also
+// use that mutex for non-cancelling side effects.
 func (s *Service) isCancelInFlight(sessionID string) bool {
-	lock, release := s.acquireCancelInFlightGuard(sessionID)
-	defer release()
-	if lock.TryLock() {
-		lock.Unlock()
+	if sessionID == "" {
 		return false
 	}
-	return true
+	s.cancelOperationsMu.Lock()
+	defer s.cancelOperationsMu.Unlock()
+	return s.cancelOperations[sessionID] > 0
 }
 
 // CancelAgent interrupts the current agent turn without terminating the process,
@@ -3946,6 +3998,8 @@ func (s *Service) CancelAgent(ctx context.Context, sessionID string) error {
 	}
 
 	s.logger.Debug("cancelling agent turn", zap.String("session_id", sessionID))
+	endCancel := s.beginCancelInFlight(sessionID)
+	defer endCancel()
 
 	// Deduplicate concurrent retries. The UI's cancel button has no in-flight
 	// disable, so impatient users click it multiple times while the agent is
