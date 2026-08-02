@@ -399,6 +399,38 @@ func TestServiceUninstallDeletesPluginState(t *testing.T) {
 	}
 }
 
+// TestServiceUninstallDeletesPluginUserStateForEveryUser pins AC20: the
+// per-user counterpart of TestServiceUninstallDeletesPluginState — uninstall
+// must purge plugin_user_state rows for every user who wrote one, not just
+// whichever user happened to trigger the uninstall.
+func TestServiceUninstallDeletesPluginUserStateForEveryUser(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	svc.SetUserState(newTestUserStateStore(t))
+	installTestPlugin(t, svc, "kandev-plugin-notes")
+
+	ctx := context.Background()
+	if _, err := svc.UserState().Set(ctx, "kandev-plugin-notes", "user_1", "task", "task_1", "note", json.RawMessage(`"a"`), nil); err != nil {
+		t.Fatalf("seed user_1: %v", err)
+	}
+	if _, err := svc.UserState().Set(ctx, "kandev-plugin-notes", "user_2", "task", "task_1", "note", json.RawMessage(`"b"`), nil); err != nil {
+		t.Fatalf("seed user_2: %v", err)
+	}
+
+	if err := svc.Uninstall(context.Background(), "kandev-plugin-notes"); err != nil {
+		t.Fatalf("Uninstall() unexpected error: %v", err)
+	}
+
+	for _, userID := range []string{"user_1", "user_2"} {
+		entries, err := svc.UserState().List(ctx, "kandev-plugin-notes", userID, "task", "task_1")
+		if err != nil {
+			t.Fatalf("List(%s) after Uninstall(): %v", userID, err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("plugin_user_state entries for %s after Uninstall() = %d, want 0", userID, len(entries))
+		}
+	}
+}
+
 func TestServiceUninstallMissingReturnsNotFound(t *testing.T) {
 	svc, _, _ := newTestService(t)
 	if err := svc.Uninstall(context.Background(), "missing"); !errors.Is(err, store.ErrNotFound) {

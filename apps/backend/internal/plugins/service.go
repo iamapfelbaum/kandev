@@ -75,6 +75,7 @@ type Service struct {
 	store      store.Store
 	registry   *Registry
 	state      *state.Store
+	userState  *state.UserStore
 	eventBus   bus.EventBus
 	log        *logger.Logger
 
@@ -202,6 +203,24 @@ func (s *Service) SetState(st *state.Store) {
 // without re-initializing the schema.
 func (s *Service) StateStore() *state.Store {
 	return s.state
+}
+
+// SetUserState wires the already-constructed plugin_user_state store. Provide
+// calls this; also exposed for tests that build a Service without going
+// through Provide. See UserState's doc comment for how it differs from
+// StateStore.
+func (s *Service) SetUserState(st *state.UserStore) {
+	s.userState = st
+}
+
+// UserState returns the plugin_user_state store Provide constructed, for the
+// authenticated per-user storage HTTP routes (user_state_handlers.go).
+// Unlike StateStore (plugin_state, written only by a plugin's own
+// gRPC-connected backend via the Host RPC), this store is reachable directly
+// from an authenticated browser request — every read/write is scoped to the
+// calling user (Approach D1, docs/decisions/2026-08-01-per-user-plugin-storage.md).
+func (s *Service) UserState() *state.UserStore {
+	return s.userState
 }
 
 // SetSecrets wires the secret vault Provide was constructed with.
@@ -909,6 +928,7 @@ func (s *Service) Uninstall(ctx context.Context, id string) error {
 	}
 	s.registry.Remove(id)
 	s.deletePluginState(id)
+	s.deletePluginUserState(id)
 	s.notifyDeliverer()
 	return nil
 }
@@ -951,6 +971,18 @@ func (s *Service) deletePluginState(id string) {
 	}
 	if err := s.state.DeleteAll(context.Background(), id); err != nil {
 		s.log.Warn("plugins: failed to delete plugin_state on uninstall", zap.String("plugin_id", id), zap.Error(err))
+	}
+}
+
+// deletePluginUserState best-effort removes every plugin_user_state row for
+// id, across every user (AC20) — the per-user counterpart to
+// deletePluginState. A nil userState store is a silent no-op.
+func (s *Service) deletePluginUserState(id string) {
+	if s.userState == nil {
+		return
+	}
+	if err := s.userState.DeleteAllForPlugin(context.Background(), id); err != nil {
+		s.log.Warn("plugins: failed to delete plugin_user_state on uninstall", zap.String("plugin_id", id), zap.Error(err))
 	}
 }
 

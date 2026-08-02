@@ -26,6 +26,7 @@ func RegisterUserNotifications(ctx context.Context, eventBus bus.EventBus, hub *
 	}
 
 	b.subscribe(eventBus, events.UserSettingsUpdated, ws.ActionUserSettingsUpdated)
+	b.subscribe(eventBus, events.PluginUserStateUpdated, ws.ActionPluginUserStateUpdated)
 
 	go func() {
 		<-ctx.Done()
