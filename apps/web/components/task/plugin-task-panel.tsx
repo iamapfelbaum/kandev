@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/components/state-provider";
 import { PluginErrorBoundary } from "@/components/plugins/plugin-error-boundary";
 import { pluginRegistry, usePluginRegistry } from "@/lib/plugins/registry";
@@ -14,17 +15,19 @@ export interface PluginTaskPanelContainerProps {
 }
 
 function PluginTaskPanelUnavailable() {
+  const { t } = useTranslation();
   return (
     <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
-      This panel is no longer available.
+      {t("common:pluginPanelUnavailable")}
     </div>
   );
 }
 
 function PluginTaskPanelFailed() {
+  const { t } = useTranslation();
   return (
     <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
-      This plugin panel failed to load.
+      {t("common:pluginPanelFailedToLoad")}
     </div>
   );
 }

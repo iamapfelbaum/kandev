@@ -9,6 +9,7 @@ import type { ReviewSource } from "@/hooks/domains/session/use-review-sources";
 import { useEnvironmentSessionId } from "@/hooks/use-environment-session-id";
 import { useFileEditors } from "@/hooks/use-file-editors";
 import { usePanelActive } from "@/hooks/use-panel-active";
+import { t } from "@/lib/i18n";
 import { setPanelTitle } from "@/lib/layout/panel-portal-manager";
 import { useDockviewStore } from "@/lib/state/dockview-store";
 import { BrowserPanel } from "./browser-panel";
@@ -240,5 +241,5 @@ export function renderPanel(
 ): React.ReactNode {
   const renderer = PANEL_RENDERERS[resolveComponent(component)];
   if (renderer) return renderer(panelId, params);
-  return <div className="p-4 text-muted-foreground">Unknown panel: {component}</div>;
+  return <div className="p-4 text-muted-foreground">{t("common:unknownPanel", { component })}</div>;
 }

@@ -8,12 +8,15 @@
   "integrations": "Ĩńţēĝŕàţĩōńś",
   "justNow": "ĵũśţ ńōŵ",
   "mAgo": "{{diffMin}}ḿ àĝō",
+  "pluginPanelFailedToLoad": "Ţĥĩś ƥĺũĝĩń ƥàńēĺ ƒàĩĺēď ţō ĺōàď.",
+  "pluginPanelUnavailable": "Ţĥĩś ƥàńēĺ ĩś ńō ĺōńĝēŕ àvàĩĺàƀĺē.",
   "plugins": "Ƥĺũĝĩńś",
   "prompts": "Ƥŕōḿƥţś",
   "settings": "Śēţţĩńĝś",
   "shell": "Śĥēĺĺ",
   "status": "Śţàţũś",
   "system": "Śŷśţēḿ",
+  "unknownPanel": "Ũńķńōŵń ƥàńēĺ: {{component}}",
   "workspace": "Ŵōŕķśƥàćē",
   "workspaces": "Ŵōŕķśƥàćēś"
 }

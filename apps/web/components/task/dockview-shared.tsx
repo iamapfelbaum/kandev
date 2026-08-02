@@ -14,6 +14,7 @@ import { useSessionGitStatus } from "@/hooks/domains/session/use-session-git-sta
 import { useSessionCommits } from "@/hooks/domains/session/use-session-commits";
 import { useEnvironmentSessionId } from "@/hooks/use-environment-session-id";
 import type { ReviewSource } from "@/hooks/domains/session/use-review-sources";
+import { t } from "@/lib/i18n";
 
 // Panel components (rendered via portals, not directly by dockview)
 import { TaskChatPanel } from "./task-chat-panel";
@@ -423,7 +424,7 @@ export function renderPanel(
 ): React.ReactNode {
   const renderer = PANEL_RENDERERS[resolveComponent(component)];
   if (renderer) return renderer(panelId, params);
-  return <div className="p-4 text-muted-foreground">Unknown panel: {component}</div>;
+  return <div className="p-4 text-muted-foreground">{t("common:unknownPanel", { component })}</div>;
 }
 
 export const VALID_COMPONENTS = new Set(Object.keys(dockviewComponents));

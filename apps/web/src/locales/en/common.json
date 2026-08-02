@@ -8,12 +8,15 @@
   "integrations": "Integrations",
   "justNow": "just now",
   "mAgo": "{{diffMin}}m ago",
+  "pluginPanelFailedToLoad": "This plugin panel failed to load.",
+  "pluginPanelUnavailable": "This panel is no longer available.",
   "plugins": "Plugins",
   "prompts": "Prompts",
   "settings": "Settings",
   "shell": "Shell",
   "status": "Status",
   "system": "System",
+  "unknownPanel": "Unknown panel: {{component}}",
   "workspace": "Workspace",
   "workspaces": "Workspaces"
 }
