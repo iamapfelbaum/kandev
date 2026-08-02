@@ -310,3 +310,44 @@ describe("buildHostApi — host.storage set/delete/list/subscribe", () => {
     expect(pluginRegistry.getWsHandlers("plugin.user-state.updated").length).toBe(before);
   });
 });
+
+/**
+ * The per-tab writer id is derived at MODULE SCOPE, so anything that throws
+ * while computing it breaks the whole module — and `host-api` is on the
+ * plugin boot path (`lib/plugins/boot.ts`), so the blast radius is every
+ * plugin, not just storage.
+ *
+ * `crypto.randomUUID` is a secure-context-only API: on an http:// origin that
+ * is not localhost (a shared VPS/homelab instance, which the auth spec
+ * explicitly targets) it is undefined. Regression test for that environment.
+ */
+describe("buildHostApi — non-secure context (http:// on a non-localhost origin)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it("still loads and stamps a writerId when crypto.randomUUID is unavailable", async () => {
+    // A non-secure context exposes `crypto` but not `randomUUID`.
+    vi.stubGlobal("crypto", {});
+    vi.resetModules();
+
+    const freshHostApi = await import("./host-api");
+    const { createAppStore: freshCreateStore } = await import("@/lib/state/store");
+
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ updatedAt: TEST_UPDATED_AT }), { status: 200 }),
+      ) as unknown as typeof fetch;
+
+    const host = freshHostApi.buildHostApi(NOTES_PLUGIN_ID, freshCreateStore(), "light");
+    await host.storage.set("task", "task_1", "note", { body: "hi" });
+
+    const body = JSON.parse(
+      (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1].body as string,
+    );
+    expect(typeof body.writerId).toBe("string");
+    expect(body.writerId.length).toBeGreaterThan(0);
+  });
+});

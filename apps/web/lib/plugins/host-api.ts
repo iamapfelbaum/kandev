@@ -70,6 +70,7 @@ import { RichTextEditor, RichTextReadOnly } from "@/components/editors/tiptap/ri
 import { PageTopbar } from "@/components/page-topbar";
 import { TaskCreateDialog } from "@/components/task-create-dialog";
 import { getBackendConfig } from "@/lib/config";
+import { generateUUID } from "@/lib/utils";
 import { softNavigate } from "@/lib/routing/client-router";
 import type { AppState } from "@/lib/state/store";
 import { pluginModalManager } from "./modal-manager";
@@ -185,8 +186,14 @@ const PLUGIN_UI: Record<string, unknown> = {
  * per page load, shared across every plugin in this tab (a subscription
  * already filters by pluginId, so a shared id doesn't cross plugin
  * boundaries).
+ *
+ * Uses `generateUUID` rather than `crypto.randomUUID` directly: the latter is
+ * a secure-context-only API, so on an http:// non-localhost origin (a shared
+ * VPS/homelab instance) it is undefined. This is module scope, so that would
+ * throw during module init and take down plugin loading entirely — not just
+ * storage.
  */
-const TAB_WRITER_ID: string = crypto.randomUUID();
+const TAB_WRITER_ID: string = generateUUID();
 
 export function buildHostApi(
   pluginId: string,
