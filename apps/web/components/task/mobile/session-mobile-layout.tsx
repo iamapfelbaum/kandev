@@ -28,6 +28,8 @@ import { PRDetailPanelComponent } from "@/components/github/pr-detail-panel";
 import { prTaskKey } from "@/components/github/pr-utils";
 import { ReviewPRSelector } from "@/components/review/review-pr-selector";
 import { MRDetailPanelComponent, mrTaskKey } from "@/components/gitlab/mr-detail-panel";
+import { PluginTaskPanel } from "../plugin-task-panel";
+import { parsePluginPanelId } from "@/lib/state/layout-manager/plugin-panels";
 
 export type MobileReviewSource = "github" | "gitlab" | null;
 
@@ -141,6 +143,20 @@ type MobilePanelAreaProps = {
   onSelectReviewPR: ReturnType<typeof useReviewPRSelection>["selectPR"];
 };
 
+/** Keeps terminal content's visible bottom glued to the keybar top. When the
+ *  keyboard is up, the content area already pads for the bottom nav (which
+ *  is now under the keyboard), so we subtract it back out and add the
+ *  keyboard height instead. */
+function terminalPaddingBottom(
+  keyboardOpen: boolean,
+  bottomOffset: number,
+  bottomNavHeight: string,
+): string {
+  return keyboardOpen
+    ? `calc(${bottomOffset + KEYBAR_HEIGHT_PX}px - ${bottomNavHeight} - env(safe-area-inset-bottom, 0px))`
+    : `${KEYBAR_HEIGHT_PX}px`;
+}
+
 export function MobilePanelArea({
   currentMobilePanel,
   activeTaskId,
@@ -163,13 +179,7 @@ export function MobilePanelArea({
   onSelectReviewPR,
 }: MobilePanelAreaProps) {
   const { keyboardOpen, bottomOffset } = useVisualViewportOffset();
-  // Keep terminal content's visible bottom glued to the keybar top. When the
-  // keyboard is up, the content area already pads for the bottom nav (which
-  // is now under the keyboard), so we subtract it back out and add the
-  // keyboard height instead.
-  const terminalPaddingBottom = keyboardOpen
-    ? `calc(${bottomOffset + KEYBAR_HEIGHT_PX}px - ${bottomNavHeight} - env(safe-area-inset-bottom, 0px))`
-    : `${KEYBAR_HEIGHT_PX}px`;
+  const terminalPadding = terminalPaddingBottom(keyboardOpen, bottomOffset, bottomNavHeight);
   return (
     <div
       className="flex flex-col"
@@ -222,7 +232,7 @@ export function MobilePanelArea({
         <div
           data-testid="terminal-panel"
           className="flex-1 min-h-0 flex flex-col px-2"
-          style={{ paddingBottom: terminalPaddingBottom }}
+          style={{ paddingBottom: terminalPadding }}
         >
           <SessionPanelContent className="p-0 flex-1 min-h-0 flex flex-col">
             <MobileTerminalPane key={effectiveSessionId} sessionId={effectiveSessionId} />
@@ -242,6 +252,28 @@ export function MobilePanelArea({
           <MRDetailPanelComponent panelId="mobile-mr-detail" params={{ mrKey }} />
         </div>
       )}
+      <MobilePluginPanel currentMobilePanel={currentMobilePanel} />
+    </div>
+  );
+}
+
+/**
+ * Renders a mobile-enabled plugin task panel (AC7) — `currentMobilePanel` is
+ * a `plugin:<pluginId>:<panelKey>` id from `SessionMobileBottomNav`'s
+ * plugin-contributed nav entries. A non-plugin id (the common case) is a
+ * no-op, so this stays a single trailing branch instead of one per plugin.
+ */
+function MobilePluginPanel({ currentMobilePanel }: { currentMobilePanel: MobileSessionPanel }) {
+  const parsed = parsePluginPanelId(currentMobilePanel);
+  if (!parsed) return null;
+  return (
+    <div className="flex-1 min-h-0 flex flex-col p-2">
+      <PluginTaskPanel
+        pluginId={parsed.pluginId}
+        panelKey={parsed.panelKey}
+        panelId={currentMobilePanel}
+        presentation="mobile"
+      />
     </div>
   );
 }

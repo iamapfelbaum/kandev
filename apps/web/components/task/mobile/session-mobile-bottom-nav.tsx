@@ -15,6 +15,9 @@ import { Badge } from "@kandev/ui/badge";
 import type { MobileSessionPanel } from "@/lib/state/slices/ui/types";
 import type { ConnectionIssueSeverity } from "@/lib/types/connection";
 import { connectionIssueDetails } from "@/components/app-status-bar/connection-status-item";
+import { pluginRegistry, usePluginRegistry } from "@/lib/plugins/registry";
+import { resolvePluginIcon } from "@/lib/plugins/icons";
+import { pluginPanelId } from "@/lib/state/layout-manager/plugin-panels";
 
 type SessionMobileBottomNavProps = {
   activePanel: MobileSessionPanel;
@@ -34,6 +37,21 @@ type NavItem = {
   connectionIssueSeverity?: Exclude<ConnectionIssueSeverity, "none">;
 } & ({ panel: MobileSessionPanel; onClick?: never } | { panel?: never; onClick: () => void });
 
+/** Nav entries for mobile-enabled plugin task panels (AC7), appended after Terminal. */
+function pluginNavItems(): NavItem[] {
+  return pluginRegistry
+    .getTaskPanels()
+    .filter((registration) => registration.mobileEnabled)
+    .map((registration) => {
+      const Icon = resolvePluginIcon(registration.icon);
+      return {
+        panel: pluginPanelId(registration.pluginId, registration.id) as MobileSessionPanel,
+        label: registration.title,
+        icon: <Icon className="h-5 w-5" />,
+      };
+    });
+}
+
 export function SessionMobileBottomNav({
   activePanel,
   onPanelChange,
@@ -44,6 +62,8 @@ export function SessionMobileBottomNav({
   onOpenStatus,
   connectionIssueSeverity = "none",
 }: SessionMobileBottomNavProps) {
+  usePluginRegistry();
+  const registryVersion = pluginRegistry.getVersion();
   const items: NavItem[] = useMemo(
     () => [
       {
@@ -92,6 +112,7 @@ export function SessionMobileBottomNav({
         label: "Terminal",
         icon: <IconTerminal2 className="h-5 w-5" />,
       },
+      ...pluginNavItems(),
       ...(showStatus
         ? [
             {
@@ -103,7 +124,16 @@ export function SessionMobileBottomNav({
           ]
         : []),
     ],
-    [planBadge, changesBadge, hasReview, showStatus, onOpenStatus, connectionIssueSeverity],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- registryVersion drives pluginNavItems()
+    [
+      planBadge,
+      changesBadge,
+      hasReview,
+      showStatus,
+      onOpenStatus,
+      connectionIssueSeverity,
+      registryVersion,
+    ],
   );
 
   return (

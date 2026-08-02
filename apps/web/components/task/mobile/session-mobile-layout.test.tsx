@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, renderHook, act, screen } from "@testing-library/react";
 import { useState } from "react";
 import type { OpenFileTab } from "@/lib/types/backend";
@@ -14,6 +14,11 @@ vi.mock("../file-browser-hooks", () => ({
 
 vi.mock("@/hooks/use-visual-viewport-offset", () => ({
   useVisualViewportOffset: () => ({ keyboardOpen: false, bottomOffset: 0 }),
+}));
+
+vi.mock("@/components/state-provider", () => ({
+  useAppStore: (selector: (state: Record<string, unknown>) => unknown) =>
+    selector({ tasks: { activeTaskId: "task-1", activeSessionId: "session-1" } }),
 }));
 
 vi.mock("@/components/review/review-pr-selector", () => ({
@@ -39,6 +44,7 @@ import {
   resolveMobileReviewSource,
   useMobilePanelHandlers,
 } from "./session-mobile-layout";
+import { pluginRegistry } from "@/lib/plugins/registry";
 
 const MOCK_FILE: OpenFileTab = {
   path: "src/foo.ts",
@@ -286,5 +292,59 @@ describe("MobilePanelArea PR identity", () => {
 
     expect(screen.queryByRole("button", { name: "feedback for pr-a" })).toBeNull();
     expect(screen.getByRole("button", { name: "feedback for pr-b" })).not.toBeNull();
+  });
+});
+
+function renderMobilePanel(currentMobilePanel: string) {
+  return render(
+    <MobilePanelArea
+      currentMobilePanel={currentMobilePanel as never}
+      activeTaskId="task-1"
+      isPassthroughMode={false}
+      effectiveSessionId="session-1"
+      selectedFile={null}
+      selectedFilePreview={false}
+      selectedDiff={null}
+      handleOpenFileFromChat={vi.fn()}
+      handleClearSelectedDiff={vi.fn()}
+      handleOpenFile={vi.fn()}
+      handlePanelChangeAndClearSheet={vi.fn()}
+      topNavHeight="3.5rem"
+      bottomNavHeight="3.25rem"
+      reviewSource={null}
+      reviewPRs={[]}
+      selectedReviewPR={null}
+      onSelectReviewPR={vi.fn()}
+    />,
+  );
+}
+
+describe("MobilePanelArea — plugin task panel (AC7)", () => {
+  afterEach(() => {
+    pluginRegistry.unregisterPlugin("kandev-plugin-notes");
+  });
+
+  it("renders the plugin's Component with mobile presentation when selected", () => {
+    function Notes(props: { panelId: string; taskId: string; presentation: string }) {
+      return (
+        <div data-testid="notes-mobile-body">
+          {props.panelId}|{props.taskId}|{props.presentation}
+        </div>
+      );
+    }
+    pluginRegistry
+      .forPlugin("kandev-plugin-notes")
+      .registerTaskPanel({ id: "notes", title: "Notes", Component: Notes, mobileEnabled: true });
+
+    renderMobilePanel("plugin:kandev-plugin-notes:notes");
+
+    expect(screen.getByTestId("notes-mobile-body").textContent).toBe(
+      "plugin:kandev-plugin-notes:notes|task-1|mobile",
+    );
+  });
+
+  it("renders nothing for a panel id that isn't a plugin id", () => {
+    renderMobilePanel("not-a-plugin-panel-id");
+    expect(screen.queryByTestId("notes-mobile-body")).toBeNull();
   });
 });
