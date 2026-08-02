@@ -33,12 +33,11 @@ const EXPECTED_UI_PRIMITIVES = [
   "Tooltip",
 ];
 
-describe("buildHostApi", () => {
+describe("buildHostApi — api.fetch", () => {
   const originalFetch = global.fetch;
 
   afterEach(() => {
     global.fetch = originalFetch;
-    vi.unstubAllEnvs();
   });
 
   it("scopes api.fetch to /api/plugins/{pluginId}/... and forwards init", async () => {
@@ -51,7 +50,18 @@ describe("buildHostApi", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toContain("/api/plugins/jira/issues");
-    expect(init).toEqual({ method: "POST" });
+    expect(init).toEqual({ method: "POST", credentials: "include" });
+  });
+
+  it("forces credentials: include even when init omits it, so the session cookie survives a split origin", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const host = buildHostApi("jira", createAppStore(), "light");
+    await host.api.fetch("/issues");
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init).toMatchObject({ credentials: "include" });
   });
 
   it("normalizes a path that doesn't start with a slash", async () => {
@@ -63,6 +73,12 @@ describe("buildHostApi", () => {
 
     const [url] = fetchMock.mock.calls[0];
     expect(url).toContain("/api/plugins/jira/issues");
+  });
+});
+
+describe("buildHostApi", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("exposes the host React instance and a jsx alias for React.createElement", () => {
@@ -260,6 +276,21 @@ describe("buildHostApi — host.storage set/delete/list/subscribe", () => {
     expect(writerId1).toBe(writerId2);
   });
 
+  it("set() uses options.writerId in place of the tab default when given (per-surface scoping)", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ updatedAt: TEST_UPDATED_AT }), { status: 200 }),
+      );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const host = buildHostApi(NOTES_PLUGIN_ID, createAppStore(), "light");
+    await host.storage.set("task", "task_1", "note", "hello", { writerId: "panel-xyz" });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.writerId).toBe("panel-xyz");
+  });
+
   it("set() forwards ifUnmodifiedSince and throws PluginStorageConflictError on 409", async () => {
     global.fetch = vi
       .fn()
@@ -281,6 +312,17 @@ describe("buildHostApi — host.storage set/delete/list/subscribe", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toContain("/api/plugins/kandev-plugin-notes/user-state/task/task_1/note?writerId=");
     expect(init.method).toBe("DELETE");
+  });
+
+  it("delete() uses options.writerId in place of the tab default when given", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const host = buildHostApi(NOTES_PLUGIN_ID, createAppStore(), "light");
+    await host.storage.delete("task", "task_1", "note", { writerId: "panel-xyz" });
+
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toContain("writerId=panel-xyz");
   });
 
   it("list() returns the entries array in order (AC27)", async () => {

@@ -225,12 +225,18 @@ export function buildHostApi(
   };
 }
 
-/** fetch scoped to `/api/plugins/{pluginId}/...` via the kandev reverse proxy. */
+/**
+ * fetch scoped to `/api/plugins/{pluginId}/...` via the kandev reverse proxy.
+ * Forces `credentials: "include"` so the session cookie still rides along
+ * when the frontend and backend are on different origins/ports (split
+ * dev/desktop setups) — plain `fetch` defaults to `same-origin` and would
+ * silently drop it, turning every authenticated plugin request into a 401.
+ */
 function fetchPluginApi(pluginId: string, path: string, init?: RequestInit): Promise<Response> {
   const { apiBaseUrl } = getBackendConfig();
   const suffix = path.startsWith("/") ? path : `/${path}`;
   const url = `${apiBaseUrl}/api/plugins/${encodeURIComponent(pluginId)}${suffix}`;
-  return fetch(url, init);
+  return fetch(url, { ...init, credentials: "include" });
 }
 
 /** Path for the per-user storage routes; omit `key` for the list route. */
@@ -255,7 +261,7 @@ function buildStorageApi(pluginId: string): PluginStorageApi {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           value,
-          writerId: TAB_WRITER_ID,
+          writerId: options?.writerId ?? TAB_WRITER_ID,
           ifUnmodifiedSince: options?.ifUnmodifiedSince,
         }),
       });
@@ -264,8 +270,9 @@ function buildStorageApi(pluginId: string): PluginStorageApi {
       const body = (await res.json()) as { updatedAt: string };
       return { updatedAt: body.updatedAt };
     },
-    async delete(scope, scopeId, key) {
-      const path = `${userStatePath(scope, scopeId, key)}?writerId=${encodeURIComponent(TAB_WRITER_ID)}`;
+    async delete(scope, scopeId, key, options) {
+      const writerId = options?.writerId ?? TAB_WRITER_ID;
+      const path = `${userStatePath(scope, scopeId, key)}?writerId=${encodeURIComponent(writerId)}`;
       const res = await fetchPluginApi(pluginId, path, { method: "DELETE" });
       if (!res.ok) throw new Error(`plugin storage: delete failed with status ${res.status}`);
     },
