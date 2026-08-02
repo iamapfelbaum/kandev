@@ -94,7 +94,17 @@ func (s *UserStore) Get(
 }
 
 // Set upserts the value for the given plugin/user/scope/scopeID/key, setting
-// updated_at to the current time (returned) in RFC3339 UTC. When
+// updated_at to the current time (returned) in RFC3339Nano UTC.
+//
+// The layout must keep sub-second precision: ifUnmodifiedSince is compared
+// against the stored value, so storing at whole-second resolution would make
+// every pair of writes inside the same second indistinguishable and let a
+// stale conditional write through (silently discarding the other surface's
+// edit — exactly what H1/AC28 exists to prevent). Reads still parse with
+// time.RFC3339, which accepts an optional fractional part, so rows written
+// before this layout change continue to load.
+//
+// When
 // ifUnmodifiedSince is non-nil, the write is rejected with ErrConflict if a
 // stored row already exists with updated_at strictly after that time — the
 // caller lost a race and should refetch (Approach H1, AC28). A nil
@@ -128,7 +138,7 @@ func (s *UserStore) Set(
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(plugin_id, user_id, scope, scope_id, state_key)
 		DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
-	`), uuid.New().String(), pluginID, userID, scope, scopeID, key, string(value), now.Format(time.RFC3339)); err != nil {
+	`), uuid.New().String(), pluginID, userID, scope, scopeID, key, string(value), now.Format(time.RFC3339Nano)); err != nil {
 		return time.Time{}, err
 	}
 

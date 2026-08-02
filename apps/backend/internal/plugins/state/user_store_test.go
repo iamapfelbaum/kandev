@@ -317,6 +317,84 @@ func TestUserStoreSetConditionalWriteAcceptsCurrent(t *testing.T) {
 	}
 }
 
+// TestUserStoreUpdatedAtRoundTripsWithSubSecondPrecision pins that the
+// updated_at Set returns is the same instant Get reads back.
+//
+// updated_at is persisted as a string, so the layout it is formatted with
+// decides the stored resolution. time.RFC3339 carries no fractional seconds,
+// which silently truncates every timestamp to a whole second: Set would
+// return 06:21:17.825462712Z while Get returned 06:21:17Z for the same row.
+// That mismatch is not cosmetic — ifUnmodifiedSince compares against the
+// stored value, so a coarser resolution directly widens the window in which
+// userStoreHasNewerRow cannot see a modification (see the same-second test
+// below).
+func TestUserStoreUpdatedAtRoundTripsWithSubSecondPrecision(t *testing.T) {
+	store := newTestUserStore(t)
+	ctx := context.Background()
+
+	written, err := store.Set(ctx, "kandev-plugin-notes", "user_1", "task", "task_xyz", "note", json.RawMessage(`"v1"`), nil)
+	if err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	_, read, found, err := store.Get(ctx, "kandev-plugin-notes", "user_1", "task", "task_xyz", "note")
+	if err != nil || !found {
+		t.Fatalf("get: err=%v found=%v", err, found)
+	}
+
+	if !read.Equal(written) {
+		t.Fatalf("updated_at lost precision in storage: Set returned %s, Get returned %s (delta %s)",
+			written.Format(time.RFC3339Nano), read.Format(time.RFC3339Nano), written.Sub(read))
+	}
+}
+
+// TestUserStoreSetConditionalWriteDetectsSameSecondModification is the
+// regression test for the AC28 blind spot found in QA.
+//
+// TestUserStoreSetConditionalWriteConflict above passes only because it
+// backdates ifUnmodifiedSince by a whole minute. The real scenario is much
+// tighter: two of the same user's surfaces (task panel + kanban modal, or a
+// debounced autosave firing every ~500ms) write within the same second.
+//
+// Sequence: tab A reads the note, tab B writes it, tab A then writes with the
+// token it read. Tab B's write happened after tab A's read, so tab A must be
+// told it lost the race (ErrConflict) rather than silently destroying tab B's
+// edit. With second-resolution storage both writes share one timestamp, so
+// `updatedAt.After(since)` is false and the guard never fires.
+func TestUserStoreSetConditionalWriteDetectsSameSecondModification(t *testing.T) {
+	store := newTestUserStore(t)
+	ctx := context.Background()
+
+	if _, err := store.Set(ctx, "kandev-plugin-notes", "user_1", "task", "task_xyz", "note", json.RawMessage(`"v0"`), nil); err != nil {
+		t.Fatalf("seed set: %v", err)
+	}
+
+	// Tab A reads; this timestamp is the token it will later submit.
+	_, tabAToken, _, err := store.Get(ctx, "kandev-plugin-notes", "user_1", "task", "task_xyz", "note")
+	if err != nil {
+		t.Fatalf("tab A get: %v", err)
+	}
+
+	// Tab B writes immediately afterwards — same wall-clock second.
+	if _, err := store.Set(ctx, "kandev-plugin-notes", "user_1", "task", "task_xyz", "note", json.RawMessage(`"tabB-edit"`), nil); err != nil {
+		t.Fatalf("tab B set: %v", err)
+	}
+
+	// Tab A writes with its now-stale token: must be rejected.
+	_, err = store.Set(ctx, "kandev-plugin-notes", "user_1", "task", "task_xyz", "note", json.RawMessage(`"tabA-edit"`), &tabAToken)
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("tab A's stale conditional write was accepted (err=%v); tab B's edit is silently lost", err)
+	}
+
+	stored, _, _, err := store.Get(ctx, "kandev-plugin-notes", "user_1", "task", "task_xyz", "note")
+	if err != nil {
+		t.Fatalf("final get: %v", err)
+	}
+	if string(stored) != `"tabB-edit"` {
+		t.Fatalf("stored value = %s, want \"tabB-edit\" preserved", stored)
+	}
+}
+
 // TestUserStoreSetConditionalWriteAllowsFirstWrite pins that
 // ifUnmodifiedSince is a no-op when no row exists yet — a plugin creating a
 // document for the first time never needs a nil-vs-zero special case.
