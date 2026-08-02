@@ -195,6 +195,23 @@ const PLUGIN_UI: Record<string, unknown> = {
  */
 const TAB_WRITER_ID: string = generateUUID();
 
+/**
+ * Combines the per-tab base id with an optional per-surface discriminator
+ * (`options.writerId`/`filter.writerId`) rather than replacing it outright.
+ * A surface id like a dockview `panelId` is a static string derived from
+ * `pluginId:panelKey` — identical across every browser tab/session that has
+ * that same panel open. Using it as the *entire* writer id (in place of
+ * `TAB_WRITER_ID`) would make two different tabs editing the same document
+ * look like the same writer to each other, breaking cross-tab sync (AC24)
+ * the same way the un-scoped shared id broke cross-surface sync. Appending
+ * it to the tab-unique base instead keeps both properties: different tabs
+ * always differ (the base differs), and different surfaces in the same tab
+ * always differ (the discriminator differs).
+ */
+function effectiveWriterId(surfaceId: string | undefined): string {
+  return surfaceId ? `${TAB_WRITER_ID}:${surfaceId}` : TAB_WRITER_ID;
+}
+
 export function buildHostApi(
   pluginId: string,
   storeApi: StoreApi<AppState>,
@@ -261,7 +278,7 @@ function buildStorageApi(pluginId: string): PluginStorageApi {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           value,
-          writerId: options?.writerId ?? TAB_WRITER_ID,
+          writerId: effectiveWriterId(options?.writerId),
           ifUnmodifiedSince: options?.ifUnmodifiedSince,
         }),
       });
@@ -271,7 +288,7 @@ function buildStorageApi(pluginId: string): PluginStorageApi {
       return { updatedAt: body.updatedAt };
     },
     async delete(scope, scopeId, key, options) {
-      const writerId = options?.writerId ?? TAB_WRITER_ID;
+      const writerId = effectiveWriterId(options?.writerId);
       const path = `${userStatePath(scope, scopeId, key)}?writerId=${encodeURIComponent(writerId)}`;
       const res = await fetchPluginApi(pluginId, path, { method: "DELETE" });
       if (!res.ok) throw new Error(`plugin storage: delete failed with status ${res.status}`);

@@ -91,11 +91,15 @@ CREATE TABLE plugin_user_state (
   NATS-backed `EventBus` performs before publishing; `UserEventBroadcaster`
   strips it from the payload every client actually receives, regardless of
   transport. A `writerId`, stamped by `host.storage.set`/`delete` and echoed
-  back, lets `host.storage.subscribe` skip its own echo — defaulting to a
-  shared per-tab id, but overridable per call so two surfaces of the same
-  plugin in one tab (a task panel and a kanban quick-action, say) don't
-  mistake each other's writes for their own and suppress a sync they both
-  need.
+  back, lets `host.storage.subscribe` skip its own echo. A caller-supplied
+  per-surface id (e.g. a dockview `panelId`) is appended to the shared
+  per-tab id rather than replacing it — replacing would let a surface id
+  that is the same string in every tab (a `panelId` is) make two different
+  tabs look like the same writer to each other, breaking cross-tab sync;
+  appending keeps two surfaces of the same plugin in one tab (a task panel
+  and a kanban quick-action, say) from mistaking each other's writes for
+  their own, without losing the per-tab distinctness the mechanism depends
+  on in the first place.
 - **No gRPC/proto change.** `Host.GetState/SetState/DeleteState/ListState` and
   `plugin_state` are unchanged; per-user storage and its notification are
   entirely browser-facing surfaces.

@@ -738,10 +738,13 @@ host.storage.list(scope, scopeId): Promise<Array<{ key, value, updatedAt }>>  //
 host.storage.subscribe(filter, handler): () => void  // live updates from another tab/surface
 ```
 
-`writerId` scopes echo suppression to one surface. Omit it for a one-shot
-write with no ongoing subscription (a kanban menu action, say). A surface
-that also subscribes to its own writes — like the panel below — should pass
-something stable and unique to that surface (its `panelId`, from
+`writerId` scopes echo suppression to one surface — the host appends it to
+its own per-tab id rather than replacing it, so a static value like `panelId`
+(the same across every tab that has that panel open) can't make two
+different tabs look like the same writer to each other. Omit it for a
+one-shot write with no ongoing subscription (a kanban menu action, say). A
+surface that also subscribes to its own writes — like the panel below —
+should pass something stable and unique to that surface (its `panelId`, from
 `PluginTaskPanelProps`) to **both** its `set` calls and its `subscribe`
 filter. Otherwise every surface of your plugin shares the same default
 writer identity, and one surface's write looks like every other surface's

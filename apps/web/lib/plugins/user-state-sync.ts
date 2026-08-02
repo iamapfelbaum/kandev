@@ -14,7 +14,7 @@ export interface UserStateSubscribeFilter {
   scope?: PluginStorageScope;
   scopeId?: string;
   key?: string;
-  /** Overrides localWriterId as the echo-suppression comparator — see PluginStorageApi.subscribe. */
+  /** Per-surface discriminator combined with localWriterId — see PluginStorageApi.subscribe. */
   writerId?: string;
 }
 
@@ -43,13 +43,20 @@ function matchesFilter(filter: UserStateSubscribeFilter, change: PluginUserState
  * is treated as an echo and is skipped (AC25) so an editor never clobbers
  * its own caret/selection from its own write.
  *
- * `filter.writerId`, if given, replaces `localWriterId` as that comparator.
- * A plugin with more than one surface (e.g. an open task panel and a kanban
- * quick-action) must give each surface its own distinct writerId — both on
- * this filter and on the matching `set`/`delete` calls that surface makes —
- * or every surface shares the single tab-wide default and each one's writes
- * look like every other surface's own echo, silently swallowing legitimate
- * cross-surface sync.
+ * `filter.writerId`, if given, is appended to `localWriterId` (not a
+ * replacement) to form the actual comparator — `${localWriterId}:${filter.writerId}`.
+ * Appending rather than replacing matters: a surface id such as a dockview
+ * `panelId` is a static string shared by every browser tab that has that
+ * panel open, so using it alone would make two different tabs editing the
+ * same document look like the same writer to each other and break cross-tab
+ * sync (AC24). Combining it with the per-tab `localWriterId` keeps both
+ * properties: different tabs always differ, and — when a plugin gives each
+ * of its surfaces (e.g. an open task panel and a kanban quick-action) its
+ * own distinct writerId, on both this filter and the matching `set`/`delete`
+ * calls that surface makes — different surfaces in the same tab always
+ * differ too, without which every surface shares the single tab-wide
+ * default and each one's writes look like every other surface's own echo,
+ * silently swallowing legitimate cross-surface sync.
  *
  * Registers one WS handler per call (via `registerWsHandler`), so the
  * returned unsubscribe can remove exactly this subscription
@@ -63,7 +70,7 @@ export function subscribeToUserStateChanges(
   filter: UserStateSubscribeFilter,
   handler: (change: PluginUserStateChange) => void,
 ): () => void {
-  const ownWriterId = filter.writerId ?? localWriterId;
+  const ownWriterId = filter.writerId ? `${localWriterId}:${filter.writerId}` : localWriterId;
   const wsHandler = (payload: unknown): void => {
     const raw = payload as UserStateUpdatedPayload | undefined;
     if (!raw || raw.pluginId !== pluginId) return;

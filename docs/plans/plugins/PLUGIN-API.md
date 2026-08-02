@@ -79,15 +79,18 @@ interface PluginStorageSetOptions {
   // last-write-wins (the default).
   ifUnmodifiedSince?: string;
   // Identifies which logical surface made this write, for echo suppression
-  // (see subscribe's writerId filter below). Omit to use the shared per-tab
-  // default — fine for a one-shot write with no ongoing subscription (e.g. a
-  // kanban menu action). A surface that also subscribes to its own writes
-  // (e.g. a task panel) should pass something stable and unique to that
-  // surface, such as its own panelId from PluginTaskPanelProps — otherwise
-  // its writes are indistinguishable from any other surface of the same
-  // plugin in this tab, and one surface's legitimate write can be silently
-  // swallowed by another surface's subscription as if it were that other
-  // surface's own echo.
+  // (see subscribe's writerId filter below). Appended to the host's own
+  // per-tab id — not a replacement for it — so a static surface id like a
+  // dockview panelId (shared by every tab that has that panel open) can't
+  // make two different tabs look like the same writer to each other. Omit
+  // to use the shared per-tab default alone — fine for a one-shot write with
+  // no ongoing subscription (e.g. a kanban menu action). A surface that also
+  // subscribes to its own writes (e.g. a task panel) should pass something
+  // stable and unique to that surface, such as its own panelId from
+  // PluginTaskPanelProps — otherwise its writes are indistinguishable from
+  // any other surface of the same plugin in this tab, and one surface's
+  // legitimate write can be silently swallowed by another surface's
+  // subscription as if it were that other surface's own echo.
   writerId?: string;
 }
 
@@ -112,13 +115,15 @@ interface PluginStorageApi {
   // narrow to a specific tuple; omit a field to match any value.
   //
   // filter.writerId, if given, must be the same value this surface passes to
-  // set/delete's own writerId option — a notification carrying that exact id
-  // is this surface's own echo and is skipped, so its editor never clobbers
-  // its own caret/selection reacting to its own write. Omit to fall back to
-  // the shared per-tab default: correct for a plugin with only one surface,
-  // but two independent surfaces of the same plugin (e.g. an open task panel
-  // and a kanban quick-action) both omitting it would incorrectly suppress
-  // each other's legitimate writes as if they were one surface's own echo.
+  // set/delete's own writerId option — the host combines it with its own
+  // per-tab id the same way on both sides, so a notification carrying that
+  // resulting combined id is this surface's own echo and is skipped, and its
+  // editor never clobbers its own caret/selection reacting to its own write.
+  // Omit to fall back to the shared per-tab default alone: correct for a
+  // plugin with only one surface, but two independent surfaces of the same
+  // plugin (e.g. an open task panel and a kanban quick-action) both omitting
+  // it would incorrectly suppress each other's legitimate writes as if they
+  // were one surface's own echo.
   subscribe(
     filter: { scope?: PluginStorageScope; scopeId?: string; key?: string; writerId?: string },
     handler: (change: PluginUserStateChange) => void,

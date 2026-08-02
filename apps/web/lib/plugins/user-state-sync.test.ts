@@ -66,45 +66,6 @@ describe("subscribeToUserStateChanges", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  // Regression test for the cross-surface suppression bug found in review:
-  // a task panel (subscribed, its own writes tagged with its panelId) and a
-  // kanban menu action (write-only, using the tab-wide default) share one
-  // browser tab. Before filter.writerId existed, both looked like the same
-  // "tab-1" writer to any subscriber, so the panel's own subscription
-  // treated the action's write as its own echo and silently dropped it.
-  it("filter.writerId scopes echo suppression to one surface, so a sibling surface's write in the same tab still reaches it", () => {
-    const panelHandler = vi.fn();
-    // The task panel subscribes under its own panelId, not the tab default.
-    subscribeToUserStateChanges("plugin-a", "tab-1", { writerId: "panel-xyz" }, panelHandler);
-
-    // The kanban action writes under the tab-wide default writerId — it has
-    // no ongoing subscription of its own to protect.
-    dispatch({
-      pluginId: "plugin-a",
-      scope: "task",
-      scopeId: "task_1",
-      key: "note",
-      writerId: "tab-1",
-    });
-
-    expect(panelHandler).toHaveBeenCalledTimes(1);
-  });
-
-  it("filter.writerId still suppresses this surface's own echo, not just the tab default", () => {
-    const panelHandler = vi.fn();
-    subscribeToUserStateChanges("plugin-a", "tab-1", { writerId: "panel-xyz" }, panelHandler);
-
-    dispatch({
-      pluginId: "plugin-a",
-      scope: "task",
-      scopeId: "task_1",
-      key: "note",
-      writerId: "panel-xyz",
-    });
-
-    expect(panelHandler).not.toHaveBeenCalled();
-  });
-
   it("filters by scope/scopeId/key when the filter narrows them", () => {
     const handler = vi.fn();
     subscribeToUserStateChanges(
@@ -131,6 +92,77 @@ describe("subscribeToUserStateChanges", () => {
       writerId: "tab-2",
     });
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("subscribeToUserStateChanges — filter.writerId per-surface scoping", () => {
+  // Regression test for the cross-surface suppression bug found in review:
+  // a task panel (subscribed, its own writes tagged with its panelId) and a
+  // kanban menu action (write-only, using the tab-wide default) share one
+  // browser tab. Before filter.writerId existed, both looked like the same
+  // "tab-1" writer to any subscriber, so the panel's own subscription
+  // treated the action's write as its own echo and silently dropped it.
+  it("scopes echo suppression to one surface, so a sibling surface's write in the same tab still reaches it", () => {
+    const panelHandler = vi.fn();
+    // The task panel subscribes under its own panelId, not the tab default.
+    subscribeToUserStateChanges("plugin-a", "tab-1", { writerId: "panel-xyz" }, panelHandler);
+
+    // The kanban action writes under the tab-wide default writerId — it has
+    // no ongoing subscription of its own to protect.
+    dispatch({
+      pluginId: "plugin-a",
+      scope: "task",
+      scopeId: "task_1",
+      key: "note",
+      writerId: "tab-1",
+    });
+
+    expect(panelHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it("still suppresses this surface's own echo, not just the tab default", () => {
+    const panelHandler = vi.fn();
+    subscribeToUserStateChanges("plugin-a", "tab-1", { writerId: "panel-xyz" }, panelHandler);
+
+    // The actual comparator is "localWriterId:filter.writerId" (see below) —
+    // this panel's own writes are stamped with that same combined id.
+    dispatch({
+      pluginId: "plugin-a",
+      scope: "task",
+      scopeId: "task_1",
+      key: "note",
+      writerId: "tab-1:panel-xyz",
+    });
+
+    expect(panelHandler).not.toHaveBeenCalled();
+  });
+
+  // Regression test for a bug introduced while fixing the above: a surface
+  // id like panelId is a *static* string shared by every browser tab that
+  // has that panel open. If filter.writerId fully replaced localWriterId
+  // (instead of being combined with it), two different tabs — each with
+  // their own random per-tab localWriterId but subscribing under the same
+  // panelId — would look like the same writer to each other, and a write
+  // in tab A would never reach tab B's subscription (breaking AC24/AC25's
+  // actual cross-tab sync, which is what this feature is for).
+  it("the same writerId in two different tabs (different localWriterId) does not cross-suppress", () => {
+    const tabBHandler = vi.fn();
+    // Tab B subscribes under the same panelId as tab A would, but a
+    // different tab-unique base — simulating two browser tabs with the
+    // same panel open.
+    subscribeToUserStateChanges("plugin-a", "tab-B-base", { writerId: "panel-xyz" }, tabBHandler);
+
+    // Tab A writes under its own combined id (its own tab-unique base,
+    // same panelId discriminator).
+    dispatch({
+      pluginId: "plugin-a",
+      scope: "task",
+      scopeId: "task_1",
+      key: "note",
+      writerId: "tab-A-base:panel-xyz",
+    });
+
+    expect(tabBHandler).toHaveBeenCalledTimes(1);
   });
 });
 
