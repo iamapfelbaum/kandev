@@ -11,18 +11,15 @@ import (
 	ws "github.com/kandev/kandev/pkg/websocket"
 )
 
-// pluginUserStateTestEvent mirrors internal/plugins' unexported
-// pluginUserStateUpdatedEvent: a struct implementing GetUserID() so
-// UserEventBroadcaster.subscribe's type-switch routes it without a plugins
-// package import (avoiding a gateway/websocket -> plugins dependency this
-// package doesn't otherwise have).
+// pluginUserStateTestEvent mirrors internal/plugins' pluginUserStateUpdatedEvent
+// (a plain struct with an exported UserID, json:"user_id") without a
+// plugins package import (avoiding a gateway/websocket -> plugins dependency
+// this package doesn't otherwise have).
 type pluginUserStateTestEvent struct {
-	userID   string
+	UserID   string `json:"user_id"`
 	PluginID string `json:"pluginId"`
 	Key      string `json:"key"`
 }
-
-func (e pluginUserStateTestEvent) GetUserID() string { return e.userID }
 
 func testLoggerForUserNotifications(t *testing.T) *logger.Logger {
 	t.Helper()
@@ -51,7 +48,7 @@ func TestRegisterUserNotifications_PluginUserStateReachesOnlyWriter(t *testing.T
 	defer cancel()
 	RegisterUserNotifications(ctx, eventBus, h, testLoggerForUserNotifications(t))
 
-	payload := pluginUserStateTestEvent{userID: "user_1", PluginID: "kandev-plugin-notes", Key: "note"}
+	payload := pluginUserStateTestEvent{UserID: "user_1", PluginID: "kandev-plugin-notes", Key: "note"}
 	if err := eventBus.Publish(ctx, events.PluginUserStateUpdated,
 		bus.NewEvent(events.PluginUserStateUpdated, "test", payload)); err != nil {
 		t.Fatalf("publish: %v", err)
@@ -79,7 +76,7 @@ func TestRegisterUserNotifications_PluginUserStatePayloadShape(t *testing.T) {
 	defer cancel()
 	RegisterUserNotifications(ctx, eventBus, h, testLoggerForUserNotifications(t))
 
-	payload := pluginUserStateTestEvent{userID: "user_1", PluginID: "kandev-plugin-notes", Key: "note"}
+	payload := pluginUserStateTestEvent{UserID: "user_1", PluginID: "kandev-plugin-notes", Key: "note"}
 	if err := eventBus.Publish(ctx, events.PluginUserStateUpdated,
 		bus.NewEvent(events.PluginUserStateUpdated, "test", payload)); err != nil {
 		t.Fatalf("publish: %v", err)
@@ -101,10 +98,72 @@ func TestRegisterUserNotifications_PluginUserStatePayloadShape(t *testing.T) {
 		if got["pluginId"] != "kandev-plugin-notes" || got["key"] != "note" {
 			t.Fatalf("payload = %+v, missing expected fields", got)
 		}
-		if _, leaked := got["userID"]; leaked {
-			t.Fatalf("payload leaked userID: %+v", got)
+		if _, leaked := got["user_id"]; leaked {
+			t.Fatalf("payload leaked user_id: %+v", got)
 		}
 	default:
 		t.Fatal("expected a message on writer.send")
+	}
+}
+
+// TestRegisterUserNotifications_PluginUserStateRoutesUnderNATSTransport is
+// the regression test for the NATS routing gap found in review: a
+// NATS-backed EventBus marshals every event before publishing and
+// JSON-decodes it into an untyped Data field on arrival
+// (internal/events/bus/nats.go's createMsgHandler does
+// json.Unmarshal(msg.Data, &event)), so a subscriber always sees
+// event.Data as a map[string]interface{} — never the original Go struct.
+// This reproduces exactly that shape (marshal the real event struct, then
+// unmarshal into a bus.Event the same way nats.go does) without needing a
+// live NATS server, and proves routing plus the no-leak-to-the-browser
+// contract both still hold once event.Data arrives as a map instead of a
+// struct.
+func TestRegisterUserNotifications_PluginUserStateRoutesUnderNATSTransport(t *testing.T) {
+	h := newTestHub(t)
+	writer := newTestClient("writer-conn")
+	registerTestClient(h, writer)
+	h.SubscribeToUser(writer, "user_1")
+
+	eventBus := bus.NewMemoryEventBus(testLoggerForUserNotifications(t))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	RegisterUserNotifications(ctx, eventBus, h, testLoggerForUserNotifications(t))
+
+	published := bus.NewEvent(events.PluginUserStateUpdated, "test",
+		pluginUserStateTestEvent{UserID: "user_1", PluginID: "kandev-plugin-notes", Key: "note"})
+	wire, err := json.Marshal(published)
+	if err != nil {
+		t.Fatalf("marshal (simulating what a NATS publisher sends over the wire): %v", err)
+	}
+	var arrived bus.Event
+	if err := json.Unmarshal(wire, &arrived); err != nil {
+		t.Fatalf("unmarshal (simulating nats.go's createMsgHandler on receipt): %v", err)
+	}
+	if _, ok := arrived.Data.(map[string]interface{}); !ok {
+		t.Fatalf("arrived.Data = %T, want map[string]interface{} (the whole point of this test)", arrived.Data)
+	}
+
+	if err := eventBus.Publish(ctx, events.PluginUserStateUpdated, &arrived); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	select {
+	case raw := <-writer.send:
+		var msg ws.Message
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			t.Fatalf("unmarshal envelope: %v", err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(msg.Payload, &got); err != nil {
+			t.Fatalf("unmarshal payload: %v", err)
+		}
+		if got["pluginId"] != "kandev-plugin-notes" || got["key"] != "note" {
+			t.Fatalf("payload = %+v, missing expected fields", got)
+		}
+		if _, leaked := got["user_id"]; leaked {
+			t.Fatalf("payload leaked user_id: %+v", got)
+		}
+	default:
+		t.Fatal("expected the writing user's client to receive the notification even when event.Data arrives as a map (NATS transport)")
 	}
 }

@@ -287,17 +287,23 @@ func TestUserStateConditionalWriteConflictReturns409(t *testing.T) {
 }
 
 // TestUserStatePUTPublishesEventScopedToWriter pins AC24: a successful PUT
-// publishes plugin.user-state.updated reaching only the writer's user_id.
+// publishes plugin.user-state.updated carrying the writer's user_id.
+//
+// user_id is deliberately readable here, on the raw published bus event —
+// that is what lets UserEventBroadcaster route it under a NATS-backed
+// EventBus, which marshals every event before publishing and would silently
+// drop an unexported field (see pluginUserStateUpdatedEvent's doc comment).
+// The "never reaches the browser" half of that contract is enforced one
+// layer up, in the broadcaster itself: see
+// internal/gateway/websocket/user_notifications_test.go's
+// TestRegisterUserNotifications_PluginUserStatePayloadShape and its
+// NATS-transport-simulating sibling.
 func TestUserStatePUTPublishesEventScopedToWriter(t *testing.T) {
 	router, svc, memBus := newUserStateTestRouter(t)
 	installUserStatePlugin(t, svc, "kandev-plugin-notes", true)
 
-	var gotUserID string
 	var gotPayload map[string]any
 	_, err := memBus.Subscribe(events.PluginUserStateUpdated, func(_ context.Context, evt *bus.Event) error {
-		if id, ok := evt.Data.(interface{ GetUserID() string }); ok {
-			gotUserID = id.GetUserID()
-		}
 		raw, _ := json.Marshal(evt.Data)
 		_ = json.Unmarshal(raw, &gotPayload)
 		return nil
@@ -311,15 +317,12 @@ func TestUserStatePUTPublishesEventScopedToWriter(t *testing.T) {
 		t.Fatalf("PUT status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 
-	if gotUserID != "user_1" {
-		t.Fatalf("event routed user_id = %q, want %q", gotUserID, "user_1")
+	if gotPayload["user_id"] != "user_1" {
+		t.Fatalf("published event user_id = %v, want %q (must survive marshal for NATS routing)", gotPayload["user_id"], "user_1")
 	}
 	if gotPayload["pluginId"] != "kandev-plugin-notes" || gotPayload["scope"] != "task" ||
 		gotPayload["scopeId"] != "task_1" || gotPayload["key"] != "note" || gotPayload["writerId"] != "tab-42" {
 		t.Fatalf("event payload = %+v, missing expected fields", gotPayload)
-	}
-	if _, hasUserID := gotPayload["user_id"]; hasUserID {
-		t.Fatalf("event payload leaked user_id into the WS-facing JSON: %+v", gotPayload)
 	}
 	if deleted, _ := gotPayload["deleted"].(bool); deleted {
 		t.Fatalf("PUT event payload.deleted = true, want false/absent")

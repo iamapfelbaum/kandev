@@ -66,24 +66,19 @@ type userStateSetRequest struct {
 }
 
 // pluginUserStateUpdatedEvent is the bus event payload published on a
-// successful PUT/DELETE (Approach F1, AC24). Its JSON encoding is exactly
-// the WS notification payload the frontend receives — userID is
-// deliberately unexported (and therefore invisible to json.Marshal) since it
-// only drives UserEventBroadcaster's routing; the receiving client already
-// knows its own identity.
+// successful PUT/DELETE (Approach F1, AC24).
 //
-// KNOWN LIMITATION (QA, unresolved): because the field is unexported it does
-// not survive a JSON round-trip, so this routing only works under
-// MemoryEventBus. internal/events/bus/nats.go marshals every event before
-// publishing, so with NATS configured the subscriber receives a map with no
-// "user_id", the broadcaster resolves an empty userID and drops the
-// notification silently. Fixing it means choosing between sending user_id on
-// the wire (contradicting the assertion in
-// TestUserStatePUTPublishesEventScopedToWriter), stripping it in the shared
-// UserEventBroadcaster, or adding a routing field to bus.Event — a design
-// call left to the author.
+// UserID is exported (json:"user_id") so it survives the JSON marshal a
+// NATS-backed EventBus performs before publishing
+// (internal/events/bus/nats.go): an unexported field disappears from that
+// wire representation, so a NATS subscriber decodes event.Data as a map with
+// no "user_id" at all, and UserEventBroadcaster silently drops the
+// notification. It never reaches the browser regardless of transport —
+// UserEventBroadcaster.subscribe strips "user_id" from the outgoing WS
+// payload before building the message the client receives (routing is the
+// broadcaster's concern; the client already knows its own identity).
 type pluginUserStateUpdatedEvent struct {
-	userID    string
+	UserID    string    `json:"user_id"`
 	PluginID  string    `json:"pluginId"`
 	Scope     string    `json:"scope"`
 	ScopeID   string    `json:"scopeId"`
@@ -92,10 +87,6 @@ type pluginUserStateUpdatedEvent struct {
 	WriterID  string    `json:"writerId,omitempty"`
 	Deleted   bool      `json:"deleted,omitempty"`
 }
-
-// GetUserID satisfies the interface UserEventBroadcaster uses to route an
-// event to exactly one user's WS connections.
-func (e pluginUserStateUpdatedEvent) GetUserID() string { return e.userID }
 
 // userStateIdentity resolves the caller's identity and the plugin record,
 // enforces the record is active and declares the user_state capability, and
@@ -279,7 +270,7 @@ func (c *Controller) publishUserStateUpdated(
 		return
 	}
 	payload := pluginUserStateUpdatedEvent{
-		userID:    userID,
+		UserID:    userID,
 		PluginID:  pluginID,
 		Scope:     scope,
 		ScopeID:   scopeID,
