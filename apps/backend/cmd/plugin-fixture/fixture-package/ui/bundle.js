@@ -77,7 +77,7 @@
       // don't need to wait long for a write to reach host.storage.
       var NOTES_SAVE_DEBOUNCE_MS = 150;
 
-      function useNotesValue(taskId) {
+      function useNotesValue(taskId, panelId) {
         var state = React.useState("");
         var value = state[0];
         var setValue = state[1];
@@ -95,26 +95,30 @@
             });
           }
           refresh();
-          // Picks up a write made from another tab/surface (e.g. the kanban
-          // Edit submenu action below, or a second browser context) without
-          // this panel having written it itself — echo suppression is the
-          // host's job (writerId), not the plugin's.
+          // Scope echo suppression to this panel instance (panelId) rather
+          // than the host's shared tab-wide default writerId. The kanban
+          // "Enhance notes" action below writes this same note using that
+          // shared default (it has no ongoing subscription of its own to
+          // protect) — if this panel used the same default, the action's
+          // write would look like this panel's own echo and get silently
+          // dropped instead of refreshing the panel.
           var unsubscribe = host.storage.subscribe(
-            { scope: "task", scopeId: taskId, key: "note" },
+            { scope: "task", scopeId: taskId, key: "note", writerId: panelId },
             refresh,
           );
           return function () {
             cancelled = true;
             unsubscribe();
           };
-        }, [taskId]);
+        }, [taskId, panelId]);
 
         return [value, setValue, loaded];
       }
 
       function NotesPanel(props) {
         var taskId = props.taskId;
-        var notesValue = useNotesValue(taskId);
+        var panelId = props.panelId;
+        var notesValue = useNotesValue(taskId, panelId);
         var value = notesValue[0];
         var setValue = notesValue[1];
         var loaded = notesValue[2];
@@ -125,7 +129,7 @@
           setValue(next);
           if (debounceRef.current) clearTimeout(debounceRef.current);
           debounceRef.current = setTimeout(function () {
-            host.storage.set("task", taskId, "note", next);
+            host.storage.set("task", taskId, "note", next, { writerId: panelId });
           }, NOTES_SAVE_DEBOUNCE_MS);
         }
 

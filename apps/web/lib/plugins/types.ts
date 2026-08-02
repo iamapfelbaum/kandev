@@ -176,7 +176,7 @@ export interface PluginStorageEntry {
   updatedAt: string;
 }
 
-/** Options accepted by `host.storage.set`. */
+/** Options accepted by `host.storage.set`/`delete`. */
 export interface PluginStorageSetOptions {
   /**
    * Optimistic-concurrency guard (approach H1): the `updatedAt` the caller
@@ -186,6 +186,19 @@ export interface PluginStorageSetOptions {
    * last-write-wins (today's default).
    */
   ifUnmodifiedSince?: string;
+  /**
+   * Identifies which logical surface made this write, for echo suppression
+   * (see `subscribe`'s `writerId` filter). Omit to use the shared per-tab
+   * default — fine for a one-shot write with no ongoing subscription (e.g. a
+   * kanban menu action). A surface that also subscribes to its own writes
+   * (e.g. a task panel) should pass something stable and unique to that
+   * surface here, such as its own `panelId` from `PluginTaskPanelProps` —
+   * otherwise its writes are indistinguishable from any other surface of the
+   * same plugin in this tab, and one surface's legitimate write can be
+   * silently swallowed by another surface's subscription as if it were that
+   * other surface's own echo.
+   */
+  writerId?: string;
 }
 
 /** Per-user plugin storage scope — mirrors the backend's user-state routes. */
@@ -211,19 +224,33 @@ export interface PluginStorageApi {
     value: unknown,
     options?: PluginStorageSetOptions,
   ): Promise<{ updatedAt: string }>;
-  delete(scope: PluginStorageScope, scopeId: string, key: string): Promise<void>;
+  delete(
+    scope: PluginStorageScope,
+    scopeId: string,
+    key: string,
+    options?: Pick<PluginStorageSetOptions, "writerId">,
+  ): Promise<void>;
   /** Every entry under (scope, scopeId), ordered by key. Not paginated. */
   list(scope: PluginStorageScope, scopeId: string): Promise<PluginStorageEntry[]>;
   /**
    * Subscribes to live updates for this plugin's own storage made from
    * another tab, device, or surface (approach F1) — e.g. the kanban `Edit`
-   * modal and the task panel both editing the same document. `filter`
-   * narrows to a specific scope/scopeId/key; omit a field to match any
-   * value. A write made by this same browser tab never triggers its own
-   * handler (writer-id echo suppression). Returns an unsubscribe function.
+   * modal and the task panel both editing the same document. `filter.scope`/
+   * `scopeId`/`key` narrow to a specific tuple; omit a field to match any
+   * value.
+   *
+   * `filter.writerId`, if given, must be the same value this surface passes
+   * to `set`/`delete`'s own `writerId` option — a notification carrying that
+   * exact id is this surface's own echo and is skipped (AC25), so its editor
+   * never clobbers its own caret/selection reacting to its own write. Omit
+   * to fall back to the shared per-tab default (today's behavior): correct
+   * for a plugin with only one surface, but two independent surfaces of the
+   * same plugin (e.g. an open task panel and a kanban quick-action) both
+   * omitting it would incorrectly suppress each other's legitimate writes as
+   * if they were one surface's own echo.
    */
   subscribe(
-    filter: { scope?: PluginStorageScope; scopeId?: string; key?: string },
+    filter: { scope?: PluginStorageScope; scopeId?: string; key?: string; writerId?: string },
     handler: (change: PluginUserStateChange) => void,
   ): () => void;
 }

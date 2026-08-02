@@ -196,6 +196,55 @@ test.describe("Plugins — task panel / kanban Edit submenu / card indicator", (
       .toBe("Enhanced via plugin action");
   });
 
+  test("a sibling surface's write (the kanban action's default writerId) still reaches an open task panel in the same tab", async ({
+    testPage,
+    apiClient,
+    seedData,
+  }) => {
+    test.setTimeout(60_000);
+
+    // Regression test for review feedback: host.storage.subscribe's echo
+    // suppression used to compare against one writer id shared by every
+    // surface in the tab, so the task panel's own subscription treated the
+    // kanban "Enhance notes" action's write (a different surface, same tab)
+    // as its own echo and silently dropped it. The panel now subscribes
+    // under its own panelId (see the fixture's useNotesValue), so a write
+    // carrying any other writerId — exactly what the kanban action's
+    // fire-and-forget default write looks like — must still come through.
+    await installFixturePlugin(testPage);
+
+    const seedTask = await apiClient.createTask(seedData.workspaceId, "Sibling surface sync task", {
+      workflow_id: seedData.workflowId,
+      workflow_step_id: seedData.startStepId,
+    });
+    await testPage.goto(`/t/${seedTask.id}`);
+    const session = new SessionPage(testPage);
+    await session.waitForLoad();
+
+    await session.addPanelButton().click();
+    await session.addPanelPluginItem(PLUGIN_ID, PANEL_ID).click();
+    const notesEditor = testPage.getByTestId("e2e-notes-panel");
+    await expect(notesEditor).toBeVisible({ timeout: 10_000 });
+    await expect(notesEditor).toHaveValue("");
+
+    // Simulates the kanban "Enhance notes" action's write — same endpoint,
+    // same request shape (host.storage.set with no writerId override) — but
+    // triggered directly rather than via the kanban board UI, since the
+    // board and an open task panel are different routes and can't be
+    // on-screen at the same time in this app's navigation model. What
+    // matters for this regression is that the write's writerId does NOT
+    // match the open panel's own panelId, exactly as a sibling surface's
+    // write would look from the panel's point of view.
+    const res = await apiClient.rawRequest(
+      "PUT",
+      `/api/plugins/${PLUGIN_ID}/user-state/task/${seedTask.id}/note`,
+      { value: "Enhanced via plugin action", writerId: "e2e-sibling-surface" },
+    );
+    expect(res.status).toBe(200);
+
+    await expect(notesEditor).toHaveValue("Enhanced via plugin action", { timeout: 10_000 });
+  });
+
   test("task-card-indicators slot renders the plugin's indicator on the kanban card (AC13)", async ({
     testPage,
     apiClient,

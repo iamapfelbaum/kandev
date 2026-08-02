@@ -732,11 +732,20 @@ Every value is scoped to the calling user: two users writing the same
 
 ```ts
 host.storage.get(scope, scopeId, key): Promise<{ key, value, updatedAt } | undefined>
-host.storage.set(scope, scopeId, key, value, options?: { ifUnmodifiedSince?: string }): Promise<{ updatedAt }>
-host.storage.delete(scope, scopeId, key): Promise<void>
+host.storage.set(scope, scopeId, key, value, options?: { ifUnmodifiedSince?: string, writerId?: string }): Promise<{ updatedAt }>
+host.storage.delete(scope, scopeId, key, options?: { writerId?: string }): Promise<void>
 host.storage.list(scope, scopeId): Promise<Array<{ key, value, updatedAt }>>  // NOT paginated — see below
 host.storage.subscribe(filter, handler): () => void  // live updates from another tab/surface
 ```
+
+`writerId` scopes echo suppression to one surface. Omit it for a one-shot
+write with no ongoing subscription (a kanban menu action, say). A surface
+that also subscribes to its own writes — like the panel below — should pass
+something stable and unique to that surface (its `panelId`, from
+`PluginTaskPanelProps`) to **both** its `set` calls and its `subscribe`
+filter. Otherwise every surface of your plugin shares the same default
+writer identity, and one surface's write looks like every other surface's
+own echo and gets silently dropped instead of syncing.
 
 `scope` is one of `instance | workspace | task | session | repository`.
 Worked example — a single-document, per-task scratchpad (the Notes panel
@@ -744,7 +753,7 @@ above), following the `get` on mount / debounced `set` / `subscribe` to
 refresh pattern:
 
 ```js
-function useNoteValue(taskId) {
+function useNoteValue(taskId, panelId) {
   const [value, setValue] = host.React.useState("");
   const [loaded, setLoaded] = host.React.useState(false);
 
@@ -758,31 +767,33 @@ function useNoteValue(taskId) {
       });
     }
     refresh();
-    // Picks up a write from another tab, device, or surface (e.g. a second
-    // browser window on the same document) — the host suppresses this same
-    // tab's own writes automatically, so you never see your own echo.
+    // Scope echo suppression to this panel instance (panelId) rather than
+    // the shared per-tab default — a kanban Edit shortcut editing this same
+    // note uses that default (it has no ongoing subscription of its own to
+    // protect), and if this panel used it too, the shortcut's write would
+    // look like this panel's own echo and never make it here.
     const unsubscribe = host.storage.subscribe(
-      { scope: "task", scopeId: taskId, key: "note" },
+      { scope: "task", scopeId: taskId, key: "note", writerId: panelId },
       refresh,
     );
     return () => {
       cancelled = true;
       unsubscribe();
     };
-  }, [taskId]);
+  }, [taskId, panelId]);
 
   return [value, setValue, loaded];
 }
 
-function NotesPanel({ taskId }) {
-  const [value, setValue, loaded] = useNoteValue(taskId);
+function NotesPanel({ taskId, panelId }) {
+  const [value, setValue, loaded] = useNoteValue(taskId, panelId);
   const saveTimer = host.React.useRef(null);
 
   function handleChange(next) {
     setValue(next);
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      host.storage.set("task", taskId, "note", next);
+      host.storage.set("task", taskId, "note", next, { writerId: panelId });
     }, 300); // debounce — don't write on every keystroke
   }
 

@@ -65,10 +65,16 @@ CREATE TABLE plugin_user_state (
   `user_id` from the authenticated identity — a `GET` for another user's key
   returns `404`, never a value or a distinguishable "exists but not yours"
   signal.
-- **Optional conditional write.** `PUT` accepts `ifUnmodifiedSince`; the
-  handler compares it to the stored row's `updated_at` inside one transaction
-  and returns `409` (value unchanged) if the row was modified after that time.
-  Omitting the field preserves unconditional last-write-wins.
+- **Optional conditional write.** `PUT` accepts `ifUnmodifiedSince`; the write
+  folds that comparison into the upsert's own `ON CONFLICT ... DO UPDATE ...
+  WHERE updated_at <= ?` clause — not a separate read-then-write, even inside
+  one transaction, which only serializes under SQLite's single-writer model.
+  This codebase also runs against PostgreSQL, whose default READ COMMITTED
+  isolation lets two concurrent transactions both pass a plain `SELECT`-based
+  check and both proceed to write. The atomic upsert makes the check and the
+  write one row-locking statement regardless of isolation level: a lost race
+  affects zero rows, mapped to `409` (value unchanged). Omitting the field
+  preserves unconditional last-write-wins.
 - **Uninstall purges every user's rows**, not just the uninstalling admin's —
   `Service.Uninstall` calls `UserStore.DeleteAllForPlugin` alongside the
   existing `plugin_state` purge, so a reinstalled or id-reused plugin never
@@ -80,9 +86,16 @@ CREATE TABLE plugin_user_state (
   WS connections only. The payload is
   `{ pluginId, scope, scopeId, key, updatedAt, writerId, deleted }` — the host
   never re-broadcasts plugin-supplied data to a socket; a subscriber refetches
-  via `host.storage.get`. A per-tab `writerId`, stamped by `host.storage.set`
-  and echoed back, lets `host.storage.subscribe` skip the writing tab's own
-  echo.
+  via `host.storage.get`. The event's `user_id` field is exported (not the
+  unexported field an earlier draft used) so it survives the JSON marshal a
+  NATS-backed `EventBus` performs before publishing; `UserEventBroadcaster`
+  strips it from the payload every client actually receives, regardless of
+  transport. A `writerId`, stamped by `host.storage.set`/`delete` and echoed
+  back, lets `host.storage.subscribe` skip its own echo — defaulting to a
+  shared per-tab id, but overridable per call so two surfaces of the same
+  plugin in one tab (a task panel and a kanban quick-action, say) don't
+  mistake each other's writes for their own and suppress a sync they both
+  need.
 - **No gRPC/proto change.** `Host.GetState/SetState/DeleteState/ListState` and
   `plugin_state` are unchanged; per-user storage and its notification are
   entirely browser-facing surfaces.

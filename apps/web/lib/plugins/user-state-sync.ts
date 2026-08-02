@@ -14,6 +14,8 @@ export interface UserStateSubscribeFilter {
   scope?: PluginStorageScope;
   scopeId?: string;
   key?: string;
+  /** Overrides localWriterId as the echo-suppression comparator — see PluginStorageApi.subscribe. */
+  writerId?: string;
 }
 
 /** Shape of the WS notification payload published by the backend on write/delete. */
@@ -36,10 +38,18 @@ function matchesFilter(filter: UserStateSubscribeFilter, change: PluginUserState
 
 /**
  * Subscribes `pluginId` to live per-user storage updates. `localWriterId` is
- * the writer id this browser tab stamps on its own writes (see
- * `host-api.ts`'s TAB_WRITER_ID) — a notification carrying the same
- * writerId is this tab's own echo and is skipped (AC25) so an editor never
- * clobbers its own caret/selection from its own write.
+ * the default writer id this browser tab stamps on its own writes (see
+ * `host-api.ts`'s TAB_WRITER_ID) — a notification carrying the same writerId
+ * is treated as an echo and is skipped (AC25) so an editor never clobbers
+ * its own caret/selection from its own write.
+ *
+ * `filter.writerId`, if given, replaces `localWriterId` as that comparator.
+ * A plugin with more than one surface (e.g. an open task panel and a kanban
+ * quick-action) must give each surface its own distinct writerId — both on
+ * this filter and on the matching `set`/`delete` calls that surface makes —
+ * or every surface shares the single tab-wide default and each one's writes
+ * look like every other surface's own echo, silently swallowing legitimate
+ * cross-surface sync.
  *
  * Registers one WS handler per call (via `registerWsHandler`), so the
  * returned unsubscribe can remove exactly this subscription
@@ -53,10 +63,11 @@ export function subscribeToUserStateChanges(
   filter: UserStateSubscribeFilter,
   handler: (change: PluginUserStateChange) => void,
 ): () => void {
+  const ownWriterId = filter.writerId ?? localWriterId;
   const wsHandler = (payload: unknown): void => {
     const raw = payload as UserStateUpdatedPayload | undefined;
     if (!raw || raw.pluginId !== pluginId) return;
-    if (raw.writerId && raw.writerId === localWriterId) return;
+    if (raw.writerId && raw.writerId === ownWriterId) return;
 
     const change: PluginUserStateChange = {
       scope: (raw.scope ?? "instance") as PluginStorageScope,
