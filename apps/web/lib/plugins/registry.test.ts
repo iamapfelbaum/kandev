@@ -187,6 +187,66 @@ describe("pluginRegistry — lifecycle", () => {
   });
 });
 
+describe("pluginRegistry — task panels and task menu actions", () => {
+  afterEach(() => {
+    cleanup("plugin-a", "plugin-b");
+  });
+
+  it("registers a task panel and returns it with its owning pluginId", () => {
+    const scoped = pluginRegistry.forPlugin("plugin-a");
+    function Notes() {
+      return null;
+    }
+
+    scoped.registerTaskPanel({ id: "notes", title: "Notes", icon: "file-text", Component: Notes });
+
+    expect(pluginRegistry.getTaskPanels()).toEqual([
+      { pluginId: "plugin-a", id: "notes", title: "Notes", icon: "file-text", Component: Notes },
+    ]);
+    expect(pluginRegistry.getTaskPanel("plugin-a", "notes")).toMatchObject({
+      pluginId: "plugin-a",
+      id: "notes",
+    });
+    expect(pluginRegistry.getTaskPanel("plugin-a", "missing")).toBeUndefined();
+  });
+
+  it("registers a task menu action and filters by group", () => {
+    const scoped = pluginRegistry.forPlugin("plugin-a");
+    const run = vi.fn();
+
+    scoped.registerTaskMenuAction({ id: "enhance", label: "Enhance", group: "edit", run });
+
+    expect(pluginRegistry.getTaskMenuActions("edit")).toEqual([
+      { pluginId: "plugin-a", id: "enhance", label: "Enhance", group: "edit", run },
+    ]);
+    expect(pluginRegistry.getTaskMenuActions()).toHaveLength(1);
+  });
+
+  it("bulk-revokes task panels and task menu actions on unregisterPlugin", () => {
+    const scopedA = pluginRegistry.forPlugin("plugin-a");
+    const scopedB = pluginRegistry.forPlugin("plugin-b");
+    function Notes() {
+      return null;
+    }
+
+    scopedA.registerTaskPanel({ id: "notes", title: "Notes", Component: Notes });
+    scopedA.registerTaskMenuAction({
+      id: "enhance",
+      label: "Enhance",
+      group: "edit",
+      run: () => {},
+    });
+    scopedB.registerTaskPanel({ id: "notes", title: "Notes", Component: Notes });
+
+    pluginRegistry.unregisterPlugin("plugin-a");
+
+    expect(pluginRegistry.getTaskPanels()).toEqual([
+      { pluginId: "plugin-b", id: "notes", title: "Notes", icon: undefined, Component: Notes },
+    ]);
+    expect(pluginRegistry.getTaskMenuActions()).toEqual([]);
+  });
+});
+
 describe("pluginRegistry — route options and plugin names", () => {
   afterEach(() => {
     cleanup("plugin-a");

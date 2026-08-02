@@ -159,3 +159,154 @@ describe("buildHostApi", () => {
     expect(pluginModalManager.getSnapshot()).toHaveLength(before);
   });
 });
+
+describe("buildHostApi — ui", () => {
+  it("exposes RichTextEditor/RichTextReadOnly for plugin notes-style UIs", () => {
+    const host = buildHostApi("jira", createAppStore(), "light");
+    expect(host.ui.RichTextEditor).toBeDefined();
+    expect(host.ui.RichTextReadOnly).toBeDefined();
+  });
+});
+
+const NOTES_PLUGIN_ID = "kandev-plugin-notes";
+const TEST_UPDATED_AT = "2026-01-01T00:00:00Z";
+
+describe("buildHostApi — host.storage", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.unstubAllEnvs();
+  });
+
+  it("get() targets the user-state route and returns {key, value, updatedAt}", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ value: "hi", updatedAt: TEST_UPDATED_AT }), { status: 200 }),
+      );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const host = buildHostApi(NOTES_PLUGIN_ID, createAppStore(), "light");
+    const entry = await host.storage.get("task", "task_1", "note");
+
+    expect(entry).toEqual({ key: "note", value: "hi", updatedAt: TEST_UPDATED_AT });
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toContain("/api/plugins/kandev-plugin-notes/user-state/task/task_1/note");
+  });
+
+  it("get() returns undefined on 404", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 404 })) as unknown as typeof fetch;
+
+    const host = buildHostApi(NOTES_PLUGIN_ID, createAppStore(), "light");
+    expect(await host.storage.get("task", "task_1", "note")).toBeUndefined();
+  });
+
+  it("get() throws on a non-2xx, non-404 status", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 500 })) as unknown as typeof fetch;
+
+    const host = buildHostApi(NOTES_PLUGIN_ID, createAppStore(), "light");
+    await expect(host.storage.get("task", "task_1", "note")).rejects.toThrow();
+  });
+});
+
+describe("buildHostApi — host.storage set/delete/list/subscribe", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.unstubAllEnvs();
+  });
+
+  it("set() PUTs a JSON envelope with value and a stamped writerId", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ updatedAt: TEST_UPDATED_AT }), { status: 200 }),
+      );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const host = buildHostApi(NOTES_PLUGIN_ID, createAppStore(), "light");
+    const result = await host.storage.set("task", "task_1", "note", "hello");
+
+    expect(result).toEqual({ updatedAt: TEST_UPDATED_AT });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain("/api/plugins/kandev-plugin-notes/user-state/task/task_1/note");
+    expect(init.method).toBe("PUT");
+    const body = JSON.parse(init.body as string);
+    expect(body.value).toBe("hello");
+    expect(typeof body.writerId).toBe("string");
+    expect(body.writerId.length).toBeGreaterThan(0);
+  });
+
+  it("set() stamps the same writerId across multiple calls (per-tab, not per-call)", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(
+        () => new Response(JSON.stringify({ updatedAt: TEST_UPDATED_AT }), { status: 200 }),
+      );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const host = buildHostApi(NOTES_PLUGIN_ID, createAppStore(), "light");
+    await host.storage.set("task", "task_1", "note", "a");
+    await host.storage.set("task", "task_1", "note", "b");
+
+    const writerId1 = JSON.parse(fetchMock.mock.calls[0][1].body as string).writerId;
+    const writerId2 = JSON.parse(fetchMock.mock.calls[1][1].body as string).writerId;
+    expect(writerId1).toBe(writerId2);
+  });
+
+  it("set() forwards ifUnmodifiedSince and throws PluginStorageConflictError on 409", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 409 })) as unknown as typeof fetch;
+
+    const host = buildHostApi(NOTES_PLUGIN_ID, createAppStore(), "light");
+    await expect(
+      host.storage.set("task", "task_1", "note", "hello", { ifUnmodifiedSince: TEST_UPDATED_AT }),
+    ).rejects.toThrow(/modified since/i);
+  });
+
+  it("delete() sends a DELETE with writerId as a query param", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const host = buildHostApi(NOTES_PLUGIN_ID, createAppStore(), "light");
+    await host.storage.delete("task", "task_1", "note");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain("/api/plugins/kandev-plugin-notes/user-state/task/task_1/note?writerId=");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("list() returns the entries array in order (AC27)", async () => {
+    const entries = [
+      { key: "alpha", value: 1, updatedAt: TEST_UPDATED_AT },
+      { key: "zeta", value: 2, updatedAt: "2026-01-01T00:00:01Z" },
+    ];
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ entries }), { status: 200 }),
+      ) as unknown as typeof fetch;
+
+    const host = buildHostApi(NOTES_PLUGIN_ID, createAppStore(), "light");
+    expect(await host.storage.list("task", "task_1")).toEqual(entries);
+  });
+
+  it("subscribe() returns an unsubscribe function wired through the plugin registry", async () => {
+    const { pluginRegistry } = await import("./registry");
+    const host = buildHostApi(NOTES_PLUGIN_ID, createAppStore(), "light");
+
+    const before = pluginRegistry.getWsHandlers("plugin.user-state.updated").length;
+    const unsubscribe = host.storage.subscribe({}, () => {});
+    expect(pluginRegistry.getWsHandlers("plugin.user-state.updated").length).toBe(before + 1);
+
+    unsubscribe();
+    expect(pluginRegistry.getWsHandlers("plugin.user-state.updated").length).toBe(before);
+  });
+});

@@ -66,13 +66,21 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@kandev/ui/tabs";
 import { Textarea } from "@kandev/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@kandev/ui/tooltip";
 import { Combobox } from "@/components/combobox";
+import { RichTextEditor, RichTextReadOnly } from "@/components/editors/tiptap/rich-text-editor";
 import { PageTopbar } from "@/components/page-topbar";
 import { TaskCreateDialog } from "@/components/task-create-dialog";
 import { getBackendConfig } from "@/lib/config";
 import { softNavigate } from "@/lib/routing/client-router";
 import type { AppState } from "@/lib/state/store";
 import { pluginModalManager } from "./modal-manager";
-import type { PluginHostApi } from "./types";
+import { subscribeToUserStateChanges } from "./user-state-sync";
+import {
+  PluginStorageConflictError,
+  type PluginHostApi,
+  type PluginStorageApi,
+  type PluginStorageEntry,
+  type PluginStorageScope,
+} from "./types";
 
 /**
  * Curated `@kandev/ui` subset exposed on `host.ui`, plus a handful of
@@ -163,7 +171,22 @@ const PLUGIN_UI: Record<string, unknown> = {
   //   initialValues, so plugins hand off task creation to the native flow
   //   instead of POSTing directly.
   TaskCreateDialog,
+  // - RichTextEditor / RichTextReadOnly: narrow wrappers over the Plan
+  //   panel's tiptap editor (markdown paste, slash commands, mermaid),
+  //   pixel-identical to the Plan panel. See rich-text-editor.tsx.
+  RichTextEditor,
+  RichTextReadOnly,
 };
+
+/**
+ * Per-browser-tab id stamped on every `host.storage.set`/`delete` call and
+ * echoed back in the `plugin.user-state.updated` WS payload, so
+ * `host.storage.subscribe` can suppress a tab's own write (AC25) — one id
+ * per page load, shared across every plugin in this tab (a subscription
+ * already filters by pluginId, so a shared id doesn't cross plugin
+ * boundaries).
+ */
+const TAB_WRITER_ID: string = crypto.randomUUID();
 
 export function buildHostApi(
   pluginId: string,
@@ -191,6 +214,7 @@ export function buildHostApi(
     theme,
     navigate: (href, options) => softNavigate(href, options?.replace ? "replace" : "push"),
     openModal: (options) => pluginModalManager.openModal(pluginId, options),
+    storage: buildStorageApi(pluginId),
   };
 }
 
@@ -200,4 +224,51 @@ function fetchPluginApi(pluginId: string, path: string, init?: RequestInit): Pro
   const suffix = path.startsWith("/") ? path : `/${path}`;
   const url = `${apiBaseUrl}/api/plugins/${encodeURIComponent(pluginId)}${suffix}`;
   return fetch(url, init);
+}
+
+/** Path for the per-user storage routes; omit `key` for the list route. */
+function userStatePath(scope: PluginStorageScope, scopeId: string, key?: string): string {
+  const base = `/user-state/${encodeURIComponent(scope)}/${encodeURIComponent(scopeId)}`;
+  return key === undefined ? base : `${base}/${encodeURIComponent(key)}`;
+}
+
+/** Builds `host.storage` (`PluginStorageApi`), scoped to `pluginId`. */
+function buildStorageApi(pluginId: string): PluginStorageApi {
+  return {
+    async get(scope, scopeId, key) {
+      const res = await fetchPluginApi(pluginId, userStatePath(scope, scopeId, key));
+      if (res.status === 404) return undefined;
+      if (!res.ok) throw new Error(`plugin storage: get failed with status ${res.status}`);
+      const body = (await res.json()) as { value: unknown; updatedAt: string };
+      return { key, value: body.value, updatedAt: body.updatedAt };
+    },
+    async set(scope, scopeId, key, value, options) {
+      const res = await fetchPluginApi(pluginId, userStatePath(scope, scopeId, key), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          value,
+          writerId: TAB_WRITER_ID,
+          ifUnmodifiedSince: options?.ifUnmodifiedSince,
+        }),
+      });
+      if (res.status === 409) throw new PluginStorageConflictError();
+      if (!res.ok) throw new Error(`plugin storage: set failed with status ${res.status}`);
+      const body = (await res.json()) as { updatedAt: string };
+      return { updatedAt: body.updatedAt };
+    },
+    async delete(scope, scopeId, key) {
+      const path = `${userStatePath(scope, scopeId, key)}?writerId=${encodeURIComponent(TAB_WRITER_ID)}`;
+      const res = await fetchPluginApi(pluginId, path, { method: "DELETE" });
+      if (!res.ok) throw new Error(`plugin storage: delete failed with status ${res.status}`);
+    },
+    async list(scope, scopeId) {
+      const res = await fetchPluginApi(pluginId, userStatePath(scope, scopeId));
+      if (!res.ok) throw new Error(`plugin storage: list failed with status ${res.status}`);
+      const body = (await res.json()) as { entries: PluginStorageEntry[] };
+      return body.entries;
+    },
+    subscribe: (filter, handler) =>
+      subscribeToUserStateChanges(pluginId, TAB_WRITER_ID, filter, handler),
+  };
 }

@@ -16,6 +16,8 @@ import type {
   PluginRegistry,
   PluginRouteOptions,
   SlotComponent,
+  TaskMenuActionRegistration,
+  TaskPanelRegistration,
   WsHandler,
 } from "./types";
 import type { ComponentType } from "react";
@@ -63,6 +65,16 @@ interface WsHandlerRegistration {
   handler: WsHandler;
 }
 
+/** Task panel registration plus the owning pluginId — what `getTaskPanels()` returns. */
+export interface PluginTaskPanelRegistration extends TaskPanelRegistration {
+  pluginId: string;
+}
+
+/** Task menu action registration plus the owning pluginId. */
+export interface PluginTaskMenuActionRegistration extends TaskMenuActionRegistration {
+  pluginId: string;
+}
+
 function removeByPlugin<T>(list: Owned<T>[], pluginId: string): Owned<T>[] {
   return list.filter((entry) => entry.pluginId !== pluginId);
 }
@@ -74,6 +86,8 @@ class PluginRegistryStore {
   private slotComponents: Owned<SlotRegistration>[] = [];
   private wsHandlers: Owned<WsHandlerRegistration>[] = [];
   private keybindingHandlers: Owned<PluginKeybindingHandler>[] = [];
+  private taskPanels: Owned<TaskPanelRegistration>[] = [];
+  private taskMenuActions: Owned<TaskMenuActionRegistration>[] = [];
   private nextSlotRegistrationId = 0;
   /** Display names from the boot payload, used for derived page-chrome titles. */
   private pluginNames = new Map<string, string>();
@@ -138,6 +152,27 @@ class PluginRegistryStore {
     this.notify();
   }
 
+  /**
+   * Removes exactly one previously registered WS handler (matched by
+   * reference equality), without touching any of the plugin's other
+   * registrations. Used by `host.storage.subscribe`'s returned unsubscribe
+   * function so an individual subscription can end without the plugin being
+   * disabled/uninstalled (which already bulk-revokes via unregisterPlugin).
+   * A no-op if the handler is already gone (e.g. the plugin was unregistered
+   * first).
+   */
+  unregisterWsHandler(pluginId: string, action: string, handler: WsHandler): void {
+    const index = this.wsHandlers.findIndex(
+      (entry) =>
+        entry.pluginId === pluginId &&
+        entry.value.action === action &&
+        entry.value.handler === handler,
+    );
+    if (index === -1) return;
+    this.wsHandlers.splice(index, 1);
+    this.notify();
+  }
+
   registerKeybinding(pluginId: string, id: string, handler: (event: KeyboardEvent) => void): void {
     const declared = this.declaredKeybindingIds.get(pluginId);
     if (declared && !declared.has(id)) {
@@ -146,6 +181,16 @@ class PluginRegistryStore {
       );
     }
     this.keybindingHandlers.push({ pluginId, value: { id, handler } });
+    this.notify();
+  }
+
+  registerTaskPanel(pluginId: string, registration: TaskPanelRegistration): void {
+    this.taskPanels.push({ pluginId, value: registration });
+    this.notify();
+  }
+
+  registerTaskMenuAction(pluginId: string, registration: TaskMenuActionRegistration): void {
+    this.taskMenuActions.push({ pluginId, value: registration });
     this.notify();
   }
 
@@ -167,6 +212,8 @@ class PluginRegistryStore {
     this.slotComponents = removeByPlugin(this.slotComponents, pluginId);
     this.wsHandlers = removeByPlugin(this.wsHandlers, pluginId);
     this.keybindingHandlers = removeByPlugin(this.keybindingHandlers, pluginId);
+    this.taskPanels = removeByPlugin(this.taskPanels, pluginId);
+    this.taskMenuActions = removeByPlugin(this.taskMenuActions, pluginId);
     this.pluginNames.delete(pluginId);
     this.declaredKeybindingIds.delete(pluginId);
     if (this.totalCount() !== before) this.notify();
@@ -240,6 +287,28 @@ class PluginRegistryStore {
     )?.value.handler;
   }
 
+  /** Every registered task panel, in registration order. */
+  getTaskPanels(): PluginTaskPanelRegistration[] {
+    return this.taskPanels.map((entry) => ({ ...entry.value, pluginId: entry.pluginId }));
+  }
+
+  /** The registration for a specific `pluginId`/panel `id`, if still registered. */
+  getTaskPanel(pluginId: string, id: string): PluginTaskPanelRegistration | undefined {
+    const entry = this.taskPanels.find(
+      (candidate) => candidate.pluginId === pluginId && candidate.value.id === id,
+    );
+    return entry ? { ...entry.value, pluginId: entry.pluginId } : undefined;
+  }
+
+  /** Every registered task menu action, optionally filtered to one group. */
+  getTaskMenuActions(
+    group?: TaskMenuActionRegistration["group"],
+  ): PluginTaskMenuActionRegistration[] {
+    return this.taskMenuActions
+      .filter((entry) => !group || entry.value.group === group)
+      .map((entry) => ({ ...entry.value, pluginId: entry.pluginId }));
+  }
+
   /** Registry view scoped to one plugin — matches the frozen `PluginRegistry` contract. */
   forPlugin(pluginId: string, pluginName?: string): PluginRegistry {
     if (pluginName) this.pluginNames.set(pluginId, pluginName);
@@ -252,6 +321,8 @@ class PluginRegistryStore {
       registerComponent: (slot, Component) => this.registerComponent(pluginId, slot, Component),
       registerWsHandler: (action, handler) => this.registerWsHandler(pluginId, action, handler),
       registerKeybinding: (id, handler) => this.registerKeybinding(pluginId, id, handler),
+      registerTaskPanel: (registration) => this.registerTaskPanel(pluginId, registration),
+      registerTaskMenuAction: (registration) => this.registerTaskMenuAction(pluginId, registration),
     };
   }
 
@@ -262,7 +333,9 @@ class PluginRegistryStore {
       this.navItems.length +
       this.slotComponents.length +
       this.wsHandlers.length +
-      this.keybindingHandlers.length
+      this.keybindingHandlers.length +
+      this.taskPanels.length +
+      this.taskMenuActions.length
     );
   }
 
