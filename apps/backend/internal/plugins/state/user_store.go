@@ -104,72 +104,52 @@ func (s *UserStore) Get(
 // time.RFC3339, which accepts an optional fractional part, so rows written
 // before this layout change continue to load.
 //
-// When
-// ifUnmodifiedSince is non-nil, the write is rejected with ErrConflict if a
-// stored row already exists with updated_at strictly after that time — the
-// caller lost a race and should refetch (Approach H1, AC28). A nil
-// ifUnmodifiedSince, or no existing row, always writes (today's unconditional
-// last-write-wins). The read-then-write is wrapped in one transaction so the
-// check is atomic against a concurrent Set for the same tuple.
+// When ifUnmodifiedSince is non-nil, the conflict check is folded into the
+// upsert's ON CONFLICT ... DO UPDATE ... WHERE clause rather than a separate
+// SELECT-then-write: a plain read-then-act check (even inside a transaction)
+// only blocks concurrent writers under serializable isolation. This codebase
+// also runs against PostgreSQL, whose default READ COMMITTED isolation lets
+// two concurrent transactions both read the same "not yet conflicting" row
+// and both proceed to write, each silently clobbering the other. Folding the
+// timestamp comparison into the UPDATE's WHERE clause makes the check and
+// the write one atomic, row-locking operation regardless of isolation level:
+// if the WHERE fails (a newer row won the race), neither the UPDATE nor the
+// INSERT-on-no-conflict branch applies, RowsAffected is 0, and the caller
+// gets ErrConflict with the stored value left untouched. A nil
+// ifUnmodifiedSince, or no existing row (nothing for ON CONFLICT to match),
+// always writes (today's unconditional last-write-wins).
 func (s *UserStore) Set(
 	ctx context.Context, pluginID, userID, scope, scopeID, key string,
 	value json.RawMessage, ifUnmodifiedSince *time.Time,
 ) (time.Time, error) {
 	now := time.Now().UTC()
-
-	tx, err := s.db.BeginTxx(ctx, nil)
-	if err != nil {
-		return time.Time{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if ifUnmodifiedSince != nil {
-		conflict, err := userStoreHasNewerRow(ctx, tx, pluginID, userID, scope, scopeID, key, *ifUnmodifiedSince)
-		if err != nil {
-			return time.Time{}, err
-		}
-		if conflict {
-			return time.Time{}, ErrConflict
-		}
-	}
-
-	if _, err := tx.ExecContext(ctx, tx.Rebind(`
+	query := `
 		INSERT INTO plugin_user_state (id, plugin_id, user_id, scope, scope_id, state_key, value_json, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(plugin_id, user_id, scope, scope_id, state_key)
-		DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
-	`), uuid.New().String(), pluginID, userID, scope, scopeID, key, string(value), now.Format(time.RFC3339Nano)); err != nil {
-		return time.Time{}, err
+		DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`
+	args := []any{
+		uuid.New().String(), pluginID, userID, scope, scopeID, key, string(value), now.Format(time.RFC3339Nano),
+	}
+	if ifUnmodifiedSince != nil {
+		query += ` WHERE plugin_user_state.updated_at <= ?`
+		args = append(args, ifUnmodifiedSince.UTC().Format(time.RFC3339Nano))
 	}
 
-	if err := tx.Commit(); err != nil {
+	res, err := s.db.ExecContext(ctx, s.db.Rebind(query), args...)
+	if err != nil {
 		return time.Time{}, err
+	}
+	if ifUnmodifiedSince != nil {
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return time.Time{}, err
+		}
+		if affected == 0 {
+			return time.Time{}, ErrConflict
+		}
 	}
 	return now, nil
-}
-
-// userStoreHasNewerRow reports whether a plugin_user_state row for the given
-// tuple exists with updated_at strictly after since. A missing row is not a
-// conflict — the caller is creating the document for the first time.
-func userStoreHasNewerRow(
-	ctx context.Context, tx *sqlx.Tx, pluginID, userID, scope, scopeID, key string, since time.Time,
-) (bool, error) {
-	var updatedAtStr string
-	err := tx.QueryRowContext(ctx, tx.Rebind(`
-		SELECT updated_at FROM plugin_user_state
-		WHERE plugin_id = ? AND user_id = ? AND scope = ? AND scope_id = ? AND state_key = ?
-	`), pluginID, userID, scope, scopeID, key).Scan(&updatedAtStr)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
-		}
-		return false, err
-	}
-	updatedAt, err := time.Parse(time.RFC3339, updatedAtStr)
-	if err != nil {
-		return false, fmt.Errorf("parse updated_at: %w", err)
-	}
-	return updatedAt.After(since), nil
 }
 
 // Delete removes the row for the given plugin/user/scope/scopeID/key. It is

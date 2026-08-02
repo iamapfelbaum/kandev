@@ -4,12 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 
 	"github.com/kandev/kandev/internal/db"
+	"github.com/kandev/kandev/internal/testutil"
 )
 
 func TestUserStoreSetThenGetReturnsStoredValue(t *testing.T) {
@@ -415,6 +420,99 @@ func TestUserStoreInitSchemaIsIdempotent(t *testing.T) {
 	}
 	if _, err := NewUserStore(db.NewPool(conn, conn)); err != nil {
 		t.Fatalf("second NewUserStore (re-init on existing schema): %v", err)
+	}
+}
+
+// openIsolatedPostgresConcurrentPool is like testutil.OpenIsolatedPostgres
+// but for tests that need real concurrent connections. OpenIsolatedPostgres
+// isolates its schema with a session-level `SET search_path`, which only
+// applies to the one connection it ran on; raising that *sqlx.DB's
+// MaxOpenConns afterwards lets the pool open additional physical
+// connections that never ran the SET and fall back to the default schema,
+// so plugin_user_state "doesn't exist" the moment a query lands on a fresh
+// connection (caught by actually running this test against a live
+// container, not just trusting the retry-until-skip path). Baking
+// search_path into the DSN via the `options` startup parameter instead
+// applies it to every new physical connection at connect time.
+func openIsolatedPostgresConcurrentPool(t *testing.T, dsn string, maxOpenConns int) *sqlx.DB {
+	t.Helper()
+	schema := "kandev_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+
+	setup, err := sqlx.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open postgres (schema setup): %v", err)
+	}
+	if _, err := setup.Exec("CREATE SCHEMA " + schema); err != nil {
+		_ = setup.Close()
+		t.Fatalf("create postgres schema %s: %v", schema, err)
+	}
+	t.Cleanup(func() {
+		_, _ = setup.Exec("DROP SCHEMA IF EXISTS " + schema + " CASCADE")
+		_ = setup.Close()
+	})
+
+	pooled, err := sqlx.Open("pgx", dsn+" options='-c search_path="+schema+"'")
+	if err != nil {
+		t.Fatalf("open postgres (pooled): %v", err)
+	}
+	pooled.SetMaxOpenConns(maxOpenConns)
+	t.Cleanup(func() { _ = pooled.Close() })
+	return pooled
+}
+
+// TestUserStorePostgresConditionalWriteIsRaceFreeUnderConcurrency is the
+// regression test for review feedback on Set: a plain read-then-write
+// (even wrapped in one transaction) only serializes against Postgres's
+// default READ COMMITTED isolation if the read takes a row lock. A bare
+// SELECT does not, so two concurrent transactions can each see the row as
+// not-yet-conflicting and both proceed to write, silently clobbering one
+// another. Set instead folds the ifUnmodifiedSince comparison into the
+// upsert's own WHERE clause, making the check-and-write one atomic,
+// row-locking statement. Racing many goroutines against the same
+// ifUnmodifiedSince token must let exactly one succeed. Skips unless
+// KANDEV_TEST_POSTGRES_DSN is set.
+func TestUserStorePostgresConditionalWriteIsRaceFreeUnderConcurrency(t *testing.T) {
+	conn := openIsolatedPostgresConcurrentPool(t, testutil.PostgresDSNFromEnv(t), 8)
+	store, err := NewUserStore(db.NewPool(conn, conn))
+	if err != nil {
+		t.Fatalf("new user store: %v", err)
+	}
+	ctx := context.Background()
+
+	seededAt, err := store.Set(ctx, "kandev-plugin-notes", "user_1", "task", "task_xyz", "note", json.RawMessage(`"v0"`), nil)
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	const attempts = 20
+	var wg sync.WaitGroup
+	errs := make([]error, attempts)
+	for i := range attempts {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = store.Set(
+				ctx, "kandev-plugin-notes", "user_1", "task", "task_xyz", "note",
+				json.RawMessage(fmt.Sprintf(`"racer-%d"`, i)), &seededAt,
+			)
+		}(i)
+	}
+	wg.Wait()
+
+	successes := 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrConflict):
+			// expected for every loser of the race
+		default:
+			t.Fatalf("unexpected error from concurrent conditional write: %v", err)
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("expected exactly 1 of %d concurrent conditional writes (same ifUnmodifiedSince) to succeed, got %d",
+			attempts, successes)
 	}
 }
 
