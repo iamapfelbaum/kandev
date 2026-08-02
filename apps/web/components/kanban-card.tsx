@@ -33,6 +33,7 @@ import {
   type TaskState,
 } from "@/lib/types/http";
 import type { PluginTaskMenuContext } from "@/lib/plugins/types";
+import { usePluginRegistry } from "@/lib/plugins/registry";
 
 const EMPTY_REPOSITORIES: Repository[] = [];
 
@@ -272,6 +273,11 @@ function useKanbanCardMenus({
   | "onArchive"
   | "onMove"
 >) {
+  // Plugins load asynchronously and can be disabled/uninstalled at runtime;
+  // re-render on any registry change so a menu action a plugin registers
+  // after this card already mounted still appears, and one whose plugin was
+  // just disabled doesn't linger as a stale entry.
+  usePluginRegistry();
   const moveMenu = useKanbanCardMoveMenuActions({ task, steps, isSelected, selectedIds, onMove });
   const dialogs = useKanbanCardDialogState();
   const { detachTask, detachingTaskId } = useDetachTask();
