@@ -209,6 +209,41 @@ Enforced by `apps/web/eslint.config.mjs` (warnings, will become errors):
 
 When you hit a limit, extract a helper function, custom hook, or sub-component. Prefer composition over growing a single function.
 
+## Plugin system
+
+The frozen frontend contract is `docs/plans/plugins/PLUGIN-API.md`; `lib/plugins/types.ts`
+is its TS mirror — the two must change together. `lib/plugins/registry.ts` is the
+reactive singleton `PluginRegistry`; every `register*` call there needs a matching
+cleanup entry in `unregisterPlugin` and `totalCount()`, or a disabled/uninstalled
+plugin leaks a stale registration.
+
+- **Task panels** (`registerTaskPanel`): one generic dockview component,
+  `"plugin-panel"`, shared by every plugin — panel identity lives in
+  `params: { pluginId, panelKey }` (`lib/state/layout-manager/plugin-panels.ts`
+  has the id helpers). `renderPanel` in `dockview-shared.tsx` and
+  `dockview-panel-content.tsx` gets exactly one `"plugin-panel"` case each
+  (both are lookup tables, not switches, specifically so this stays true as
+  more panel types are added). `PluginTaskPanel` (`components/task/`) resolves
+  the registration and wraps it in a `PluginErrorBoundary`.
+  `mobileEnabled: true` also appends a phone bottom-nav entry
+  (`session-mobile-bottom-nav.tsx`) rendering the same `Component` with
+  `presentation: "mobile"`.
+- **Kanban card contributions:** `registerTaskMenuAction({ group: "edit", ... })`
+  turns the card's flat `Edit` item into an `Edit` submenu
+  (`kanban-card-edit-submenu.tsx`); `registerComponent("task-card-indicators", ...)`
+  renders beside `PRTaskIcon` via the existing `<PluginSlot/>` mechanism — no
+  new slot primitive needed.
+- **`host.storage`:** authenticated per-user key/value storage
+  (`lib/plugins/host-api.ts`), backed by
+  `/api/plugins/{id}/user-state/...` (see
+  `docs/decisions/2026-08-01-per-user-plugin-storage.md`). `host.storage.subscribe`
+  (`lib/plugins/user-state-sync.ts`) wraps `registerWsHandler` with own-plugin
+  filtering and own-tab echo suppression via a per-tab `writerId`.
+- **`host.ui.RichTextEditor`/`RichTextReadOnly`** (`components/editors/tiptap/rich-text-editor.tsx`):
+  narrow wrappers over the Plan panel's tiptap editor — do not widen their
+  props beyond `{ taskId, value, onChange, placeholder, className, testId }` /
+  `{ value, className, testId }` without updating `PLUGIN-API.md`.
+
 ## Testing notes
 
 - jsdom drops `secure` cookies over `http`, so `document.cookie` reads back empty. To assert a cookie write in a Vitest unit test, intercept the setter with `Object.defineProperty(document, "cookie", { set: ... })` and restore it after.

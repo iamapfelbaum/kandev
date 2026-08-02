@@ -111,6 +111,9 @@ capabilities:
   secrets: true
   auth: true                                  # establish a login session for an
                                               # external (OIDC/SAML) identity — see ADR 0050
+  user_state: true                            # authenticated, per-user host.storage — see
+                                              # "Frontend plugin runtime" and ADR
+                                              # 2026-08-01-per-user-plugin-storage
 
 webhooks:
   - key: "slack-events"
@@ -307,6 +310,39 @@ message WebhookResponse { int32 status = 1; map<string, string> headers = 2; byt
 
 The `WebhookResponse` is relayed back as the HTTP response. The plugin verifies the
 external system's signature (Slack signing secret, GitHub webhook secret, etc.) itself.
+
+### Authenticated per-user storage API (browser -> kandev, `host.storage`)
+
+```
+GET    /api/plugins/{id}/user-state/{scope}/{scopeId}          # list, ordered by key
+GET    /api/plugins/{id}/user-state/{scope}/{scopeId}/{key}
+PUT    /api/plugins/{id}/user-state/{scope}/{scopeId}/{key}     # body: {value, writerId?, ifUnmodifiedSince?}
+DELETE /api/plugins/{id}/user-state/{scope}/{scopeId}/{key}
+```
+
+Unlike every other plugin HTTP surface, this one is reachable directly from an
+authenticated browser session (session cookie or PAT) — it is **not** in
+`httpmw`'s public-path allowlist, and it never touches the plugin's gRPC
+subprocess. Identity comes from `authn.FromGin`; every read/write is scoped to
+that user via a `plugin_user_state` row keyed
+`(plugin_id, user_id, scope, scope_id, state_key)`, which is a separate table
+from the plugin-owned `plugin_state` (no proto change, no migration between the
+two). Requires the plugin manifest to declare `capabilities.user_state: true`
+(`403` otherwise); an unknown/disabled plugin returns `404`; a cross-user `GET`
+returns `404` (never leaks that the key exists for someone else). `scope` must
+be one of `instance|workspace|task|session|repository`; `scopeId`/`key` must
+match `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`; the body is capped (`413` over the
+limit). `PUT` accepts an optional `ifUnmodifiedSince`, compared against the
+stored row's `updated_at` — a conflicting write returns `409` and leaves the
+stored value unchanged (optimistic concurrency; see ADR
+2026-08-01-per-user-plugin-storage). Uninstalling a plugin deletes its
+`plugin_user_state` rows for every user, not just one.
+
+A successful `PUT`/`DELETE` publishes the `plugin.user-state.updated` bus event,
+routed by the existing `UserEventBroadcaster` (the same user-scoped fan-out
+`user.settings.updated` uses) to only the writing user's own WS connections. The
+payload carries `{ pluginId, scope, scopeId, key, updatedAt, writerId, deleted }`
+— keys only, never the value.
 
 ### Host gRPC service (plugin -> kandev)
 
@@ -551,6 +587,38 @@ Mattermost-webapp model), not iframes. The full contract lives in
   that instance. `content` reuses the slot-component contract (rendered with the
   host React instance). Independent of keybindings — any plugin code path may call
   it, including a keybinding handler.
+- **Task panels:** `registerTaskPanel({ id, title, icon?, Component, mobileEnabled? })`
+  adds a row to the task workspace's "+" (add panel) menu; selecting it opens a
+  dockview panel rendering `Component` with `{ panelId, taskId, sessionId,
+  presentation }`. Every plugin panel shares one generic `"plugin-panel"` dockview
+  component (identity in `params.pluginId`/`params.panelKey`), so a saved layout
+  round-trips even when the owning plugin is later uninstalled — the layout manager
+  drops an unresolvable reference instead of throwing, and `Settings > Layouts`
+  renders a placeholder box for it. `mobileEnabled: true` also appends a phone
+  bottom-nav entry rendering the same `Component` with `presentation: "mobile"`.
+  Disabling/uninstalling the plugin closes its open panels in the current session; a
+  `Component` that throws renders a per-panel error-boundary fallback without
+  affecting the rest of the layout.
+- **Kanban card contributions:** `registerTaskMenuAction({ id, label, icon?,
+  group: "edit", visible?, run })` adds an item to the kanban card's `Edit`
+  submenu (the flat `Edit` item becomes `Edit > Edit task` once any plugin
+  registers one); `run(context)` receives `{ workspaceId, taskId, taskTitle,
+  workflowStepId, presentation }`, and a rejected `run` is caught and logged
+  without blocking the menu from closing. `registerComponent("task-card-indicators",
+  C)` renders `C` beside the PR status icon on every kanban card, receiving
+  `{ taskId, workspaceId, workflowStepId }` as `slotProps`.
+- **`host.storage`:** authenticated, per-user key/value storage
+  (`get`/`set`/`delete`/`list`/`subscribe`), backed by the `plugin_user_state`
+  table (separate from the plugin-backend-only `plugin_state` table — no gRPC/proto
+  change) and requiring `capabilities.user_state: true`. A successful
+  `set`/`delete` publishes `plugin.user-state.updated` to the writing user's own
+  WS connections only (payload carries keys, never the value); `host.storage.subscribe`
+  filters to the plugin's own events and suppresses the writing tab's own echo via a
+  per-tab `writerId`. See `docs/decisions/2026-08-01-per-user-plugin-storage.md` and
+  the full contract in `PLUGIN-API.md`.
+- **`host.ui.RichTextEditor` / `host.ui.RichTextReadOnly`:** narrow wrappers over the
+  Plan panel's tiptap markdown editor, pixel-identical to the Plan panel, so a
+  plugin needing rich text (e.g. a notes scratchpad) ships no tiptap of its own.
 
 ## State machine
 
@@ -599,6 +667,15 @@ restart with backoff (max 5 attempts, then `error`). Next successful handshake/`
   (macOS/Linux) or loopback TCP with AutoMTLS (Windows) — never a routable network
   address. There is no remote/operator-hosted plugin tier in v1; every plugin backend
   is a binary kandev spawns and supervises on the same host. See "Out of scope".
+- **`host.storage`'s user-state routes are the first plugin HTTP surface reachable
+  with the caller's own browser session** (every other plugin HTTP route is either
+  operator-only management or a self-authenticating external webhook). It is
+  guarded the same way any other authenticated API route is — `httpmw`'s allowlist
+  explicitly does not cover it, so an unauthenticated request is rejected before the
+  handler runs — plus a capability gate (`user_state`), scope/key validation, a body
+  cap, and per-user row isolation. The stored value is opaque to the host: it is
+  never interpreted, never included in the `plugin.user-state.updated` WS payload,
+  and never delivered to the plugin's gRPC backend (a browser-only surface).
 
 ## Failure modes
 

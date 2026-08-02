@@ -95,3 +95,5 @@ Read individual ADRs for full context. Create new ones via `/record decision` or
 | 2026-07-31-isolate-manual-pr-review-content | [Isolate Manual PR Review Content](2026-07-31-isolate-manual-pr-review-content.md) | accepted | infra, workflow, security | 2026-07-31 |
 | 2026-07-31-system-service-user-continuity | [Preserve System Service Identity Across Reinstallation](2026-07-31-system-service-user-continuity.md) | accepted | backend, cli, security, operations | 2026-07-31 |
 | 2026-08-01-validate-mcp-tool-arguments | [Validate MCP Tool Arguments at the Shared Server Boundary](2026-08-01-validate-mcp-tool-arguments.md) | accepted | backend, protocol | 2026-08-01 |
+| 2026-08-01-per-user-plugin-storage | [Host-Provided Per-User Plugin Storage](2026-08-01-per-user-plugin-storage.md) | accepted | backend, frontend, security | 2026-08-01 |
+| 2026-08-01-plugin-task-panel-contributions | [Plugin Task Panel, Kanban Menu Action, and Card Indicator Contributions](2026-08-01-plugin-task-panel-contributions.md) | accepted | frontend | 2026-08-01 |

@@ -455,6 +455,7 @@ plugins at once. Available slots:
 | `app-status-bar-left` | Default-left item in the global status surface | `AppStatusBarSlotProps` |
 | `app-status-bar-right` | Default-right item in the global status surface | `AppStatusBarSlotProps` |
 | `plugin-settings` | A plugin's own settings page (**Settings > Plugins > `<plugin>`**), at the top above the settings form | `{ pluginId, status }` |
+| `task-card-indicators` | Kanban card, beside the PR status icon | `{ taskId, workspaceId, workflowStepId }` |
 
 `plugin-settings` is the one exception to "every plugin's component renders":
 it is **owner-scoped**, so the host renders only the component registered by the
@@ -649,6 +650,148 @@ ordering API. Enable, disable, and uninstall update the live surface without a
 reload, and each contribution has its own error boundary. A full-bleed route
 (`topbar: false`) owns its own chrome; mount the host Status trigger there if that
 route should expose Status.
+
+## Task panels
+
+`registerTaskPanel({ id, title, icon?, Component, mobileEnabled? })` adds a
+row to the task workspace's "+" (add panel) menu. Selecting it opens a
+dockview panel rendering `Component` with
+`{ panelId, taskId, sessionId, presentation }`, where `presentation` is
+`"desktop"` or `"mobile"`. Set `mobileEnabled: true` to also add a phone
+bottom-nav entry that renders the same `Component` with
+`presentation: "mobile"` — no separate mobile registration needed.
+
+```js
+function NotesPanel({ taskId, presentation }) {
+  // see "Per-user storage" below for the get/set/subscribe pattern
+}
+
+registry.registerTaskPanel({
+  id: "notes",
+  title: "Notes",
+  icon: "book", // curated icon name — unknown names fall back to a puzzle glyph
+  Component: NotesPanel,
+  mobileEnabled: true,
+});
+```
+
+`Component` renders behind its own error boundary — a throw shows a small
+"failed to load" fallback scoped to just that panel, not the surrounding
+task workspace. Disabling or uninstalling the plugin closes any panel it has
+open in the current session.
+
+## Kanban card contributions
+
+`registerTaskMenuAction({ id, label, icon?, group: "edit", visible?, run })`
+adds an item to the kanban card's `Edit` submenu. With no plugin action
+registered, the card shows the same flat `Edit` item as always; once any
+plugin registers one, that item becomes `Edit > Edit task` followed by each
+visible action:
+
+```js
+registry.registerTaskMenuAction({
+  id: "enhance-notes",
+  label: "Enhance notes",
+  group: "edit",
+  visible: (context) => Boolean(context.taskId),
+  run: async (context) => {
+    // context: { workspaceId, taskId, taskTitle, workflowStepId, presentation }
+    await host.storage.set("task", context.taskId, "note", "...");
+  },
+});
+```
+
+A `run` that rejects is caught and logged to the console; the menu closes
+either way. `task-card-indicators` (see the slots table above) is the
+matching read-only surface — a small icon/badge beside the PR status icon on
+every card.
+
+## Per-user storage (`host.storage`)
+
+`host.storage` is authenticated, per-user key/value storage — no plugin
+backend required. It needs `capabilities.user_state: true` in the manifest.
+Every value is scoped to the calling user: two users writing the same
+`(scope, scopeId, key)` never see each other's value.
+
+```ts
+host.storage.get(scope, scopeId, key): Promise<{ key, value, updatedAt } | undefined>
+host.storage.set(scope, scopeId, key, value, options?: { ifUnmodifiedSince?: string }): Promise<{ updatedAt }>
+host.storage.delete(scope, scopeId, key): Promise<void>
+host.storage.list(scope, scopeId): Promise<Array<{ key, value, updatedAt }>>  // NOT paginated — see below
+host.storage.subscribe(filter, handler): () => void  // live updates from another tab/surface
+```
+
+`scope` is one of `instance | workspace | task | session | repository`.
+Worked example — a single-document, per-task scratchpad (the Notes panel
+above), following the `get` on mount / debounced `set` / `subscribe` to
+refresh pattern:
+
+```js
+function useNoteValue(taskId) {
+  const [value, setValue] = host.React.useState("");
+  const [loaded, setLoaded] = host.React.useState(false);
+
+  host.React.useEffect(() => {
+    let cancelled = false;
+    function refresh() {
+      host.storage.get("task", taskId, "note").then((entry) => {
+        if (cancelled) return;
+        setValue(entry ? entry.value : "");
+        setLoaded(true);
+      });
+    }
+    refresh();
+    // Picks up a write from another tab, device, or surface (e.g. a second
+    // browser window on the same document) — the host suppresses this same
+    // tab's own writes automatically, so you never see your own echo.
+    const unsubscribe = host.storage.subscribe(
+      { scope: "task", scopeId: taskId, key: "note" },
+      refresh,
+    );
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [taskId]);
+
+  return [value, setValue, loaded];
+}
+
+function NotesPanel({ taskId }) {
+  const [value, setValue, loaded] = useNoteValue(taskId);
+  const saveTimer = host.React.useRef(null);
+
+  function handleChange(next) {
+    setValue(next);
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      host.storage.set("task", taskId, "note", next);
+    }, 300); // debounce — don't write on every keystroke
+  }
+
+  if (!loaded) return host.jsx("div", null, "Loading...");
+  return host.jsx(host.ui.RichTextEditor, {
+    taskId,
+    value,
+    onChange: handleChange,
+    placeholder: "Write a note...",
+  });
+}
+```
+
+Two of your own surfaces (this panel, a kanban shortcut, a second tab, the
+desktop app) editing the same document is the normal case, not an edge case
+— whoever saves last wins unless you pass `ifUnmodifiedSince` (the
+`updatedAt` you last read) to `set` and handle the resulting `409` by
+refetching and prompting the user, rather than silently discarding their
+edit. `host.ui.RichTextEditor` / `host.ui.RichTextReadOnly` are narrow
+wrappers over the same tiptap markdown editor the Plan panel uses — use them
+instead of shipping your own rich-text editor.
+
+`host.storage.list` returns **every** entry under a `(scope, scopeId)` pair
+with no pagination — fine for a handful of keys per task, but don't model an
+unbounded collection (e.g. one key per comment) as a single scope without a
+plan for what happens once it grows.
 
 ## Keybindings
 
