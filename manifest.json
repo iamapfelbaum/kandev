@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-08-02T15:06:56Z",
+  "assets": [
+    {
+      "name": "progressive-loading",
+      "type": "screenshot",
+      "format": "png",
+      "file": "storage-maintenance--progressive-loading.png",
+      "test": "storage-maintenance.spec.ts",
+      "caption": "Desktop storage shows policy, history, and quarantine while analysis scans"
+    },
+    {
+      "name": "progressive-loading",
+      "type": "screenshot",
+      "format": "png",
+      "file": "mobile-storage-maintenance--progressive-loading.png",
+      "test": "mobile-storage-maintenance.spec.ts",
+      "caption": "Mobile storage keeps policy, history, and quarantine visible during analysis"
+    }
+  ]
+}
