@@ -17,6 +17,8 @@ Users opening or focusing Changes and Review need a current workspace snapshot w
 - Overlapping live observations for the same repository share one underlying observation. Different repositories in a multi-repository task may still be observed in parallel.
 - Every non-cancelled caller receives the same completed snapshot or error from a shared observation. A caller whose own context is cancelled returns promptly without cancelling or otherwise poisoning the result for other callers.
 - Tracker shutdown or the bounded shared-observation deadline cancels the underlying work. Cancelled work does not publish or cache a partial snapshot.
+- An upstream-ref change is acknowledged by the poller only after a status observation has freshly resolved the upstream branch state and its remote ahead/behind counts. A published status that carries prior remote counts after a secondary Git failure does not consume the upstream-ref change; a later poll retries it.
+- A configured upstream whose remote-tracking ref is missing is a valid observable state, distinct from both "no upstream configured" and a transient Git-command failure. The poller publishes the loss of the upstream and continues observing later HEAD, branch, index, and upstream changes.
 - After Git output is parsed, changed-file and synthetic untracked-diff enrichment performs work proportional to the number of changed entries plus the bounded content processed.
 - Existing diff limits remain in force: 10 MiB maximum source file size, 256 KiB maximum emitted diff per file, and a 2 MiB enrichment threshold per status snapshot. Because the threshold is checked before enriching each file, the final accepted file may preserve the existing overshoot of up to the 256 KiB per-file cap. Existing skip reasons remain unchanged.
 - Large changed sets retain every path and its status metadata. Once the total diff budget is exhausted, files that are not enriched retain `budget_exceeded` as their diff skip reason.
@@ -48,6 +50,9 @@ No route or payload shape changes.
 |---|---|
 | Primary branch or porcelain observation fails | The live observation fails and the prior cached snapshot remains available. |
 | Secondary diff enrichment fails | The established same-HEAD carry-forward behavior is preserved. |
+| Remote ahead/behind calculation fails after an upstream-ref change | The prior counts may remain visible, but the upstream-ref change remains pending and is retried until a fresh remote count is published. |
+| A configured upstream ref is deleted or pruned | Status publishes an empty remote branch, and Git polling continues for all other workspace changes. |
+| Upstream lookup is cancelled, times out, or fails for a reason other than a missing ref | The snapshot is not published or acknowledged; the existing healthy-repository retry path tries again on a later tick. |
 | One caller cancels while a shared observation is running | That caller returns its context cancellation promptly; other callers remain eligible to receive the shared result. |
 | The tracker stops or the shared deadline expires | Underlying work is cancelled and no partial result is published or cached. |
 | One repository fails during a multi-repository request | Successful repository entries remain available and the failure is reported on its repository entry. |
@@ -65,6 +70,9 @@ No route or payload shape changes.
 - **GIVEN** tracker shutdown or the shared-observation deadline while enrichment is running, **WHEN** cancellation reaches the observation, **THEN** filesystem iteration stops and no partial snapshot is cached.
 - **GIVEN** approximately 15,000 untracked text files, **WHEN** fresh status is computed, **THEN** every path is present, emitted diff content obeys the existing limits, files not enriched after total-budget exhaustion have `budget_exceeded`, and post-porcelain enrichment remains linear in the number of entries.
 - **GIVEN** one invalid repository in a multi-repository request, **WHEN** other repositories succeed, **THEN** the response retains the successful entries and reports the failure only on the invalid repository.
+- **GIVEN** an upstream ref moves after a push and the first remote ahead/behind command fails, **WHEN** the poller publishes a status carrying the prior counts, **THEN** it keeps the upstream change pending and retries until a later status contains freshly computed remote counts.
+- **GIVEN** a branch remains configured to track an upstream whose remote-tracking ref was deleted or pruned, **WHEN** the Git poller observes the missing ref, **THEN** it publishes the loss of the upstream and continues detecting later HEAD, branch, index, and upstream changes.
+- **GIVEN** upstream resolution is cancelled, times out, or otherwise fails without proving the ref is missing, **WHEN** the Git poller reads its snapshot, **THEN** it leaves the prior snapshot untouched and retries on a later tick.
 - **GIVEN** verification needs writable scratch space, **WHEN** it selects a location, **THEN** the location is outside every Git worktree and existing shared caches remain reusable; if a legacy run creates root-level `.verify-cache` or `.tmp`, Git status ignores it.
 - **GIVEN** a session whose stored `base_commit_sha` is a strict ancestor of `merge-base(HEAD, <resolved integration candidate>)` (for example a stacked-PR parent branch that has since merged into the integration branch and lost its upstream ref), **WHEN** the commits panel is requested, **THEN** the enumerated commit count matches `git rev-list --first-parent --count $(git merge-base HEAD <resolved integration candidate>)..HEAD` and excludes the commits that already landed on the integration branch.
 - **GIVEN** a stored base branch that no longer has an upstream ref (the remote branch was deleted) but a local ref of the same name still points at an old branch point, **WHEN** the commits panel resolves its base, **THEN** it anchors to the merge-base against the `origin/main`/`origin/master` integration ref rather than the stale local ref.
@@ -85,3 +93,5 @@ No route or payload shape changes.
 ## Implementation plan
 
 See [Workspace Git Status Scalability plan](../../plans/workspace-git-status-scalability/plan.md).
+
+See [Git Upstream Poll Reliability repair plan](../../plans/git-upstream-poll-reliability/plan.md).
