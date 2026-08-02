@@ -296,4 +296,5 @@ golangci-lint run ./... --new-from-rev="<base-sha>" --timeout=5m
 - `internal/agentctl/AGENTS.md` — agentctl server route groups, adapter model, ACP protocol
 - `internal/agentctl/server/api/AGENTS.md` — reverse-proxy body rewriting (`Accept-Encoding`), iframe-blocking header stripping
 - `internal/integrations/AGENTS.md` — playbook for adding a new third-party integration (Jira/Linear pattern)
+- `docs/i18n.md` ("Backend") — `internal/i18n` covers only what Go renders straight to a browser (today: the SPA-unavailable error pages). Everything else stays English by design; for new user-facing output prefer a stable error code the frontend translates.
 - `cmd/mock-agent/AGENTS.md` — predefined `/e2e:<name>` scenarios vs inline `e2e:...` scripts, recipe for adding a scenario, and the rebuild-before-e2e requirement
