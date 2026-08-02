@@ -71,6 +71,17 @@ type userStateSetRequest struct {
 // deliberately unexported (and therefore invisible to json.Marshal) since it
 // only drives UserEventBroadcaster's routing; the receiving client already
 // knows its own identity.
+//
+// KNOWN LIMITATION (QA, unresolved): because the field is unexported it does
+// not survive a JSON round-trip, so this routing only works under
+// MemoryEventBus. internal/events/bus/nats.go marshals every event before
+// publishing, so with NATS configured the subscriber receives a map with no
+// "user_id", the broadcaster resolves an empty userID and drops the
+// notification silently. Fixing it means choosing between sending user_id on
+// the wire (contradicting the assertion in
+// TestUserStatePUTPublishesEventScopedToWriter), stripping it in the shared
+// UserEventBroadcaster, or adding a routing field to bus.Event — a design
+// call left to the author.
 type pluginUserStateUpdatedEvent struct {
 	userID    string
 	PluginID  string    `json:"pluginId"`
