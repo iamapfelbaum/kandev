@@ -24,9 +24,18 @@ export function buildEditMenuEntry({
   disabled?: boolean;
   context: PluginTaskMenuContext;
 }): KanbanCardMenuEntry {
-  const pluginActions = pluginRegistry
-    .getTaskMenuActions("edit")
-    .filter((action) => !action.visible || action.visible(context));
+  const pluginActions = pluginRegistry.getTaskMenuActions("edit").filter((action) => {
+    if (!action.visible) return true;
+    try {
+      return action.visible(context);
+    } catch (error: unknown) {
+      console.error(
+        `[plugins] task menu action "${action.pluginId}:${action.id}" visible() threw`,
+        error,
+      );
+      return false;
+    }
+  });
 
   const icon = <IconPencil className="mr-2 h-4 w-4" />;
 
@@ -74,9 +83,20 @@ function runnablePluginMenuEntry(
     label: action.label,
     disabled,
     onSelect: () => {
-      Promise.resolve(action.run(context)).catch((error: unknown) => {
-        console.error(`[plugins] task menu action "${action.pluginId}:${action.id}" failed`, error);
-      });
+      // Promise.resolve().then(() => action.run(context)) — not
+      // Promise.resolve(action.run(context)) — so a *synchronous* throw
+      // inside run() also lands in the .catch() below. Calling action.run
+      // directly as the Promise.resolve() argument still throws before that
+      // expression finishes evaluating, escaping past .catch() entirely and
+      // straight out of this onSelect handler.
+      Promise.resolve()
+        .then(() => action.run(context))
+        .catch((error: unknown) => {
+          console.error(
+            `[plugins] task menu action "${action.pluginId}:${action.id}" failed`,
+            error,
+          );
+        });
     },
   };
 }
