@@ -9,6 +9,13 @@
  * default `mod+shift+k`) which opens a `host.openModal(...)` demo modal.
  * Uses only host.React/host.jsx.
  *
+ * It also registers the plugin-hooks surface this fixture exists to drive
+ * end to end: a "Notes" task panel (registerTaskPanel, mobile-enabled) that
+ * round-trips a single per-user document through host.storage
+ * (get on mount, debounced set, subscribe to pick up a write from another
+ * tab/surface), a task-card-indicators slot component, and a
+ * registerTaskMenuAction under the kanban card's "edit" group.
+ *
  * The task-created counter lives in module scope (not component state) with
  * a tiny listener set, so it survives across route navigations (the page
  * component unmounts/remounts as the user navigates away and back).
@@ -66,6 +73,82 @@
         return jsx("span", { id: "hello-main-top-bar" }, "Hello " + slotProps.currentPage);
       }
 
+      // Debounce delay for the Notes panel's autosave — short, so e2e specs
+      // don't need to wait long for a write to reach host.storage.
+      var NOTES_SAVE_DEBOUNCE_MS = 150;
+
+      function useNotesValue(taskId) {
+        var state = React.useState("");
+        var value = state[0];
+        var setValue = state[1];
+        var loadedState = React.useState(false);
+        var loaded = loadedState[0];
+        var setLoaded = loadedState[1];
+
+        React.useEffect(function () {
+          var cancelled = false;
+          function refresh() {
+            host.storage.get("task", taskId, "note").then(function (entry) {
+              if (cancelled) return;
+              setValue(entry ? entry.value : "");
+              setLoaded(true);
+            });
+          }
+          refresh();
+          // Picks up a write made from another tab/surface (e.g. the kanban
+          // Edit submenu action below, or a second browser context) without
+          // this panel having written it itself — echo suppression is the
+          // host's job (writerId), not the plugin's.
+          var unsubscribe = host.storage.subscribe(
+            { scope: "task", scopeId: taskId, key: "note" },
+            refresh,
+          );
+          return function () {
+            cancelled = true;
+            unsubscribe();
+          };
+        }, [taskId]);
+
+        return [value, setValue, loaded];
+      }
+
+      function NotesPanel(props) {
+        var taskId = props.taskId;
+        var notesValue = useNotesValue(taskId);
+        var value = notesValue[0];
+        var setValue = notesValue[1];
+        var loaded = notesValue[2];
+        var debounceRef = React.useRef(null);
+
+        function handleChange(e) {
+          var next = e.target.value;
+          setValue(next);
+          if (debounceRef.current) clearTimeout(debounceRef.current);
+          debounceRef.current = setTimeout(function () {
+            host.storage.set("task", taskId, "note", next);
+          }, NOTES_SAVE_DEBOUNCE_MS);
+        }
+
+        if (!loaded) {
+          return jsx("div", { "data-testid": "e2e-notes-panel-loading" }, "Loading notes…");
+        }
+        return jsx("textarea", {
+          "data-testid": "e2e-notes-panel",
+          "data-presentation": props.presentation,
+          value: value,
+          onChange: handleChange,
+        });
+      }
+
+      function CardIndicator(props) {
+        var slotProps = props.slotProps || {};
+        return jsx(
+          "span",
+          { "data-testid": "e2e-card-indicator", "data-task-id": slotProps.taskId },
+          "N",
+        );
+      }
+
       function StatusSlot(props) {
         var slotProps = props.slotProps || {};
         var id = slotProps.placement === "left" ? "hello-status-left" : "hello-status-right";
@@ -92,6 +175,23 @@
       registry.registerComponent("app-status-bar-right", StatusSlot);
       registry.registerWsHandler("task.created", function () {
         incrementCount();
+      });
+
+      registry.registerTaskPanel({
+        id: "notes",
+        title: "Notes",
+        icon: "book",
+        Component: NotesPanel,
+        mobileEnabled: true,
+      });
+      registry.registerComponent("task-card-indicators", CardIndicator);
+      registry.registerTaskMenuAction({
+        id: "enhance-notes",
+        label: "Enhance notes",
+        group: "edit",
+        run: function (context) {
+          return host.storage.set("task", context.taskId, "note", "Enhanced via plugin action");
+        },
       });
 
       registry.registerKeybinding("open-demo", function () {
