@@ -54,16 +54,23 @@ export async function waitForExactReasoningBurst(
  * Resolve once `capture`'s page is *currently* subscribed to `sessionId`.
  *
  * The burst is emitted with no per-chunk delay, and the gateway coalescer
- * merges the whole run into one or two `session.message.updated` frames inside
- * a single 100ms window. An observer that is not subscribed at that instant
- * records nothing at all — the traffic it exists to measure is already gone.
- * Gate the burst on a live subscription rather than racing a browser page boot
- * against agent start-up.
+ * merges the whole run into one or two frames inside a single 100ms window —
+ * either `session.message.updated`, or a single `session.message.added` when
+ * the producer outruns the first chunk's persistence. An observer that is not
+ * subscribed at that instant records nothing at all: the traffic it exists to
+ * measure is already gone. Gate the burst on a live subscription rather than
+ * racing a browser page boot against agent start-up.
  *
- * "Currently" matters: a page that briefly subscribes during boot and then
- * settles on a different session (the mobile layout displays one session at a
- * time and drops the rest) would satisfy a naive "has ever subscribed" check
- * while receiving none of the traffic.
+ * Two details this deliberately gets right:
+ *
+ * - It matches the server's *received* subscribe/unsubscribe acks, not the
+ *   frames the page sent. The burst is posted by the test's own API client
+ *   over a different connection, so a merely-sent subscribe carries no
+ *   ordering guarantee against it and would leave the original race intact.
+ * - "Currently" matters: a page that briefly subscribes during boot and then
+ *   settles on a different session (the mobile layout displays one session at
+ *   a time and drops the rest) would satisfy a naive "has ever subscribed"
+ *   check while receiving none of the traffic.
  */
 export async function waitForSessionSubscription(
   capture: { frames: readonly GatewayTrafficFrame[] },
@@ -74,7 +81,7 @@ export async function waitForSessionSubscription(
       () => {
         const latest = capture.frames.findLast(
           (frame) =>
-            frame.direction === "sent" &&
+            frame.direction === "received" &&
             frame.sessionId === sessionId &&
             (frame.action === "session.subscribe" || frame.action === "session.unsubscribe"),
         );
