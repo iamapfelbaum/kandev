@@ -3,7 +3,7 @@ decision: docs/decisions/2026-08-01-architecture-lint-budgets.md
 related_decisions:
   - docs/decisions/2026-08-01-global-run-scheduler-ownership.md
 created: 2026-08-03
-status: draft
+status: done
 ---
 
 # Implementation Plan: Architecture Lint Dependency Ownership Follow-up
@@ -31,8 +31,8 @@ catalog, broad compatibility keywords, or backend composition/setter budgets.
 
 ## Current-main audit
 
-Audit base: `bb71233826549c96b72832bc4bba405c2baa91e8` (`origin/main` and
-`HEAD` at planning time).
+Initial audit base: `bb71233826549c96b72832bc4bba405c2baa91e8` (the merged
+architecture-linter commit at planning time).
 
 - Scheduler ownership: the only production import is the permitted
   `apps/backend/internal/backendapp/main.go:96`; the test import in
@@ -54,6 +54,10 @@ three `{path, import}` entries. The checked-in baseline for
 The scheduler-owner baseline will be present and empty. The existing shared
 baseline comparison remains exact and shrink-only; no baseline-wide or
 count-only exception is permitted.
+
+The final current-main re-audit at `560e35982fbbe67dbb95b6a99967f3a64df67552` found the same
+three runs-to-Office findings and the same two frontend state-to-UI findings; scheduler ownership
+still has zero findings.
 
 ## Design
 
@@ -148,7 +152,7 @@ are shared:
 
 - [x] [Task 01 — Go ownership rules](task-01-go-ownership-rules.md) — done
 - [x] [Task 02 — Frontend state/UI rule](task-02-frontend-state-ui-rule.md) — done
-- [ ] [Task 03 — Documentation and final integration](task-03-docs-and-verification.md) — in progress
+- [x] [Task 03 — Documentation and final integration](task-03-docs-and-verification.md) — done
 
 ## Out of scope
 
@@ -161,4 +165,11 @@ are shared:
 
 ## Verification Results
 
-Pending implementation.
+- `python3 scripts/lint-architecture.test.py` — 41 tests passed.
+- `python3 scripts/lint-architecture.py --all` — passed with no diagnostics.
+- `python3 scripts/lint-architecture.py --all --baseline-base-ref 560e35982fbbe67dbb95b6a99967f3a64df67552 --allow-missing-base-baseline` — passed with no diagnostics.
+- `make lint-architecture` — passed.
+- `make -C apps/backend lint` — passed; `golangci-lint` reported 0 issues.
+- `cd apps && pnpm --filter @kandev/web lint` — passed.
+- `cd apps/web && pnpm run typecheck` — passed.
+- `git diff --check` — passed.

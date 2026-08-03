@@ -1,7 +1,7 @@
 ---
 id: "03-docs-and-verification"
 title: "Document and verify architecture rules"
-status: pending
+status: done
 wave: 3
 depends_on:
   - "01-go-ownership-rules"
@@ -55,4 +55,12 @@ Sequential final integration and verification.
 
 ## Results
 
-Pending.
+- `python3 scripts/lint-architecture.test.py` — 41 tests passed.
+- `python3 scripts/lint-architecture.py --all` — passed with no diagnostics.
+- `python3 scripts/lint-architecture.py --all --baseline-base-ref 560e35982fbbe67dbb95b6a99967f3a64df67552 --allow-missing-base-baseline` — passed with no diagnostics.
+- `make lint-architecture` — passed.
+- `make -C apps/backend lint` — passed; `golangci-lint` reported 0 issues.
+- `cd apps && pnpm --filter @kandev/web lint` — passed.
+- `cd apps/web && pnpm run typecheck` — passed.
+- `git diff --check` — passed.
+- Final re-audit at `560e35982fbbe67dbb95b6a99967f3a64df67552`: scheduler ownership had zero findings; runs-to-Office had the exact three baseline entries; frontend state-to-UI had the exact two baseline entries.
