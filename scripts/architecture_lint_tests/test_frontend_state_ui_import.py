@@ -26,6 +26,8 @@ class FrontendStateUIImportTest(ArchitectureFixture):
 export { route } from "@/app/routes";
 const lazyPanel = import("@/components/lazy-panel");
 import "@/app/side-effect";
+export * from "@/components/star-export";
+const substituted = `${import("@/components/template-substitution")}`;
 ''',
         )
         self.track_all()
@@ -33,10 +35,53 @@ import "@/app/side-effect";
         result = self.run_cli("--all")
 
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout.count(RULE), 4)
-        for line in range(1, 5):
+        self.assertEqual(result.stdout.count(RULE), 6)
+        for line in range(1, 7):
             self.assert_diagnostic_location(result, path, line)
         self.assertIn("components and app layers consume state", result.stdout)
+
+    def test_typescript_import_equals_resolves_alias_and_relative_ui_modules(self) -> None:
+        path = "apps/web/lib/state/slices/ui/import-equals.ts"
+        self.write(
+            path,
+            '''import Sidebar = require("@/components/sidebar");
+import type AppRoute = require("../../../../app/routes");
+import Local = require("./local");
+''',
+        )
+        self.track_all()
+
+        result = self.run_cli("--all")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout.count(RULE), 2)
+        self.assert_diagnostic_location(result, path, 1)
+        self.assert_diagnostic_location(result, path, 2)
+
+    def test_nested_template_substitution_imports_are_scanned(self) -> None:
+        path = "apps/web/lib/state/nested-template.ts"
+        self.write(
+            path,
+            'const nested = `outer ${`inner ${import("@/components/nested")}`} tail`;\n',
+        )
+        self.track_all()
+
+        result = self.run_cli("--all")
+
+        self.assertEqual(result.returncode, 1)
+        self.assert_diagnostic_location(result, path, 1)
+
+    def test_nested_template_text_is_not_scanned_as_code(self) -> None:
+        path = "apps/web/lib/state/nested-template-text.ts"
+        self.write(
+            path,
+            'const nested = `outer ${`inner import("@/components/template-text")`} tail`;\n',
+        )
+        self.track_all()
+
+        result = self.run_cli("--all")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_relative_components_and_app_modules_are_resolved(self) -> None:
         path = "apps/web/lib/state/slices/ui/relative.ts"

@@ -36,13 +36,15 @@ def _skip_quoted(source: str, index: int, quote: str) -> tuple[str, int]:
     return source[start:index], index
 
 
-def _skip_template(source: str, index: int) -> int:
+def _scan_template(source: str, index: int, tokens: list[Token]) -> int:
     index += 1
     while index < len(source):
         if source[index] == "\\":
             index += 2
         elif source[index] == "`":
             return index + 1
+        elif source.startswith("${", index):
+            index = _scan_code(source, index + 2, tokens, stop_at_brace=True)
         else:
             index += 1
     return index
@@ -56,9 +58,14 @@ def _skip_comment(source: str, index: int) -> int:
     return len(source) if end < 0 else end + 2
 
 
-def tokenize(source: str) -> list[Token]:
-    tokens: list[Token] = []
-    index = 0
+def _scan_code(
+    source: str,
+    index: int,
+    tokens: list[Token],
+    *,
+    stop_at_brace: bool = False,
+) -> int:
+    brace_depth = 0
     while index < len(source):
         char = source[index]
         if char.isspace():
@@ -70,7 +77,18 @@ def tokenize(source: str) -> list[Token]:
             value, index = _skip_quoted(source, index, char)
             tokens.append(Token("string", value, _line_number(source, start)))
         elif char == "`":
-            index = _skip_template(source, index)
+            index = _scan_template(source, index, tokens)
+        elif char == "}":
+            if stop_at_brace and brace_depth == 0:
+                return index + 1
+            if brace_depth:
+                brace_depth -= 1
+            tokens.append(Token("punctuation", char, _line_number(source, index)))
+            index += 1
+        elif char == "{":
+            brace_depth += 1
+            tokens.append(Token("punctuation", char, _line_number(source, index)))
+            index += 1
         elif IDENTIFIER_START.fullmatch(char):
             start = index
             index += 1
@@ -80,6 +98,12 @@ def tokenize(source: str) -> list[Token]:
         else:
             tokens.append(Token("punctuation", char, _line_number(source, index)))
             index += 1
+    return index
+
+
+def tokenize(source: str) -> list[Token]:
+    tokens: list[Token] = []
+    _scan_code(source, 0, tokens)
     return tokens
 
 
@@ -106,6 +130,30 @@ def _static_import(tokens: list[Token], index: int) -> tuple[int, str] | None:
             target = tokens[cursor + 1]
             if target.kind == "string":
                 return cursor + 1, target.value
+            return None
+        cursor += 1
+    return None
+
+
+def _import_equals(tokens: list[Token], index: int) -> tuple[int, str] | None:
+    cursor = index + 1
+    if cursor < len(tokens) and tokens[cursor].value == "type":
+        cursor += 1
+
+    while cursor < len(tokens):
+        token = tokens[cursor]
+        if token.value == ";":
+            return None
+        if token.value == "=":
+            if cursor + 3 >= len(tokens):
+                return None
+            require, opening, target = tokens[cursor + 1 : cursor + 4]
+            if (
+                require.value == "require"
+                and opening.value == "("
+                and target.kind == "string"
+            ):
+                return cursor + 3, target.value
             return None
         cursor += 1
     return None
@@ -152,6 +200,8 @@ def module_imports(source: str) -> list[tuple[int, str]]:
                 result = _string_after(tokens, index + 1)
             else:
                 result = _static_import(tokens, index)
+                if result is None:
+                    result = _import_equals(tokens, index)
         elif token.value == "export":
             result = _export_from(tokens, index)
         if result is not None:
