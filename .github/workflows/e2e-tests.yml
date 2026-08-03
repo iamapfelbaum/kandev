@@ -29,7 +29,13 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded runs on PR branches — a force-push should not leave a
+  # full E2E fan-out burning. Never cancel on main: `github.ref` is identical
+  # for every push there, so each merge would cancel the previous merge's run
+  # and most main commits would never get a verdict. A regression that lands
+  # unseen then reappears on every subsequent PR, where it is indistinguishable
+  # from flake.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read

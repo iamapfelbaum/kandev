@@ -4,9 +4,11 @@ import { SessionPage } from "../../pages/session-page";
 import {
   assertNoHorizontalOverflow,
   noisyReceivedFrames,
-  reasoningBurstPrompt,
   REASONING_BURST_COUNT,
+  startReasoningBurst,
   waitForExactReasoningBurst,
+  waitForSessionAwaitingInput,
+  waitForSessionSubscription,
 } from "../../helpers/session-stream-overload";
 import { attachGatewayTrafficCapture, summarizeGatewayTraffic } from "../../helpers/ws-traffic";
 
@@ -24,7 +26,9 @@ test.describe("Session stream overload isolation", () => {
       "Noisy reasoning isolation task",
       seedData.agentProfileId,
       {
-        description: reasoningBurstPrompt(),
+        // Short scenario, not the burst: the observing page below has to be
+        // subscribed before any high-volume traffic exists.
+        description: "/e2e:simple-message",
         workflow_id: seedData.workflowId,
         workflow_step_id: seedData.startStepId,
         repository_ids: [seedData.repositoryId],
@@ -40,6 +44,11 @@ test.describe("Session stream overload isolation", () => {
     await noisyPage.goto(`/t/${noisyTask.id}`);
     const noisySession = new SessionPage(noisyPage);
     await noisySession.waitForLoad();
+    await waitForSessionSubscription(noisyCapture, noisyTask.session_id);
+
+    // Only now open the firehose, with a confirmed observer attached.
+    await waitForSessionAwaitingInput(apiClient, noisyTask.id, noisyTask.session_id);
+    await startReasoningBurst(apiClient, noisyTask.id, noisyTask.session_id);
 
     const quietTask = await apiClient.createTaskWithAgent(
       seedData.workspaceId,
