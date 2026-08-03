@@ -39,6 +39,58 @@ def _skip_quoted(source: str, index: int, quote: str) -> tuple[str, int]:
     return source[start:index], index
 
 
+def _decode_template_escapes(value: str) -> str:
+    decoded: list[str] = []
+    index = 0
+    simple_escapes = {"b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
+    while index < len(value):
+        if value[index] != "\\" or index + 1 >= len(value):
+            decoded.append(value[index])
+            index += 1
+            continue
+
+        escape = value[index + 1]
+        if escape == "u":
+            if index + 2 < len(value) and value[index + 2] == "{":
+                end = value.find("}", index + 3)
+                digits = value[index + 3 : end] if end >= 0 else ""
+                if digits and all(char in "0123456789abcdefABCDEF" for char in digits):
+                    try:
+                        decoded.append(chr(int(digits, 16)))
+                        index = end + 1
+                        continue
+                    except ValueError:
+                        pass
+            digits = value[index + 2 : index + 6]
+            if len(digits) == 4 and all(char in "0123456789abcdefABCDEF" for char in digits):
+                decoded.append(chr(int(digits, 16)))
+                index += 6
+                continue
+        elif escape == "x":
+            digits = value[index + 2 : index + 4]
+            if len(digits) == 2 and all(char in "0123456789abcdefABCDEF" for char in digits):
+                decoded.append(chr(int(digits, 16)))
+                index += 4
+                continue
+        elif escape in simple_escapes:
+            decoded.append(simple_escapes[escape])
+            index += 2
+            continue
+        elif escape in "`\\$'\"":
+            decoded.append(escape)
+            index += 2
+            continue
+        elif escape in "\n\r":
+            index += 2
+            if escape == "\r" and index < len(value) and value[index] == "\n":
+                index += 1
+            continue
+
+        decoded.append(escape)
+        index += 2
+    return "".join(decoded)
+
+
 def _scan_template(source: str, index: int, tokens: list[Token]) -> int:
     start = index
     has_substitution = False
@@ -49,7 +101,11 @@ def _scan_template(source: str, index: int, tokens: list[Token]) -> int:
         elif source[index] == "`":
             if not has_substitution:
                 tokens.append(
-                    Token("string", source[start + 1 : index], _line_number(source, start))
+                    Token(
+                        "string",
+                        _decode_template_escapes(source[start + 1 : index]),
+                        _line_number(source, start),
+                    )
                 )
             return index + 1
         elif source.startswith("${", index):

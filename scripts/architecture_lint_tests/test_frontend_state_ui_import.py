@@ -84,6 +84,23 @@ import Local = require("./local");
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_escaped_direct_template_imports_resolve_to_ui_modules(self) -> None:
+        path = "apps/web/lib/state/escaped-template.ts"
+        self.write(
+            path,
+            r'''import(`\u0040/components/unicode-panel`);
+import(`\x40/app/escaped-route`);
+''',
+        )
+        self.track_all()
+
+        result = self.run_cli("--all")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout.count(RULE), 2)
+        self.assert_diagnostic_location(result, path, 1)
+        self.assert_diagnostic_location(result, path, 2)
+
     def test_relative_components_and_app_modules_are_resolved(self) -> None:
         path = "apps/web/lib/state/slices/ui/relative.ts"
         self.write(
@@ -162,6 +179,23 @@ import "@/components/forbidden";
         result = self.run_cli("--all")
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_baseline_identity_includes_import_for_same_path_findings(self) -> None:
+        path = "apps/web/lib/state/slices/ui/multiple-imports.ts"
+        self.write(
+            path,
+            '''import "@/components/first";
+import "@/app/second";
+''',
+        )
+        self.write_frontend_baseline([self.baseline_entry(path, "@/components/first")])
+        self.track_all()
+
+        result = self.run_cli("--all")
+
+        self.assertEqual(result.returncode, 1)
+        self.assert_diagnostic_location(result, path, 2)
+        self.assertIn("@/app/second", result.stdout)
 
     def test_new_finding_cannot_grow_existing_baseline(self) -> None:
         old_path = "apps/web/lib/state/slices/ui/ui-slice.ts"

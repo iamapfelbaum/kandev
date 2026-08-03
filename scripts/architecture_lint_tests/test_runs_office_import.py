@@ -56,6 +56,27 @@ class RunsOfficeImportTest(ArchitectureFixture):
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_baseline_identity_includes_import_for_same_path_findings(self) -> None:
+        path = "apps/backend/internal/runs/service/multiple_imports.go"
+        self.write(
+            path,
+            f'''package service
+
+import (
+    "{OFFICE_IMPORT}"
+    "{OFFICE_IMPORT}/repository/sqlite"
+)
+''',
+        )
+        self.write_runs_baseline([self.baseline_entry(path)])
+        self.track_all()
+
+        result = self.run_cli("--all")
+
+        self.assertEqual(result.returncode, 1)
+        self.assert_diagnostic_location(result, path, 5)
+        self.assertIn(f"{OFFICE_IMPORT}/repository/sqlite", result.stdout)
+
     def test_block_import_and_office_subpackage_are_reported(self) -> None:
         path = "apps/backend/internal/runs/repository/new_repo.go"
         self.write(
