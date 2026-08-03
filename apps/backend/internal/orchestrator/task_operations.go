@@ -2521,6 +2521,16 @@ func (s *Service) stopTaskSessionForCoordinator(ctx context.Context, taskID, ses
 	result, teardownClaimed, err := s.stopTaskSessionForCoordinatorLocked(ctx, taskID, sessionID)
 	lock.Unlock()
 	release()
+	// Release explicitly here rather than leaving it to the deferred call:
+	// ScheduleTeardown below starts a detached goroutine, and a racing
+	// stream/lifecycle handler can observe that goroutine's effects through
+	// isCancelInFlight almost immediately. The defer only fires once this
+	// function returns — after ScheduleTeardown has already spawned that
+	// goroutine — leaving a window where the detached teardown looks like
+	// it's still "cancel in flight". beginCancelInFlight's release is
+	// idempotent (sync.Once) precisely so it can be called here and still
+	// left deferred as a safety net for the early-return paths below.
+	endCancel()
 	if err != nil {
 		return false, err
 	}
