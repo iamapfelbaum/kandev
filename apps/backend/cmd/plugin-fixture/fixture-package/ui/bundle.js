@@ -85,38 +85,48 @@
         var loaded = loadedState[0];
         var setLoaded = loadedState[1];
 
-        React.useEffect(function () {
-          var cancelled = false;
-          function refresh() {
-            host.storage.get("task", taskId, "note").then(
-              function (entry) {
-                if (cancelled) return;
-                setValue(entry ? entry.value : "");
-                setLoaded(true);
-              },
-              function () {
-                if (cancelled) return;
-                setLoaded(true);
-              },
+        React.useEffect(
+          function () {
+            var cancelled = false;
+            // Each notification (subscribe's refresh callback, plus the initial
+            // call) starts its own host.storage.get. Two in flight at once can
+            // resolve out of order, so `cancelled` alone (unmount-only) isn't
+            // enough — an older read landing after a newer one would overwrite
+            // it. Only the read matching the current generation may commit.
+            var refreshGeneration = 0;
+            function refresh() {
+              var generation = ++refreshGeneration;
+              host.storage.get("task", taskId, "note").then(
+                function (entry) {
+                  if (cancelled || generation !== refreshGeneration) return;
+                  setValue(entry ? entry.value : "");
+                  setLoaded(true);
+                },
+                function () {
+                  if (cancelled || generation !== refreshGeneration) return;
+                  setLoaded(true);
+                },
+              );
+            }
+            refresh();
+            // Scope echo suppression to this panel instance (panelId) rather
+            // than the host's shared tab-wide default writerId. The kanban
+            // "Enhance notes" action below writes this same note using that
+            // shared default (it has no ongoing subscription of its own to
+            // protect) — if this panel used the same default, the action's
+            // write would look like this panel's own echo and get silently
+            // dropped instead of refreshing the panel.
+            var unsubscribe = host.storage.subscribe(
+              { scope: "task", scopeId: taskId, key: "note", writerId: panelId },
+              refresh,
             );
-          }
-          refresh();
-          // Scope echo suppression to this panel instance (panelId) rather
-          // than the host's shared tab-wide default writerId. The kanban
-          // "Enhance notes" action below writes this same note using that
-          // shared default (it has no ongoing subscription of its own to
-          // protect) — if this panel used the same default, the action's
-          // write would look like this panel's own echo and get silently
-          // dropped instead of refreshing the panel.
-          var unsubscribe = host.storage.subscribe(
-            { scope: "task", scopeId: taskId, key: "note", writerId: panelId },
-            refresh,
-          );
-          return function () {
-            cancelled = true;
-            unsubscribe();
-          };
-        }, [taskId, panelId]);
+            return function () {
+              cancelled = true;
+              unsubscribe();
+            };
+          },
+          [taskId, panelId],
+        );
 
         return [value, setValue, loaded];
       }
@@ -135,9 +145,11 @@
           setValue(next);
           if (debounceRef.current) clearTimeout(debounceRef.current);
           debounceRef.current = setTimeout(function () {
-            host.storage.set("task", taskId, "note", next, { writerId: panelId }).catch(function () {
-              // surface the failed autosave instead of dropping it silently
-            });
+            host.storage
+              .set("task", taskId, "note", next, { writerId: panelId })
+              .catch(function () {
+                // surface the failed autosave instead of dropping it silently
+              });
           }, NOTES_SAVE_DEBOUNCE_MS);
         }
 

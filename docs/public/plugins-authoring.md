@@ -370,19 +370,46 @@ capabilities:
 ```js
 function useNoteValue(taskId, panelId) {
   const [value, setValue] = host.React.useState("");
+  const [loadedTaskId, setLoadedTaskId] = host.React.useState(null);
   const updatedAtRef = host.React.useRef(undefined);
-  host.React.useEffect(() => {
-    let cancelled = false;
-    function refresh() {
-      host.storage.get("task", taskId, "note").then((entry) => {
-        // Ignore a response that resolves after taskId changed (or the
-        // panel unmounted) — otherwise the previous task's note can land in
-        // the new task's field.
-        if (cancelled) return;
+  // Holds cancellation/generation state outside the effect so `refresh` is a
+  // stable function the conflict-refetch below can also call, instead of
+  // duplicating the read-and-commit logic without its guards.
+  const guardRef = host.React.useRef({ cancelled: false, generation: 0 });
+
+  const refresh = host.React.useCallback(() => {
+    const guard = guardRef.current;
+    const generation = ++guard.generation;
+    host.storage.get("task", taskId, "note").then(
+      (entry) => {
+        // Ignore a response that resolves after taskId changed, the panel
+        // unmounted, or a newer refresh started — otherwise a stale read
+        // (the previous task's note, or one of two overlapping reads that
+        // resolved out of order) can land in the current field.
+        if (guard.cancelled || generation !== guard.generation) return;
         setValue(entry ? entry.value : "");
         updatedAtRef.current = entry ? entry.updatedAt : undefined;
-      });
-    }
+        setLoadedTaskId(taskId);
+      },
+      () => {
+        // A rejected read still counts as "loaded" — render the (empty)
+        // editor rather than leaving the panel stuck with no error or retry
+        // state.
+        if (guard.cancelled || generation !== guard.generation) return;
+        setLoadedTaskId(taskId);
+      },
+    );
+  }, [taskId]);
+
+  host.React.useEffect(() => {
+    const guard = guardRef.current;
+    guard.cancelled = false;
+    // Clear the previous task's value/timestamp synchronously — otherwise it
+    // stays on screen (and could be sent as ifUnmodifiedSince under the new
+    // taskId) until this effect's first refresh() resolves.
+    setValue("");
+    updatedAtRef.current = undefined;
+    setLoadedTaskId(null);
     refresh();
     // Scope echo suppression to this panel instance rather than the shared
     // per-tab default writer id — otherwise a second surface editing the
@@ -393,15 +420,16 @@ function useNoteValue(taskId, panelId) {
       refresh,
     );
     return () => {
-      cancelled = true;
+      guard.cancelled = true;
       unsubscribe();
     };
-  }, [taskId, panelId]);
-  return [value, setValue, updatedAtRef];
+  }, [taskId, panelId, refresh]);
+  return [value, setValue, updatedAtRef, loadedTaskId === taskId, refresh];
 }
 
 function NotesPanel({ taskId, panelId }) {
-  const [value, setValue, updatedAtRef] = useNoteValue(taskId, panelId);
+  const [value, setValue, updatedAtRef, loaded, refresh] = useNoteValue(taskId, panelId);
+  if (!loaded) return host.jsx("div", null, "Loading...");
   return host.jsx(host.ui.RichTextEditor, {
     taskId,
     value,
@@ -416,16 +444,13 @@ function NotesPanel({ taskId, panelId }) {
           updatedAtRef.current = result.updatedAt;
         })
         .catch((error) => {
-          // A 409 means another surface wrote first; re-fetch and let the
-          // user decide rather than silently overwriting their edit. Check
-          // error.name, not instanceof — a plugin bundle runs as a separate
-          // script, not an ES module importing the host's error class.
-          if (error.name === "PluginStorageConflictError") {
-            host.storage.get("task", taskId, "note").then((entry) => {
-              setValue(entry ? entry.value : "");
-              updatedAtRef.current = entry ? entry.updatedAt : undefined;
-            });
-          }
+          // A 409 means another surface wrote first; re-fetch through the
+          // same guarded refresh — not a standalone get() — so this reload
+          // can't land after a newer one and let the user decide rather
+          // than silently overwriting their edit. Check error.name, not
+          // instanceof — a plugin bundle runs as a separate script, not an
+          // ES module importing the host's error class.
+          if (error.name === "PluginStorageConflictError") refresh();
         });
     },
   });

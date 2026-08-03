@@ -245,6 +245,77 @@ test.describe("Plugins — task panel / kanban Edit submenu / card indicator", (
     await expect(notesEditor).toHaveValue("Enhanced via plugin action", { timeout: 10_000 });
   });
 
+  test("useNotesValue discards a stale storage read that resolves after a newer one", async ({
+    testPage,
+    apiClient,
+    seedData,
+  }) => {
+    test.setTimeout(60_000);
+
+    // Regression test for review feedback: the fixture's useNotesValue only
+    // guarded against unmount (`cancelled`), not against two overlapping
+    // host.storage.get calls resolving out of order — the mount's initial
+    // read and a subscribe-triggered refresh from another surface's write.
+    // If the mount's read (fetched first, before the other write) resolves
+    // *after* the refresh triggered by that write, it must not overwrite the
+    // newer value with its own stale one.
+    await installFixturePlugin(testPage);
+
+    const seedTask = await apiClient.createTask(seedData.workspaceId, "Stale read task", {
+      workflow_id: seedData.workflowId,
+      workflow_step_id: seedData.startStepId,
+    });
+    const notePath = `/api/plugins/${PLUGIN_ID}/user-state/task/${seedTask.id}/note`;
+
+    let firstRequestSeen = false;
+    let releaseFirst: () => void = () => {};
+    const firstHeld = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    await testPage.route(`**${notePath}`, async (route) => {
+      if (route.request().method() !== "GET" || firstRequestSeen) {
+        return route.continue();
+      }
+      firstRequestSeen = true;
+      await firstHeld;
+      // Fulfilled with canned stale content instead of passed through, so
+      // its body is deterministically the pre-update value even though the
+      // real store has since moved on.
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ value: "first note", updatedAt: new Date(0).toISOString() }),
+      });
+    });
+
+    await testPage.goto(`/t/${seedTask.id}`);
+    const session = new SessionPage(testPage);
+    await session.waitForLoad();
+    await session.addPanelButton().click();
+    await session.addPanelPluginItem(PLUGIN_ID, PANEL_ID).click();
+
+    // The mount's GET is held — the panel stays on its loading state, but
+    // its subscription (set up in the same effect) is already live.
+    await expect(testPage.getByTestId("e2e-notes-panel-loading")).toBeVisible();
+
+    // A sibling surface's write lands; its notification triggers a second,
+    // unheld refresh that resolves quickly with the real current value.
+    const res = await apiClient.rawRequest("PUT", notePath, {
+      value: "second note",
+      writerId: "e2e-sibling-surface",
+    });
+    expect(res.status).toBe(200);
+
+    const notesEditor = testPage.getByTestId("e2e-notes-panel");
+    await expect(notesEditor).toHaveValue("second note", { timeout: 10_000 });
+
+    // Now let the stale first read land — it must not revert the panel.
+    releaseFirst();
+    await testPage.waitForTimeout(500);
+    await expect(notesEditor).toHaveValue("second note");
+  });
+
   test("task-card-indicators slot renders the plugin's indicator on the kanban card (AC13)", async ({
     testPage,
     apiClient,
