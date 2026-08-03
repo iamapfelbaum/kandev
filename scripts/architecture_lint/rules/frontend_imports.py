@@ -60,6 +60,7 @@ def _decode_template_escapes(value: str) -> str:
                         index = end + 1
                         continue
                     except ValueError:
+                        # Leave out-of-range code points escaped for conservative matching.
                         pass
             digits = value[index + 2 : index + 6]
             if len(digits) == 4 and all(char in "0123456789abcdefABCDEF" for char in digits):
