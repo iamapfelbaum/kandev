@@ -20,6 +20,18 @@ import (
 // left unchanged.
 var ErrConflict = errors.New("plugin user state: conflict")
 
+// userStateTimeLayout is RFC3339 with a fixed 9-digit fractional part.
+// time.RFC3339Nano trims trailing zeros — a value with a zero nanosecond
+// component formats with no fractional part at all (e.g.
+// "2026-08-01T10:00:00Z"), which sorts *after* a same-second value that does
+// have a fraction (e.g. "2026-08-01T10:00:00.000000001Z", since 'Z' > '.'
+// byte-wise). updated_at is a TEXT column compared lexicographically in the
+// ifUnmodifiedSince WHERE clause, so that reordering would let a stale
+// conditional write through and silently discard another surface's edit —
+// exactly what AC28 exists to prevent. A fixed width keeps lexicographic
+// order equal to chronological order for every value.
+const userStateTimeLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
 // UserStateEntry is a single row returned by UserStore.List.
 type UserStateEntry struct {
 	Key       string          `db:"state_key" json:"key"`
@@ -94,7 +106,7 @@ func (s *UserStore) Get(
 }
 
 // Set upserts the value for the given plugin/user/scope/scopeID/key, setting
-// updated_at to the current time (returned) in RFC3339Nano UTC.
+// updated_at to the current time (returned), stored via userStateTimeLayout.
 //
 // The layout must keep sub-second precision: ifUnmodifiedSince is compared
 // against the stored value, so storing at whole-second resolution would make
@@ -102,7 +114,8 @@ func (s *UserStore) Get(
 // stale conditional write through (silently discarding the other surface's
 // edit — exactly what H1/AC28 exists to prevent). Reads still parse with
 // time.RFC3339, which accepts an optional fractional part, so rows written
-// before this layout change continue to load.
+// before this layout change (RFC3339Nano's variable-width fraction)
+// continue to load; only new writes get the fixed width.
 //
 // When ifUnmodifiedSince is non-nil, the conflict check is folded into the
 // upsert's ON CONFLICT ... DO UPDATE ... WHERE clause rather than a separate
@@ -129,11 +142,11 @@ func (s *UserStore) Set(
 		ON CONFLICT(plugin_id, user_id, scope, scope_id, state_key)
 		DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`
 	args := []any{
-		uuid.New().String(), pluginID, userID, scope, scopeID, key, string(value), now.Format(time.RFC3339Nano),
+		uuid.New().String(), pluginID, userID, scope, scopeID, key, string(value), now.Format(userStateTimeLayout),
 	}
 	if ifUnmodifiedSince != nil {
 		query += ` WHERE plugin_user_state.updated_at <= ?`
-		args = append(args, ifUnmodifiedSince.UTC().Format(time.RFC3339Nano))
+		args = append(args, ifUnmodifiedSince.UTC().Format(userStateTimeLayout))
 	}
 
 	res, err := s.db.ExecContext(ctx, s.db.Rebind(query), args...)

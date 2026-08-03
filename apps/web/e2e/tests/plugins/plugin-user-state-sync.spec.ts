@@ -75,33 +75,35 @@ test.describe("Plugins — host.storage realtime sync", () => {
 
     // --- Tab B: a second browser context, same (synthetic) user, same task. ---
     const pageB = await openSecondContext(testPage, backend.frontendUrl, backend.port);
-    await pageB.goto(`/t/${seedTask.id}`);
-    const sessionB = new SessionPage(pageB);
-    await sessionB.waitForLoad();
-    await sessionB.addPanelButton().click();
-    await sessionB.addPanelPluginItem(PLUGIN_ID, "notes").click();
-    const notesB = pageB.getByTestId("e2e-notes-panel");
-    await expect(notesB).toBeVisible({ timeout: 10_000 });
+    try {
+      await pageB.goto(`/t/${seedTask.id}`);
+      const sessionB = new SessionPage(pageB);
+      await sessionB.waitForLoad();
+      await sessionB.addPanelButton().click();
+      await sessionB.addPanelPluginItem(PLUGIN_ID, "notes").click();
+      const notesB = pageB.getByTestId("e2e-notes-panel");
+      await expect(notesB).toBeVisible({ timeout: 10_000 });
 
-    // --- AC24: typing in Tab A propagates to Tab B via
-    // plugin.user-state.updated, with no manual reload/poll in Tab B. ---
-    await notesA.fill("written from tab A");
-    await expect(notesB).toHaveValue("written from tab A", { timeout: 10_000 });
+      // --- AC24: typing in Tab A propagates to Tab B via
+      // plugin.user-state.updated, with no manual reload/poll in Tab B. ---
+      await notesA.fill("written from tab A");
+      await expect(notesB).toHaveValue("written from tab A", { timeout: 10_000 });
 
-    // --- AC25: Tab A's own selection/caret is untouched by its own write —
-    // the host suppresses the writing tab's own echo via writerId, so the
-    // controlled input never gets a redundant re-set from a self-notification
-    // racing the local keystroke. Prove it by continuing to type in Tab A
-    // immediately after the debounced save and getting the expected result,
-    // not a value that reverted or duplicated mid-edit. ---
-    await notesA.fill("written from tab A, continued");
-    await expect(notesA).toHaveValue("written from tab A, continued");
-    await expect(notesB).toHaveValue("written from tab A, continued", { timeout: 10_000 });
+      // --- AC25: Tab A's own selection/caret is untouched by its own write —
+      // the host suppresses the writing tab's own echo via writerId, so the
+      // controlled input never gets a redundant re-set from a self-notification
+      // racing the local keystroke. Prove it by continuing to type in Tab A
+      // immediately after the debounced save and getting the expected result,
+      // not a value that reverted or duplicated mid-edit. ---
+      await notesA.fill("written from tab A, continued");
+      await expect(notesA).toHaveValue("written from tab A, continued");
+      await expect(notesB).toHaveValue("written from tab A, continued", { timeout: 10_000 });
 
-    // --- And the reverse direction: Tab B's write reaches Tab A. ---
-    await notesB.fill("written from tab B");
-    await expect(notesA).toHaveValue("written from tab B", { timeout: 10_000 });
-
-    await pageB.context().close();
+      // --- And the reverse direction: Tab B's write reaches Tab A. ---
+      await notesB.fill("written from tab B");
+      await expect(notesA).toHaveValue("written from tab B", { timeout: 10_000 });
+    } finally {
+      await pageB.context().close();
+    }
   });
 });

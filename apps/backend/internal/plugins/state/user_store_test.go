@@ -353,6 +353,32 @@ func TestUserStoreUpdatedAtRoundTripsWithSubSecondPrecision(t *testing.T) {
 	}
 }
 
+// TestUserStateTimeLayoutPreservesLexicographicOrder pins the exact ordering
+// bug found in review: time.RFC3339Nano trims trailing zeros from the
+// fractional part, so a value landing on a "round" nanosecond (a trailing
+// zero) formats shorter than one that doesn't — even when the round value is
+// chronologically later. updated_at is compared as TEXT in the
+// ifUnmodifiedSince WHERE clause, so that reordering would let a stale
+// conditional write through. userStateTimeLayout's fixed width must not
+// reproduce it.
+func TestUserStateTimeLayoutPreservesLexicographicOrder(t *testing.T) {
+	earlier := time.Date(2026, 8, 1, 10, 0, 0, 123456780, time.UTC) // trailing zero trims under RFC3339Nano
+	later := time.Date(2026, 8, 1, 10, 0, 0, 123456781, time.UTC)   // 1ns later, no trailing zero
+
+	naiveEarlier, naiveLater := earlier.Format(time.RFC3339Nano), later.Format(time.RFC3339Nano)
+	if naiveLater >= naiveEarlier {
+		t.Fatalf(
+			"test setup invalid: expected time.RFC3339Nano to reproduce the ordering bug (later < earlier), got %q then %q",
+			naiveEarlier, naiveLater,
+		)
+	}
+
+	fixedEarlier, fixedLater := earlier.Format(userStateTimeLayout), later.Format(userStateTimeLayout)
+	if fixedEarlier >= fixedLater {
+		t.Fatalf("userStateTimeLayout does not preserve chronological order: %q then %q", fixedEarlier, fixedLater)
+	}
+}
+
 // TestUserStoreSetConditionalWriteDetectsSameSecondModification is the
 // regression test for the AC28 blind spot found in QA.
 //

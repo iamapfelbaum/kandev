@@ -88,11 +88,17 @@
         React.useEffect(function () {
           var cancelled = false;
           function refresh() {
-            host.storage.get("task", taskId, "note").then(function (entry) {
-              if (cancelled) return;
-              setValue(entry ? entry.value : "");
-              setLoaded(true);
-            });
+            host.storage.get("task", taskId, "note").then(
+              function (entry) {
+                if (cancelled) return;
+                setValue(entry ? entry.value : "");
+                setLoaded(true);
+              },
+              function () {
+                if (cancelled) return;
+                setLoaded(true);
+              },
+            );
           }
           refresh();
           // Scope echo suppression to this panel instance (panelId) rather
@@ -129,7 +135,9 @@
           setValue(next);
           if (debounceRef.current) clearTimeout(debounceRef.current);
           debounceRef.current = setTimeout(function () {
-            host.storage.set("task", taskId, "note", next, { writerId: panelId });
+            host.storage.set("task", taskId, "note", next, { writerId: panelId }).catch(function () {
+              // surface the failed autosave instead of dropping it silently
+            });
           }, NOTES_SAVE_DEBOUNCE_MS);
         }
 

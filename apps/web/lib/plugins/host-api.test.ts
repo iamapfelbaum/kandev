@@ -277,14 +277,16 @@ describe("buildHostApi — host.storage set/delete/list/subscribe", () => {
   });
 
   it("set() forwards ifUnmodifiedSince and throws PluginStorageConflictError on 409", async () => {
-    global.fetch = vi
-      .fn()
-      .mockResolvedValue(new Response(null, { status: 409 })) as unknown as typeof fetch;
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 409 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
 
     const host = buildHostApi(NOTES_PLUGIN_ID, createAppStore(), "light");
     await expect(
       host.storage.set("task", "task_1", "note", "hello", { ifUnmodifiedSince: TEST_UPDATED_AT }),
     ).rejects.toThrow(/modified since/i);
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.ifUnmodifiedSince).toBe(TEST_UPDATED_AT);
   });
 
   it("delete() sends a DELETE with writerId as a query param", async () => {

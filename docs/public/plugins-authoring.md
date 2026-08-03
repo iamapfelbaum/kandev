@@ -184,7 +184,7 @@ disable/uninstall.
 | host.React / host.jsx | Shared React instance and React.createElement alias | Active ui.bundle | No cleanup; never bundle a second React/Radix runtime | const h = host.jsx |
 | host.store | Curated Zustand { getState, setState, subscribe } for the live app store | Active ui.bundle | Unsubscribe in destroy; setState mutates the whole SPA and is not a plugin database | const stop = host.store.subscribe(render) |
 | host.api.fetch / baseUrl | fetch(path, init?) is scoped to /api/plugins/<id>/...; baseUrl is the backend origin for split-origin deployments | Active ui.bundle; backend path must be a declared webhook when relayed | Abort/ignore requests after destroy; do not assume a webhook authenticates callers | host.api.fetch("webhooks/inbound", { method: "POST" }) |
-| host.storage | Authenticated, per-user key/value storage: get/set/delete/list(scope, scopeId, key) plus subscribe(filter, handler); no plugin backend required | capabilities.user_state: true | set/delete accept an optional writerId (appended to the host's per-tab id, not a replacement) for echo suppression; list is unpaginated | host.storage.set("task", taskId, "note", value, { writerId: panelId }) |
+| host.storage | Authenticated, per-user key/value storage: get(scope, scopeId, key)/set(scope, scopeId, key, value, options?)/delete(scope, scopeId, key)/list(scope, scopeId) plus subscribe(filter, handler); no plugin backend required | capabilities.user_state: true | set/delete accept an optional writerId (appended to the host's per-tab id, not a replacement) for echo suppression; list returns every entry under the scope pair, unpaginated | host.storage.set("task", taskId, "note", value, { writerId: panelId }) |
 | host.ui | Curated host instances: Alert*, Badge, Button, Card*, Checkbox, Dialog*, DropdownMenu*, Input, Label, Pagination*, ScrollArea, Select*, Separator, Sheet*, Skeleton, Spinner, Switch, Table*, Tabs*, Textarea, Tooltip*, RichTextEditor, RichTextReadOnly, plus Combobox, PageTopbar, TaskCreateDialog | Active ui.bundle | Host owns contexts/portals; render with host React and let modal/slot cleanup run | const Button = host.ui.Button |
 | host.theme | Current "light" or "dark" theme | Active ui.bundle | Read during render; subscribe through host/app patterns if theme-sensitive | host.theme === "dark" |
 | host.navigate | Soft SPA navigation navigate(href, { replace? }) | Active ui.bundle | No registry cleanup; avoid navigating to undeclared external origins | host.navigate("/t/" + taskId) |
@@ -370,28 +370,63 @@ capabilities:
 ```js
 function useNoteValue(taskId, panelId) {
   const [value, setValue] = host.React.useState("");
+  const updatedAtRef = host.React.useRef(undefined);
   host.React.useEffect(() => {
+    let cancelled = false;
     function refresh() {
-      host.storage.get("task", taskId, "note").then((entry) => setValue(entry ? entry.value : ""));
+      host.storage.get("task", taskId, "note").then((entry) => {
+        // Ignore a response that resolves after taskId changed (or the
+        // panel unmounted) — otherwise the previous task's note can land in
+        // the new task's field.
+        if (cancelled) return;
+        setValue(entry ? entry.value : "");
+        updatedAtRef.current = entry ? entry.updatedAt : undefined;
+      });
     }
     refresh();
     // Scope echo suppression to this panel instance rather than the shared
     // per-tab default writer id — otherwise a second surface editing the
     // same note (a kanban shortcut, another panel) looks like this panel's
     // own echo and its write never arrives here.
-    return host.storage.subscribe({ scope: "task", scopeId: taskId, key: "note", writerId: panelId }, refresh);
+    const unsubscribe = host.storage.subscribe(
+      { scope: "task", scopeId: taskId, key: "note", writerId: panelId },
+      refresh,
+    );
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, [taskId, panelId]);
-  return [value, setValue];
+  return [value, setValue, updatedAtRef];
 }
 
 function NotesPanel({ taskId, panelId }) {
-  const [value, setValue] = useNoteValue(taskId, panelId);
+  const [value, setValue, updatedAtRef] = useNoteValue(taskId, panelId);
   return host.jsx(host.ui.RichTextEditor, {
     taskId,
     value,
     onChange: (next) => {
       setValue(next);
-      host.storage.set("task", taskId, "note", next, { writerId: panelId });
+      host.storage
+        .set("task", taskId, "note", next, {
+          writerId: panelId,
+          ifUnmodifiedSince: updatedAtRef.current,
+        })
+        .then((result) => {
+          updatedAtRef.current = result.updatedAt;
+        })
+        .catch((error) => {
+          // A 409 means another surface wrote first; re-fetch and let the
+          // user decide rather than silently overwriting their edit. Check
+          // error.name, not instanceof — a plugin bundle runs as a separate
+          // script, not an ES module importing the host's error class.
+          if (error.name === "PluginStorageConflictError") {
+            host.storage.get("task", taskId, "note").then((entry) => {
+              setValue(entry ? entry.value : "");
+              updatedAtRef.current = entry ? entry.updatedAt : undefined;
+            });
+          }
+        });
     },
   });
 }

@@ -42,6 +42,7 @@ vi.mock("@/components/github/pr-detail-panel", async () => {
 import {
   MobilePanelArea,
   resolveMobileReviewSource,
+  terminalPaddingBottom,
   useMobilePanelHandlers,
 } from "./session-mobile-layout";
 import { pluginRegistry } from "@/lib/plugins/registry";
@@ -346,5 +347,19 @@ describe("MobilePanelArea — plugin task panel (AC7)", () => {
   it("renders nothing for a panel id that isn't a plugin id", () => {
     renderMobilePanel("not-a-plugin-panel-id");
     expect(screen.queryByTestId("notes-mobile-body")).toBeNull();
+  });
+});
+
+describe("terminalPaddingBottom", () => {
+  it("pads by the keybar height alone when the keyboard is closed", () => {
+    expect(terminalPaddingBottom(false, 0, "3.25rem")).toBe("48px");
+    // bottomOffset is irrelevant while the keyboard is closed.
+    expect(terminalPaddingBottom(false, 300, "3.25rem")).toBe("48px");
+  });
+
+  it("subtracts the bottom nav and adds the live keyboard offset when the keyboard is open", () => {
+    expect(terminalPaddingBottom(true, 300, "3.25rem")).toBe(
+      "calc(348px - 3.25rem - env(safe-area-inset-bottom, 0px))",
+    );
   });
 });

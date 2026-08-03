@@ -328,7 +328,7 @@ external system's signature (Slack signing secret, GitHub webhook secret, etc.) 
 
 ### Authenticated per-user storage API (browser -> kandev, `host.storage`)
 
-```
+```text
 GET    /api/plugins/{id}/user-state/{scope}/{scopeId}          # list, ordered by key
 GET    /api/plugins/{id}/user-state/{scope}/{scopeId}/{key}
 PUT    /api/plugins/{id}/user-state/{scope}/{scopeId}/{key}     # body: {value, writerId?, ifUnmodifiedSince?}

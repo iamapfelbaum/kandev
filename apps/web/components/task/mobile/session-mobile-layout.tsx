@@ -147,7 +147,7 @@ type MobilePanelAreaProps = {
  *  keyboard is up, the content area already pads for the bottom nav (which
  *  is now under the keyboard), so we subtract it back out and add the
  *  keyboard height instead. */
-function terminalPaddingBottom(
+export function terminalPaddingBottom(
   keyboardOpen: boolean,
   bottomOffset: number,
   bottomNavHeight: string,

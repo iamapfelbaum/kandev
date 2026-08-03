@@ -390,7 +390,7 @@ export function buildKanbanCardMenuEntries({
   const entries: KanbanCardMenuEntry[] = [
     buildEditMenuEntry({
       onEdit,
-      disabled: isProcessing || !onEdit,
+      disabled: isProcessing,
       context: resolvePluginMenuContext(pluginMenuContext),
     }),
   ];

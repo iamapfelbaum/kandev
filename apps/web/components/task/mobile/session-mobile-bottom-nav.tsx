@@ -143,7 +143,7 @@ export function SessionMobileBottomNav({
     >
       {items.map((item) => (
         <MobileNavButton
-          key={item.label}
+          key={item.panel ?? item.label}
           item={item}
           activePanel={activePanel}
           onPanelChange={onPanelChange}

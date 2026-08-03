@@ -1,6 +1,11 @@
 import type { DockviewApi, DockviewGroupPanel } from "dockview-react";
 import { focusOrAddPanel } from "./dockview-layout-builders";
-import { pluginPanelId } from "./layout-manager/plugin-panels";
+import {
+  parsePluginPanelId,
+  pluginPanelId,
+  PLUGIN_PANEL_COMPONENT,
+  PLUGIN_PANEL_TAB_COMPONENT,
+} from "./layout-manager/plugin-panels";
 
 type StoreGet = () => {
   api: DockviewApi | null;
@@ -567,9 +572,9 @@ export function buildExtraPanelActions(get: StoreGet) {
         centerGroupId,
         {
           id: pluginPanelId(pluginId, panelKey),
-          component: "plugin-panel",
+          component: PLUGIN_PANEL_COMPONENT,
           title,
-          tabComponent: "pluginPanelTab",
+          tabComponent: PLUGIN_PANEL_TAB_COMPONENT,
           params: { pluginId, panelKey },
         },
         opts,
@@ -578,8 +583,9 @@ export function buildExtraPanelActions(get: StoreGet) {
     closePluginPanels: (pluginId: string) => {
       const { api } = get();
       if (!api) return;
-      const prefix = `plugin:${pluginId}:`;
-      api.panels.filter((p) => p.id.startsWith(prefix)).forEach((p) => api.removePanel(p));
+      api.panels
+        .filter((p) => parsePluginPanelId(p.id)?.pluginId === pluginId)
+        .forEach((p) => api.removePanel(p));
     },
     ...buildReviewPanelActions(get),
     addTerminalPanel: (
