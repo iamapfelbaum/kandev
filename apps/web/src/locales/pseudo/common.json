@@ -5,6 +5,7 @@
   "contextCompactionCountHelp": "Ķàńďēv ĩńƒēŕś ţĥĩś ćōũńţ ƒŕōḿ ōƀśēŕvēď ćōńţēxţ ũśàĝē ďŕōƥś. Ḿĩśśĩńĝ śàḿƥĺēś ōŕ ƥŕōvĩďēŕ ŕēśēţś ćàń ḿàķē ĩţ àƥƥŕōxĩḿàţē.",
   "aboutContextCompactionCount": "Àƀōũţ ĩńƒēŕŕēď ćōḿƥàćţĩōń ćōũńţ",
   "cancel": "Ćàńćēĺ",
+  "edit": "Ēďĩţ",
   "createAWorkspaceToConfigureThisIntegration": "Ćŕēàţē à ŵōŕķśƥàćē ţō ćōńƒĩĝũŕē ţĥĩś ĩńţēĝŕàţĩōń.",
   "dAgo": "{{diffDay}}ď àĝō",
   "executors": "Ēxēćũţōŕś",
@@ -16,7 +17,9 @@
   "pluginPanelFailedToLoad": "Ţĥĩś ƥĺũĝĩń ƥàńēĺ ƒàĩĺēď ţō ĺōàď.",
   "pluginPanelUnavailable": "Ţĥĩś ƥàńēĺ ĩś ńō ĺōńĝēŕ àvàĩĺàƀĺē.",
   "plugins": "Ƥĺũĝĩńś",
+  "prDetails": "ƤŔ Ďēţàĩĺś",
   "prompts": "Ƥŕōḿƥţś",
+  "requestFailed": "Ŕēqũēśţ ƒàĩĺēď",
   "reset": "Ŕēśēţ",
   "resetting": "Ŕēśēţţĩńĝ…",
   "resetWatchChecking": "Ćĥēćķĩńĝ ĥōŵ ḿàńŷ ţàśķś ŵōũĺď ƀē ďēĺēţēď…",
@@ -37,5 +40,13 @@
   "workspace": "Ŵōŕķśƥàćē",
   "workspaces": "Ŵōŕķśƥàćēś",
   "title": "Ţĩţĺē",
-  "subtaskTitle": "Śũƀţàśķ ţĩţĺē"
+  "subtaskTitle": "Śũƀţàśķ ţĩţĺē",
+  "presetIconEye": "Ēŷē",
+  "presetIconMessage": "Ḿēśśàĝē",
+  "presetIconTool": "Ţōōĺ",
+  "presetIconCode": "Ćōďē",
+  "presetIconSearch": "Śēàŕćĥ",
+  "presetIconBug": "Ɓũĝ",
+  "presetIconSparkle": "Śƥàŕķĺē",
+  "presetIconCheck": "Ćĥēćķ"
 }

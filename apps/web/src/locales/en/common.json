@@ -5,6 +5,7 @@
   "contextCompactionCountHelp": "Kandev infers this count from observed context usage drops. Missing samples or provider resets can make it approximate.",
   "aboutContextCompactionCount": "About inferred compaction count",
   "cancel": "Cancel",
+  "edit": "Edit",
   "createAWorkspaceToConfigureThisIntegration": "Create a workspace to configure this integration.",
   "dAgo": "{{diffDay}}d ago",
   "executors": "Executors",
@@ -16,7 +17,9 @@
   "pluginPanelFailedToLoad": "This plugin panel failed to load.",
   "pluginPanelUnavailable": "This panel is no longer available.",
   "plugins": "Plugins",
+  "prDetails": "PR Details",
   "prompts": "Prompts",
+  "requestFailed": "Request failed",
   "reset": "Reset",
   "resetting": "Resetting\u2026",
   "resetWatchChecking": "Checking how many tasks would be deleted\u2026",
@@ -37,5 +40,13 @@
   "workspace": "Workspace",
   "workspaces": "Workspaces",
   "title": "Title",
-  "subtaskTitle": "Subtask title"
+  "subtaskTitle": "Subtask title",
+  "presetIconEye": "Eye",
+  "presetIconMessage": "Message",
+  "presetIconTool": "Tool",
+  "presetIconCode": "Code",
+  "presetIconSearch": "Search",
+  "presetIconBug": "Bug",
+  "presetIconSparkle": "Sparkle",
+  "presetIconCheck": "Check"
 }

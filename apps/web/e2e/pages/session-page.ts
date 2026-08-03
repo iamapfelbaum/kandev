@@ -1237,7 +1237,7 @@ export class SessionPage {
 
   /** Prompt textarea inside the new session or handoff dialog. */
   newSessionPromptInput(): Locator {
-    return this.sessionLaunchDialog().locator("textarea");
+    return this.sessionLaunchDialog().getByTestId("task-description-input");
   }
 
   /** Start Agent button inside the new session or handoff dialog. */
@@ -1274,6 +1274,12 @@ export class SessionPage {
     await row.getByRole("button", { name: "Session actions" }).click();
     await this.handoffSubmenu().hover();
     await this.handoffProfileItem(profileId).click();
+  }
+
+  /** Open the New Agent dialog from the phone session controls. */
+  async openMobileNewSessionDialog(): Promise<void> {
+    await this.page.getByTestId("mobile-sessions-pill").tap();
+    await this.page.getByTestId("mobile-launch-session").tap();
   }
 
   /** Session tab in dockview by session label (e.g., "Session 1", "Session 2"). */
