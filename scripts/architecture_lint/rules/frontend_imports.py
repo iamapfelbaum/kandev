@@ -14,7 +14,10 @@ class Token:
     line: int
 
 
-GENERATED_MARKERS = ("Code generated", "DO NOT EDIT", "@generated")
+GENERATED_HEADER = re.compile(
+    r"^\s*(?://\s*(?:Code generated|DO NOT EDIT|@generated)\b"
+    r"|/\*+\s*(?:Code generated|DO NOT EDIT|@generated)\b)"
+)
 IDENTIFIER_START = re.compile(r"[A-Za-z_$]")
 IDENTIFIER_PART = re.compile(r"[A-Za-z0-9_$]")
 
@@ -37,13 +40,20 @@ def _skip_quoted(source: str, index: int, quote: str) -> tuple[str, int]:
 
 
 def _scan_template(source: str, index: int, tokens: list[Token]) -> int:
+    start = index
+    has_substitution = False
     index += 1
     while index < len(source):
         if source[index] == "\\":
             index += 2
         elif source[index] == "`":
+            if not has_substitution:
+                tokens.append(
+                    Token("string", source[start + 1 : index], _line_number(source, start))
+                )
             return index + 1
         elif source.startswith("${", index):
+            has_substitution = True
             index = _scan_code(source, index + 2, tokens, stop_at_brace=True)
         else:
             index += 1
@@ -211,11 +221,7 @@ def module_imports(source: str) -> list[tuple[int, str]]:
 
 
 def is_generated(source: str) -> bool:
-    return any(
-        marker in line
-        for line in source.splitlines()[:10]
-        for marker in GENERATED_MARKERS
-    )
+    return any(GENERATED_HEADER.match(line) for line in source.splitlines()[:10])
 
 
 def is_test_or_fixture(path: str) -> bool:

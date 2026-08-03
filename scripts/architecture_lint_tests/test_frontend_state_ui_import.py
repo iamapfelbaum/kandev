@@ -28,6 +28,7 @@ const lazyPanel = import("@/components/lazy-panel");
 import "@/app/side-effect";
 export * from "@/components/star-export";
 const substituted = `${import("@/components/template-substitution")}`;
+const directTemplate = import(`@/components/template-direct`);
 ''',
         )
         self.track_all()
@@ -35,8 +36,8 @@ const substituted = `${import("@/components/template-substitution")}`;
         result = self.run_cli("--all")
 
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout.count(RULE), 6)
-        for line in range(1, 7):
+        self.assertEqual(result.stdout.count(RULE), 7)
+        for line in range(1, 8):
             self.assert_diagnostic_location(result, path, line)
         self.assertIn("components and app layers consume state", result.stdout)
 
@@ -132,6 +133,22 @@ const member = loader.import("@/components/member");
         result = self.run_cli("--all")
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_generated_markers_in_strings_and_unrelated_comments_do_not_exclude(self) -> None:
+        path = "apps/web/lib/state/generated-marker-lookalike.ts"
+        self.write(
+            path,
+            '''const warning = "DO NOT EDIT while synchronization is running";
+// This comment mentions Code generated but is not a generated header.
+import "@/components/forbidden";
+''',
+        )
+        self.track_all()
+
+        result = self.run_cli("--all")
+
+        self.assertEqual(result.returncode, 1)
+        self.assert_diagnostic_location(result, path, 3)
 
     def test_current_two_findings_pass_only_with_exact_baseline(self) -> None:
         first = "apps/web/lib/state/slices/ui/app-sidebar-actions.ts"

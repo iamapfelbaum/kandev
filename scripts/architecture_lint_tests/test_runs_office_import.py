@@ -41,6 +41,21 @@ class RunsOfficeImportTest(ArchitectureFixture):
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_all_existing_findings_pass_only_with_complete_baseline(self) -> None:
+        paths = [
+            "apps/backend/internal/runs/repository/sqlite/run_events.go",
+            "apps/backend/internal/runs/repository/sqlite/runs.go",
+            "apps/backend/internal/runs/service/service.go",
+        ]
+        for path in paths:
+            self.write(path, f'package runs\n\nimport "{OFFICE_IMPORT}"\n')
+        self.write_runs_baseline([self.baseline_entry(path) for path in paths])
+        self.track_all()
+
+        result = self.run_cli("--all")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_block_import_and_office_subpackage_are_reported(self) -> None:
         path = "apps/backend/internal/runs/repository/new_repo.go"
         self.write(
