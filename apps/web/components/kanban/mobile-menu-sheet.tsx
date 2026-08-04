@@ -1,7 +1,6 @@
 "use client";
 import { type ReactNode, type RefObject, useRef, useState } from "react";
 import { useRouter } from "@/lib/routing/client-router";
-import Link from "@/components/routing/app-link";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@kandev/ui/sheet";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from "@kandev/ui/drawer";
 import { Button } from "@kandev/ui/button";
@@ -13,13 +12,15 @@ import {
   IconActivity,
   IconLayoutKanban,
   IconList,
-  IconSettings,
   IconStethoscope,
   IconTimeline,
 } from "@tabler/icons-react";
 import { AppSidebarWorkspacePicker } from "@/components/app-sidebar/app-sidebar-workspace-picker";
 import { MobileIntegrationsSection } from "@/components/integrations/integrations-menu";
+import { DestinationRows } from "@/components/navigation/destination-rows";
 import { MobilePluginNavSection } from "@/components/plugins/mobile-plugin-nav-section";
+import { useStaticDestinations } from "@/hooks/use-app-destinations";
+import { MOBILE_MENU_UTILITY_SECTIONS } from "@/lib/navigation/surface-policy";
 import { TaskSearchInput } from "./task-search-input";
 import {
   MobileTasksListOptions,
@@ -32,7 +33,7 @@ import type { Repository, Task } from "@/lib/types/http";
 import type { WorkflowsState } from "@/lib/state/slices";
 import { useResponsiveBreakpoint } from "@/hooks/use-responsive-breakpoint";
 import { useAppStatusDrawer } from "@/components/app-status-bar/app-status-surface-provider";
-import { connectionIssueDetails } from "@/components/app-status-bar/connection-status-item";
+import { useConnectionIssueCopy } from "@/components/app-status-bar/connection-status-item";
 import { ImproveKandevDialog } from "@/components/improve-kandev-dialog";
 type MobileMenuSheetProps = {
   open: boolean;
@@ -292,7 +293,11 @@ function MobileUtilityActions({
   onOpenChange: (open: boolean) => void;
 }) {
   const { enabled: statusDrawerEnabled, issueSeverity, openStatusDrawer } = useAppStatusDrawer();
-  const issueDetails = issueSeverity === "none" ? null : connectionIssueDetails(issueSeverity);
+  const issueDetails = useConnectionIssueCopy(issueSeverity);
+  // Stats, Settings, and anything else added to the manifest's insight/utility
+  // sections. Before the manifest, this block hardcoded a Settings link and
+  // Stats had no phone entry point at all.
+  const destinations = useStaticDestinations("mobileMenu", MOBILE_MENU_UTILITY_SECTIONS);
   const closeSheet = () => onOpenChange(false);
   const openHealth = () => {
     closeSheet();
@@ -330,16 +335,11 @@ function MobileUtilityActions({
           )}
         </Button>
       )}
-      <Button
-        asChild
-        variant="outline"
-        className={cn(mobileControlClass, "cursor-pointer justify-start gap-3")}
-      >
-        <Link href="/settings" onClick={closeSheet}>
-          <IconSettings className={mobileControlIconClass} />
-          Settings
-        </Link>
-      </Button>
+      <DestinationRows
+        destinations={destinations}
+        onNavigate={closeSheet}
+        className="gap-3 px-3 text-sm"
+      />
       <Button
         type="button"
         variant="outline"

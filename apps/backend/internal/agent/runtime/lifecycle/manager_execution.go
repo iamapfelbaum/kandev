@@ -23,6 +23,13 @@ import (
 // have a resolved workspace path (typically while worktree preparation is in progress).
 var ErrSessionWorkspaceNotReady = errors.New("session workspace not ready")
 
+// ErrSessionTerminal indicates the task session has reached a terminal state
+// (cancelled/completed/failed) and no execution can be created for it. User-facing
+// workspace handlers treat this like ErrSessionWorkspaceNotReady: a graceful
+// not-ready envelope rather than an ERROR-logged failure, since a terminal session
+// will never recover an execution.
+var ErrSessionTerminal = errors.New("session is terminal")
+
 // coalescedExecutionCreationTimeout matches the runtime's 60-second agentctl
 // startup window while preventing blocked instance I/O from owning the shared
 // session slot and its activity lease for the lifetime of the manager.
@@ -604,6 +611,11 @@ func (m *Manager) createExecution(ctx context.Context, taskID string, info *Work
 		execution.agentctl.SetTraceContext(execution.SessionTraceContext())
 	}
 
+	if err := m.ensureLaunchSessionStillActive(ctx, info.SessionID); err != nil {
+		m.rollbackLaunchExecution(ctx, rt, runtimeInstance, execution, "session ended during runtime creation")
+		return nil, err
+	}
+
 	if addErr := m.executionStore.Add(execution); addErr != nil {
 		// Lost a race: another path created an execution for this session
 		// between our check and our Add. Roll back the runtime instance we
@@ -617,13 +629,21 @@ func (m *Manager) createExecution(ctx context.Context, taskID string, info *Work
 		}
 		return nil, fmt.Errorf("failed to register execution: %w", addErr)
 	}
+	// Persist before the final session read so concurrent deletion cleanup can
+	// inventory this execution even if it started between Add and validation.
+	if err := m.persistExecutorRunningResult(ctx, execution); err != nil {
+		m.rollbackRegisteredLaunchAfterPersistFailure(rt, runtimeInstance, execution)
+		return nil, fmt.Errorf("persist execution registration: %w", err)
+	}
+	if err := m.ensureLaunchSessionStillActive(ctx, info.SessionID); err != nil {
+		if errors.Is(err, errTaskCleanupActive) {
+			m.rollbackRegisteredLaunchForTaskCleanup(rt, runtimeInstance, execution)
+		} else {
+			m.rollbackRegisteredLaunch(rt, runtimeInstance, execution, "session ended during execution registration")
+		}
+		return nil, err
+	}
 	m.setRuntimeInterest(execution.SessionID, true)
-
-	// Persist executors_running row in lockstep with the in-memory Add so the
-	// DB never holds an execution_id the store doesn't know about. This is the
-	// structural fix for the divergence bug — pre-refactor, the orchestrator
-	// wrote the row later via a full-row UPDATE that could race with the store.
-	m.persistExecutorRunning(ctx, execution)
 
 	// Persist agentctl auth token only after the execution is tracked, so a
 	// race-lost rollback never leaves an orphaned secret in the store.
