@@ -13,6 +13,7 @@ import { useOptimisticTaskMutation } from "@/hooks/use-optimistic-task-mutation"
 import type { OfficeTask } from "@/lib/state/slices/office/types";
 import type { Task } from "@/app/office/tasks/[id]/types";
 import { MultiSelectPopover, type MultiSelectItem } from "./multi-select-popover";
+import { useTranslation } from "react-i18next";
 
 // formatBlockerCycleMessage renders the toast text for a 400 response
 // whose body carries a `cycle` array. The backend already substitutes
@@ -76,6 +77,7 @@ function buildItems(candidates: OfficeTask[], currentTaskId: string): BlockerIte
 }
 
 export function BlockersPicker({ task }: BlockersPickerProps) {
+  const { t } = useTranslation();
   const storeTasks = useAppStore((s) => s.office.tasks.items);
   const workspaceId = useAppStore((s) => s.workspaces.activeId);
   const [fetched, setFetched] = useState<OfficeTask[]>([]);
@@ -141,7 +143,7 @@ export function BlockersPicker({ task }: BlockersPickerProps) {
             remove();
           }
         }}
-        aria-label={`Remove ${item.identifier}`}
+        aria-label={t("task:remove3", { identifier: item.identifier })}
       >
         <IconX className="h-2.5 w-2.5" />
       </span>
@@ -165,9 +167,9 @@ export function BlockersPicker({ task }: BlockersPickerProps) {
       onRemove={handleRemove}
       renderChip={renderChip}
       renderItem={renderItem}
-      addLabel="+ Add blocker"
-      searchPlaceholder="Search tasks..."
-      emptyMessage="No tasks found."
+      addLabel={t("task:addBlocker")}
+      searchPlaceholder={t("task:searchTasks")}
+      emptyMessage={t("task:noTasksFound")}
       testId="blockers-picker-trigger"
     />
   );

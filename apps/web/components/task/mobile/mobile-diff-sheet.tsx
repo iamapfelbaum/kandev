@@ -9,6 +9,8 @@ import { CommitDiffView } from "../commit-detail-panel";
 import type { ReviewSource, SourceCounts } from "@/hooks/domains/session/use-review-sources";
 import type { SelectedDiff } from "../task-layout";
 import type { DiffSheetMode } from "../changes-diff-target";
+import { useTranslation } from "react-i18next";
+import { t } from "@/lib/i18n";
 
 const MOBILE_DIFF_SOURCE_FILTER_KEY = "mobile-diff-source-filter";
 
@@ -74,20 +76,28 @@ type SourceTab = { key: ReviewSource; label: string; count: number };
 
 function buildSourceTabs(sourceCounts: SourceCounts): SourceTab[] {
   return [
-    { key: "uncommitted" as ReviewSource, label: "Uncommitted", count: sourceCounts.uncommitted },
-    { key: "committed" as ReviewSource, label: "Committed", count: sourceCounts.committed },
+    {
+      key: "uncommitted" as ReviewSource,
+      label: t("task:uncommitted"),
+      count: sourceCounts.uncommitted,
+    },
+    { key: "committed" as ReviewSource, label: t("task:committed"), count: sourceCounts.committed },
     { key: "pr" as ReviewSource, label: "PR", count: sourceCounts.pr },
   ].filter((t) => t.count > 0);
 }
 
+// Module-level `t` rather than a hook: this runs from render, after a locale
+// is active.
 function deriveTitle(mode: DiffSheetMode | null, sourceTabs: SourceTab[]): string {
   if (!mode) return "";
   if (mode.kind === "all") {
-    if (sourceTabs.length === 1) return `${sourceTabs[0].label} Changes`;
-    return "All Changes";
+    if (sourceTabs.length === 1) {
+      return t("task:sourceChangesTitle", { source: sourceTabs[0].label });
+    }
+    return t("task:allChangesTitle");
   }
-  if (mode.kind === "file") return "File Changes";
-  if (mode.kind === "commit") return "Commit Changes";
+  if (mode.kind === "file") return t("task:fileChangesTitle");
+  if (mode.kind === "commit") return t("task:commitChangesTitle");
   return "";
 }
 
@@ -102,6 +112,7 @@ function SheetHeader({
   sourceLabel: string | null;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <DrawerHeader className="flex items-center justify-between py-2 px-4 border-b shrink-0">
       <DrawerTitle className="text-base flex items-center gap-2">
@@ -122,7 +133,7 @@ function SheetHeader({
         onClick={onClose}
         data-testid="mobile-diff-sheet-close"
       >
-        Close
+        {t("task:close")}
       </Button>
     </DrawerHeader>
   );

@@ -10,13 +10,13 @@ export function hasActiveTaskSourceWork(
 ): boolean {
   return taskSessionIds.some((sessionId) => Boolean(activeTurnBySession[sessionId]));
 }
+import { t } from "@/lib/i18n";
 
 export function getAddSourcesDisabledReason({
   isLoading,
   hasActiveTurn,
 }: AvailabilityInput): string | undefined {
-  if (isLoading) return "Wait for task sources to finish loading before adding sources.";
-  if (hasActiveTurn)
-    return "Wait for the active turn or tool call to finish before adding sources.";
+  if (isLoading) return t("task:waitForTaskSourcesToLoad");
+  if (hasActiveTurn) return t("task:waitForActiveTurnToFinish");
   return undefined;
 }
