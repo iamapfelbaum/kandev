@@ -103,7 +103,7 @@ function useGitToast() {
         });
       }
     },
-    [toast],
+    [toast, t],
   );
 }
 
@@ -507,6 +507,21 @@ export function GitActionsDropdown({
   );
 }
 
+/** The success toast for a created change request. Extracted to keep
+ *  `useMobileGitActions` under the function-length cap. */
+function createPrSuccessToast(
+  longName: string,
+  prUrl: string | undefined,
+  draft: boolean,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+) {
+  return {
+    title: draft ? t("task:draftCreated", { longName }) : t("task:created2", { longName }),
+    description: prUrl || t("task:createdSuccessfully", { longName }),
+    variant: "success" as const,
+  };
+}
+
 export function useMobileGitActions(
   sessionId: string | null | undefined,
   baseBranch: string | undefined,
@@ -527,6 +542,9 @@ export function useMobileGitActions(
   const { commit } = useSessionGit(sessionId ?? null);
   const handleGitOperation = useGitToast();
 
+  // Hoisted out of the two callbacks below so both share one expression.
+  const remoteTarget = baseBranch?.replace(/^origin\//, "") || DEFAULT_BASE_BRANCH;
+
   const handlePull = useCallback(
     () => handleGitOperation(() => pull(), t("task:pull")),
     [handleGitOperation, pull, t],
@@ -536,14 +554,14 @@ export function useMobileGitActions(
       handleGitOperation(() => push({ force }), force ? t("task:forcePush") : t("task:push")),
     [handleGitOperation, push, t],
   );
-  const handleRebase = useCallback(() => {
-    const target = baseBranch?.replace(/^origin\//, "") || DEFAULT_BASE_BRANCH;
-    return handleGitOperation(() => rebase(target), t("task:rebase"));
-  }, [handleGitOperation, rebase, baseBranch, t]);
-  const handleMerge = useCallback(() => {
-    const target = baseBranch?.replace(/^origin\//, "") || DEFAULT_BASE_BRANCH;
-    return handleGitOperation(() => merge(target), t("task:merge"));
-  }, [handleGitOperation, merge, baseBranch, t]);
+  const handleRebase = useCallback(
+    () => handleGitOperation(() => rebase(remoteTarget), t("task:rebase")),
+    [handleGitOperation, rebase, remoteTarget, t],
+  );
+  const handleMerge = useCallback(
+    () => handleGitOperation(() => merge(remoteTarget), t("task:merge")),
+    [handleGitOperation, merge, remoteTarget, t],
+  );
 
   const handleCommit = useCallback(
     async (message: string, stageAll: boolean) => {
@@ -560,14 +578,7 @@ export function useMobileGitActions(
         const result = await createPR(title, body, baseBranch, draft);
         if (result.success) {
           const terms = resolveChangeRequestTerminology(result.provider, defaultTerminology);
-          toast({
-            title: draft
-              ? t("task:draftCreated", { longName: terms.longName })
-              : t("task:created2", { longName: terms.longName }),
-            description:
-              result.pr_url || t("task:createdSuccessfully", { longName: terms.longName }),
-            variant: "success",
-          });
+          toast(createPrSuccessToast(terms.longName, result.pr_url, draft, t));
           if (result.pr_url) {
             if (activeTaskId) {
               setPendingPrUrlForTask(activeTaskId, "", result.pr_url);
@@ -601,6 +612,7 @@ export function useMobileGitActions(
       defaultTerminology,
       activeTaskId,
       setPendingPrUrlForTask,
+      t,
     ],
   );
 

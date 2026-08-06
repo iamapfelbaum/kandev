@@ -204,7 +204,7 @@ function useChatInputHandlers(setInput: React.Dispatch<React.SetStateAction<stri
         }
       }
     },
-    [setInput],
+    [setInput, t],
   );
 
   const handleFileSelect = useCallback(
@@ -373,7 +373,7 @@ function ChatInput({ taskId, taskTitle, taskDescription, onSubmitted }: ChatInpu
     } finally {
       setSubmitting(false);
     }
-  }, [submitting, taskId, onSubmitted, setInputAndSync]);
+  }, [submitting, taskId, onSubmitted, setInputAndSync, t]);
 
   const handleEnhance = useCallback(() => {
     const current = inputValueRef.current;
@@ -386,7 +386,7 @@ function ChatInput({ taskId, taskTitle, taskDescription, onSubmitted }: ChatInpu
       }
       return inserted;
     });
-  }, [enhancePrompt, promptDelivery]);
+  }, [enhancePrompt, promptDelivery, t]);
 
   return (
     <div className="mt-4 pt-4 border-t border-border">

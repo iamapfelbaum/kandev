@@ -61,7 +61,7 @@ export function AssigneePicker({ task }: AssigneePickerProps) {
       ),
     }));
     return [noOpt, ...agentOpts];
-  }, [agents]);
+  }, [agents, t]);
 
   const currentValue = task.assigneeAgentProfileId || NO_ASSIGNEE;
 

@@ -43,7 +43,7 @@ export function ProjectPicker({ task }: ProjectPickerProps) {
       ),
     }));
     return [noOpt, ...projectOpts];
-  }, [projects]);
+  }, [projects, t]);
 
   const currentValue = task.projectId || NO_PROJECT;
 

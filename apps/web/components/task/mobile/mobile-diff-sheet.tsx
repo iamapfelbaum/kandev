@@ -207,6 +207,7 @@ export const MobileDiffSheet = memo(function MobileDiffSheet({
   onClearSelected,
   sourceCounts,
 }: MobileDiffSheetProps) {
+  const { i18n } = useTranslation();
   const [activeSource, setActiveSource] = useState<ReviewSource>(() => {
     if (typeof window === "undefined") return "uncommitted";
     const saved = localStorage.getItem(MOBILE_DIFF_SOURCE_FILTER_KEY);
@@ -223,12 +224,23 @@ export const MobileDiffSheet = memo(function MobileDiffSheet({
     if (mode?.kind !== "all") return;
     localStorage.setItem(MOBILE_DIFF_SOURCE_FILTER_KEY, activeSource);
   }, [mode?.kind, activeSource]);
-  const sourceTabs = useMemo(() => buildSourceTabs(sourceCounts), [sourceCounts]);
+  // `buildSourceTabs` and `deriveTitle` resolve their labels through the
+  // module-level `t`, so the language has to be a dependency for them to follow
+  // a runtime locale switch.
+  const sourceTabs = useMemo(
+    () => buildSourceTabs(sourceCounts),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- i18n.language is the locale trigger
+    [sourceCounts, i18n.language],
+  );
   const activeSourceLabel = useMemo(
     () => sourceTabs.find((t) => t.key === activeSource)?.label ?? null,
     [sourceTabs, activeSource],
   );
-  const title = useMemo(() => deriveTitle(mode, sourceTabs), [mode, sourceTabs]);
+  const title = useMemo(
+    () => deriveTitle(mode, sourceTabs),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- i18n.language is the locale trigger
+    [mode, sourceTabs, i18n.language],
+  );
   const panelContent = useMemo(
     () => renderPanel(mode, activeSource, selectedDiff, onClearSelected, onOpenFile),
     [mode, activeSource, selectedDiff, onClearSelected, onOpenFile],

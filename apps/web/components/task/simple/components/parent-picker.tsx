@@ -68,7 +68,7 @@ function buildOptions(candidates: OfficeTask[], currentTaskId: string): Combobox
 }
 
 export function ParentPicker({ task }: ParentPickerProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const storeTasks = useAppStore((s) => s.office.tasks.items);
   const workspaceId = useAppStore((s) => s.workspaces.activeId);
   const [fetched, setFetched] = useState<OfficeTask[]>([]);
@@ -95,7 +95,14 @@ export function ParentPicker({ task }: ParentPickerProps) {
 
   const candidates = storeTasks.length > 0 ? storeTasks : fetched;
 
-  const options = useMemo(() => buildOptions(candidates, task.id), [candidates, task.id]);
+  // `buildOptions` resolves its "No parent" label through the module-level `t`.
+  // Keeping the language in the deps is what makes that label follow a runtime
+  // locale switch; without it the memo only recomputes when the data changes.
+  const options = useMemo(
+    () => buildOptions(candidates, task.id),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- i18n.language is the locale trigger
+    [candidates, task.id, i18n.language],
+  );
 
   const currentValue = task.parentId || NO_PARENT;
 

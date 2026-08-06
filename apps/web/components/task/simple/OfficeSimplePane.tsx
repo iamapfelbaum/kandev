@@ -385,7 +385,7 @@ function TaskActionRow({
       }
       e.target.value = "";
     },
-    [task.id],
+    [task.id, t],
   );
 
   return (

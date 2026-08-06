@@ -262,7 +262,7 @@ export function TaskDocuments({ taskId }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [taskId]);
+  }, [taskId, t]);
 
   const handleDelete = useCallback(
     async (key: string) => {
@@ -274,7 +274,7 @@ export function TaskDocuments({ taskId }: Props) {
         toast.error(t("task:failedToDeleteDocument"));
       }
     },
-    [taskId],
+    [taskId, t],
   );
 
   const handleCreated = useCallback(async () => {

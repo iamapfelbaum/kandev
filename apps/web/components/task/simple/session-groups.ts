@@ -12,6 +12,7 @@ export type SessionGroup = {
   id: string;
   representative: TaskSession;
   group: TaskSession[];
+  /** A catalog KEY (see `deriveRoleChip`), not resolved copy. */
   roleChip: string | null;
 };
 

@@ -486,7 +486,7 @@ function useSheetDeleteActions(
         executorType: task?.primaryExecutorType,
       });
     },
-    [store],
+    [store, t],
   );
 
   const handleDeleteConfirm = useCallback(
@@ -584,7 +584,7 @@ export function useSheetActions(workspaceId: string | null, onOpenChange: (open:
         executorType: task?.primaryExecutorType,
       });
     },
-    [store],
+    [store, t],
   );
 
   const handleArchiveConfirm = useCallback(

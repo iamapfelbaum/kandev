@@ -57,7 +57,7 @@ export function ShareDialog({ open, onOpenChange, taskId, sessionId }: Props) {
         message: e instanceof Error ? e.message : t("task:failedToLoadPreview"),
       });
     }
-  }, [taskId, sessionId]);
+  }, [taskId, sessionId, t]);
 
   useEffect(() => {
     if (!open) return;
@@ -80,7 +80,7 @@ export function ShareDialog({ open, onOpenChange, taskId, sessionId }: Props) {
         });
       }
     },
-    [taskId, sessionId, refresh],
+    [taskId, sessionId, refresh, t],
   );
 
   return (

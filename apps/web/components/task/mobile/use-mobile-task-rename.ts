@@ -31,7 +31,7 @@ export function useMobileTaskRename() {
         setRenamingTask(null);
       }
     },
-    [renameTaskById, renamingTask, toast],
+    [renameTaskById, renamingTask, toast, t],
   );
 
   return { renamingTask, setRenamingTask, handleRenameTask, handleRenameSubmit };

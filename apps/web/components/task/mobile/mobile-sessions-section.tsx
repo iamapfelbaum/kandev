@@ -371,6 +371,10 @@ function SessionRowItem({
 }
 
 function useSessionRows(taskId: string | null) {
+  // `buildSessionRows` resolves its agent-name fallback through the module-level
+  // `t`, so the language has to reach the memo below for that label to follow a
+  // runtime locale switch.
+  const { i18n } = useTranslation();
   const agentProfiles = useAppStore((s) => s.agentProfiles.items);
   const repositoriesByWorkspace = useAppStore((s) => s.repositories.itemsByWorkspaceId);
   const primarySessionId = useAppStore((s) => {
@@ -394,7 +398,8 @@ function useSessionRows(taskId: string | null) {
   }, [repositoriesByWorkspace, sessions]);
   const rows = useMemo(
     () => buildSessionRows(sessions, agentProfiles, primarySessionId, repositoryLabelsById),
-    [sessions, agentProfiles, primarySessionId, repositoryLabelsById],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- i18n.language is the locale trigger
+    [sessions, agentProfiles, primarySessionId, repositoryLabelsById, i18n.language],
   );
   return { rows, isLoading, primarySessionId };
 }
