@@ -219,6 +219,10 @@ func (s *HandoffService) ArchiveTaskTree(ctx context.Context, rootID string, cas
 	if err != nil {
 		return out, s.rollbackWorkspaceEnvironmentOwnershipAfterFailure(ctx, ownershipTransfers, err)
 	}
+	if err := s.cleanupTaskLSPBeforeMutation(ctx, all, "task_archived"); err != nil {
+		s.cancelCascadeResourceCleanupRange(ctx, all, cleanupOps)
+		return out, s.rollbackWorkspaceEnvironmentOwnershipAfterFailure(ctx, ownershipTransfers, err)
+	}
 
 	// Cancel active runs first. Failures are logged and skipped — a
 	// stuck cancel must not block the archive cascade; the orchestrator
@@ -328,6 +332,10 @@ func (s *HandoffService) DeleteTaskTree(ctx context.Context, rootID string, casc
 	if err != nil {
 		return out, s.rollbackWorkspaceEnvironmentOwnershipAfterFailure(ctx, ownershipTransfers, err)
 	}
+	if err := s.cleanupTaskLSPBeforeMutation(ctx, all, "task_deleted"); err != nil {
+		s.cancelCascadeResourceCleanupRange(ctx, all, cleanupOps)
+		return out, s.rollbackWorkspaceEnvironmentOwnershipAfterFailure(ctx, ownershipTransfers, err)
+	}
 
 	s.cancelActiveRuns(ctx, all, "task tree deleted")
 
@@ -389,6 +397,23 @@ func (s *HandoffService) DeleteTaskTree(ctx context.Context, rootID string, casc
 		}
 	}
 	return out, nil
+}
+
+func (s *HandoffService) cleanupTaskLSPBeforeMutation(
+	ctx context.Context,
+	taskIDs []string,
+	reason string,
+) error {
+	cleaner, ok := s.resourceCleaner.(taskLSPMutationCleaner)
+	if !ok {
+		return nil
+	}
+	for _, taskID := range taskIDs {
+		if err := cleaner.CleanupTaskLSP(ctx, taskID, reason); err != nil {
+			return fmt.Errorf("stop task language servers for %s: %w", taskID, err)
+		}
+	}
+	return nil
 }
 
 // transferSharedWorkspaceEnvironmentOwnership moves a materialized environment
@@ -726,6 +751,7 @@ func (s *HandoffService) UnarchiveTaskTree(ctx context.Context, rootID string) (
 			// children were marked orphaned by this same archive; the
 			// marker's "parent_archived" claim is no longer true.
 			s.clearOrphanedInheritParentChildren(ctx, id)
+			s.reconcileTaskLSP(ctx, id)
 		} else {
 			out.SkippedTaskIDs = append(out.SkippedTaskIDs, id)
 		}
@@ -780,6 +806,7 @@ func (s *HandoffService) unarchiveManualRoot(ctx context.Context, root *models.T
 	out.ArchivedTaskIDs = append(out.ArchivedTaskIDs, root.ID)
 	s.publishUpdatedTask(ctx, root.ID)
 	s.clearOrphanedInheritParentChildren(ctx, root.ID)
+	s.reconcileTaskLSP(ctx, root.ID)
 	// Legacy archives never released group memberships, but the group may
 	// have been cleaned since (e.g. by a later cascade on another member).
 	// Restore the group's materialized workspace if it was cleaned. Best
@@ -796,6 +823,19 @@ func (s *HandoffService) unarchiveManualRoot(ctx context.Context, root *models.T
 		}
 	}
 	return out, nil
+}
+
+func (s *HandoffService) reconcileTaskLSP(ctx context.Context, taskID string) {
+	reconciler, ok := s.resourceCleaner.(interface {
+		ReconcileTaskLSP(context.Context, string) error
+	})
+	if !ok {
+		return
+	}
+	if err := reconciler.ReconcileTaskLSP(ctx, taskID); err != nil {
+		s.logf().Warn("failed to reconcile task language servers after unarchive",
+			zap.String("task_id", taskID), zap.Error(err))
+	}
 }
 
 func (s *HandoffService) cancelArchiveResourceCleanup(ctx context.Context, taskID string) error {

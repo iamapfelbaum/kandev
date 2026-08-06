@@ -533,7 +533,8 @@ overrides.
 |---|---|---:|---|
 | `limits.ghMaxConcurrent` | `KANDEV_GH_MAX_CONCURRENT` | `8` | Positive integer process-wide cap for `gh` subprocesses; invalid/non-positive uses default. |
 | `limits.gitMaxConcurrent` | `KANDEV_GIT_MAX_CONCURRENT` | `12` | Positive integer process-wide cap for `git` subprocesses; invalid/non-positive uses default. |
-| `limits.lspMaxConnections` | `KANDEV_LSP_MAX_CONNECTIONS` | `8` | Positive integer cap for active browser-to-task-host language-server streams; invalid/non-positive uses default. |
+| `limits.lspMaxConnections` | `KANDEV_LSP_MAX_CONNECTIONS` | `8` | Deprecated numeric fallback for the task/language server limit when `KANDEV_LSP_MAX_SERVERS` is unset. Browser attachments and editor mounts do not consume slots. |
+| none | `KANDEV_LSP_MAX_SERVERS` | unset | Preferred positive integer process-wide cap for actual task/language servers; invalid/non-positive uses `8`. |
 | `messageQueue.maxPerSession` | `KANDEV_QUEUE_MAX_PER_SESSION` | `10` | Pending messages per session. A non-negative YAML value locks the saved UI capacity; a valid environment value overrides YAML and locks it; a negative environment value means unlimited; malformed environment input falls through to YAML, the saved setting, or default. |
 | `agentctl.idleTimeout` | `KANDEV_ACP_IDLE_TIMEOUT` | `1h` | Go duration after which idle managed agentctl instances are reaped; `0` disables. Invalid uses default. |
 | `agentctl.idleReaperInterval` | `KANDEV_ACP_IDLE_REAPER_INTERVAL` | `1m` | Go duration between idle scans. |
