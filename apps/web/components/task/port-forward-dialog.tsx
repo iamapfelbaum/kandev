@@ -24,6 +24,7 @@ import { useTunnelActions } from "./use-tunnel-actions";
 import { getBackendConfig } from "@/lib/config";
 import { toast } from "@/lib/toast/sonner";
 import { useTranslation } from "react-i18next";
+import { usePortForwardingVisibility } from "./port-forwarding-visibility-provider";
 
 function buildPortProxyUrl(sessionId: string, port: number): string {
   const backendUrl = getBackendConfig().apiBaseUrl;
@@ -480,7 +481,7 @@ function PortForwardDialogContent({
   return (
     <DialogContent
       data-testid="port-forward-dialog"
-      className="sm:max-w-2xl overflow-hidden"
+      className="max-h-[calc(100dvh-2rem)] overflow-hidden sm:max-w-2xl"
       onOpenAutoFocus={() => !loaded && refresh()}
     >
       <DialogHeader>
@@ -489,7 +490,7 @@ function PortForwardDialogContent({
           {t("task:portForwarding")}
         </DialogTitle>
       </DialogHeader>
-      <div className="space-y-4 min-w-0 max-h-[60vh] overflow-y-auto">
+      <div className="min-w-0 max-h-[calc(100dvh-8rem)] space-y-4 overflow-y-auto overscroll-contain sm:max-h-[60vh]">
         <PortListSection
           detectedPorts={detectedPorts}
           manualPorts={manualPorts}
@@ -508,16 +509,9 @@ function PortForwardDialogContent({
   );
 }
 
-export function PortForwardButton({
-  isRemoteExecutor,
-  sessionId,
-  isAgentctlReady,
-}: {
-  isRemoteExecutor?: boolean;
-  sessionId?: string | null;
-  isAgentctlReady?: boolean;
-}) {
+export function PortForwardButton({ sessionId }: { sessionId?: string | null }) {
   const { t } = useTranslation();
+  const { enabled, canToggle, dialogOpen, setDialogOpen } = usePortForwardingVisibility();
   const [activeTunnels, setActiveTunnelsRaw] = useState<Map<number, number>>(new Map());
   const hasActiveTunnels = activeTunnels.size > 0;
 
@@ -529,16 +523,16 @@ export function PortForwardButton({
   );
 
   useEffect(() => {
-    if (!sessionId || !isAgentctlReady) return;
+    if (!sessionId || !canToggle) return;
     listTunnels(sessionId).then((tunnels) => {
       setActiveTunnelsRaw(new Map(tunnels.map((t) => [t.port, t.tunnel_port])));
     });
-  }, [sessionId, isAgentctlReady]);
+  }, [canToggle, sessionId]);
 
-  if (!isRemoteExecutor || !sessionId || !isAgentctlReady) return null;
+  if (!enabled || !canToggle || !sessionId) return null;
 
   return (
-    <Dialog>
+    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
       <Tooltip>
         <TooltipTrigger asChild>
           <DialogTrigger asChild>

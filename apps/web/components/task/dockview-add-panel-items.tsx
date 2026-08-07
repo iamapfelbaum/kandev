@@ -7,8 +7,10 @@ import {
   IconFolder,
   IconGitBranch,
   IconGitPullRequest,
+  IconNetwork,
 } from "@tabler/icons-react";
 import {
+  DropdownMenuCheckboxItem,
   DropdownMenuItem,
   DropdownMenuSub,
   DropdownMenuSubContent,
@@ -25,6 +27,7 @@ import { RepositoryScriptsMenuItems } from "./repository-scripts-menu";
 import { SessionReopenMenuItems } from "./session-reopen-menu";
 import { TerminalReopenMenuItems } from "./terminal-reopen-menu";
 import { useTranslation } from "react-i18next";
+import type { PortForwardingVisibility } from "./port-forwarding-visibility-provider";
 
 export type AddPanelMenuState = {
   taskId: string | null;
@@ -34,6 +37,7 @@ export type AddPanelMenuState = {
   /** All PRs linked to the task; multi-repo tasks render one menu item per PR. */
   prs: TaskPR[];
   mrs: TaskMR[];
+  portForwarding?: PortForwardingVisibility;
 };
 
 type AddPanelMenuItemsProps = {
@@ -171,6 +175,20 @@ export function AddPanelMenuItems({
           <IconFileText className={MENU_ICON_CLASS} />
           {t("task:plan")}
         </DropdownMenuItem>
+      )}
+      {state.portForwarding && (
+        <DropdownMenuCheckboxItem
+          checked={state.portForwarding.enabled}
+          disabled={!state.portForwarding.canToggle || state.portForwarding.isUpdating}
+          onCheckedChange={() =>
+            void state.portForwarding?.togglePortForwarding({ openDialogOnEnable: true })
+          }
+          className={MENU_ITEM_CLASS}
+          data-testid="port-forwarding-menu-item"
+        >
+          <IconNetwork className={MENU_ICON_CLASS} />
+          {t("task:portForwarding")}
+        </DropdownMenuCheckboxItem>
       )}
       <PluginTaskPanelMenuItems groupId={groupId} />
       {!state.hasChanges && (

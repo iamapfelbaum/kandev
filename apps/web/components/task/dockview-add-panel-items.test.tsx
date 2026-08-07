@@ -203,3 +203,48 @@ describe("AddPanelMenuItems — plugin task panels (AC1)", () => {
     );
   });
 });
+
+describe("AddPanelMenuItems — port forwarding preference", () => {
+  function portForwardingState(
+    overrides: Partial<NonNullable<AddPanelMenuState["portForwarding"]>> = {},
+  ): NonNullable<AddPanelMenuState["portForwarding"]> {
+    return {
+      enabled: false,
+      canToggle: true,
+      isUpdating: false,
+      dialogOpen: false,
+      setDialogOpen: vi.fn(),
+      openDialog: vi.fn(),
+      togglePortForwarding: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  it("renders a checkable row and opens after enabling", () => {
+    const togglePortForwarding = vi.fn();
+    renderMenu({
+      taskId: null,
+      portForwarding: portForwardingState({ togglePortForwarding }),
+    });
+
+    const row = screen.getByTestId("port-forwarding-menu-item");
+    expect(row.getAttribute("role")).toBe("menuitemcheckbox");
+    expect(row.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(row);
+
+    expect(togglePortForwarding).toHaveBeenCalledWith({ openDialogOnEnable: true });
+  });
+
+  it("disables the row when the task session is not ready", () => {
+    const togglePortForwarding = vi.fn();
+    renderMenu({
+      taskId: null,
+      portForwarding: portForwardingState({ canToggle: false, togglePortForwarding }),
+    });
+
+    const row = screen.getByTestId("port-forwarding-menu-item");
+    expect(row.getAttribute("data-disabled")).toBe("");
+    fireEvent.click(row);
+    expect(togglePortForwarding).not.toHaveBeenCalled();
+  });
+});

@@ -778,6 +778,7 @@
   "workspaceCount_other": "{{count}} áreas de trabalho",
   "workspaceRepository": "Repositório da área de trabalho",
   "wouldCreateABlockerCycle": "Criaria um ciclo de bloqueios: {{cycle}}",
+  "portForwardingPreferenceUpdateFailed": "Não foi possível atualizar a visibilidade do reencaminhamento de portas",
   "writeYourChangesHere": "Escreva aqui as suas alterações",
   "you": "Eu",
   "youCanAttachUpToFiles": "Pode anexar até {{maxFiles}} ficheiros.",

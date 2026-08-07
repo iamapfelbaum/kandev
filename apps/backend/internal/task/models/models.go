@@ -116,6 +116,9 @@ const (
 	// MetaKeyAgentTitleOwnerSessionID records the one session that atomically
 	// claimed the first-turn title handoff for a pending task.
 	MetaKeyAgentTitleOwnerSessionID = "agent_title_owner_session_id"
+	// MetaKeyPortForwardingEnabled controls whether a task exposes its
+	// session port-forwarding controls in the task UI.
+	MetaKeyPortForwardingEnabled = "port_forwarding_enabled"
 )
 
 // IsAgentTitlePending reports whether task metadata contains the durable
@@ -656,8 +659,8 @@ const (
 
 // Workflow represents a task workflow
 type Workflow struct {
-	ID                 string  `json:"id"`
-	WorkspaceID        string  `json:"workspace_id"`
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	// Prompt is optional workflow-level agent instructions prepended at

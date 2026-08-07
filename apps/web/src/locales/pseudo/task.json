@@ -846,6 +846,7 @@
   "pluginTopBarActions": "Ƥĺũĝĩń ţōƥ ƀàŕ àćţĩōńś",
   "portAlreadyAdded": "Ƥōŕţ àĺŕēàďŷ àďďēď",
   "portForwarding": "Ƥōŕţ Ƒōŕŵàŕďĩńĝ",
+  "portForwardingPreferenceUpdateFailed": "Ćōũĺď ńōţ ũƥďàţē ƥōŕţ Ƒōŕŵàŕďĩńĝ vĩśĩƀĩĺĩţŷ",
   "portForwardingTunnelActive_one": "Ƥōŕţ Ƒōŕŵàŕďĩńĝ ({{count}} ţũńńēĺ àćţĩvē)",
   "portForwardingTunnelActive_other": "Ƥōŕţ Ƒōŕŵàŕďĩńĝ ({{count}} ţũńńēĺś àćţĩvē)",
   "portNumber": "Ƥōŕţ ńũḿƀēŕ",

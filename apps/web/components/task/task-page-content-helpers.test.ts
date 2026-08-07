@@ -228,6 +228,20 @@ describe("syncActiveTaskSession", () => {
 });
 
 describe("resolveEffectiveTask archived state", () => {
+  it("uses live kanban metadata while preserving base metadata when omitted", () => {
+    const base = makeArchivedTaskDetails({ metadata: { port_forwarding_enabled: false } });
+    const enabled = resolveEffectiveTask(
+      base,
+      null,
+      makeKanbanTask({ metadata: { port_forwarding_enabled: true } }),
+      "task-1",
+    );
+    expect(enabled?.metadata).toEqual({ port_forwarding_enabled: true });
+
+    const omitted = resolveEffectiveTask(base, null, makeKanbanTask(), "task-1");
+    expect(omitted?.metadata).toEqual({ port_forwarding_enabled: false });
+  });
+
   it("keeps fetched archived state when a stale matching kanban card remains", () => {
     const taskDetails = makeArchivedTaskDetails();
     const kanbanTask = makeKanbanTask({ updatedAt: "2026-07-18T00:00:00Z" });

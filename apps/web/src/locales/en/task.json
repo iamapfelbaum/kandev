@@ -846,6 +846,7 @@
   "pluginTopBarActions": "Plugin top bar actions",
   "portAlreadyAdded": "Port already added",
   "portForwarding": "Port Forwarding",
+  "portForwardingPreferenceUpdateFailed": "Could not update port forwarding visibility",
   "portForwardingTunnelActive_one": "Port Forwarding ({{count}} tunnel active)",
   "portForwardingTunnelActive_other": "Port Forwarding ({{count}} tunnels active)",
   "portNumber": "Port number",

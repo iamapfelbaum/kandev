@@ -43,6 +43,7 @@ async function seedRemoteSession(
   // registers, leaving isAgentBusy=true and the idle input never rendering. The
   // helper reloads once to re-derive state from SSR. The plain wait flaked here.
   await session.waitForChatIdle({ timeout: 30_000 });
+  await session.enablePortForwarding();
 
   // Reset workspace default executor so other tests aren't affected
   await apiClient.updateWorkspace(seedData.workspaceId, {
@@ -87,17 +88,90 @@ async function seedLocalSession(
 }
 
 test.describe("Port Forward Dialog", () => {
-  test("button is hidden for local executor session", async ({ testPage, apiClient, seedData }) => {
+  test("local executor can enable the port forwarding control", async ({
+    testPage,
+    apiClient,
+    seedData,
+  }) => {
     const { session } = await seedLocalSession(testPage, apiClient, seedData, "Local Port Test");
     await expect(session.portForwardButton).not.toBeVisible();
+    await session.enablePortForwarding();
+    await expect(session.portForwardButton).toBeVisible();
   });
 
-  test("button is visible for mock remote executor session", async ({
+  test("button is visible for mock remote executor after launcher enable", async ({
     testPage,
     apiClient,
     seedData,
   }) => {
     const { session } = await seedRemoteSession(testPage, apiClient, seedData, "Remote Port Test");
+    await expect(session.portForwardButton).toBeVisible();
+  });
+
+  test("disabling the preference hides the top-bar control", async ({
+    testPage,
+    apiClient,
+    seedData,
+  }) => {
+    const { session } = await seedRemoteSession(
+      testPage,
+      apiClient,
+      seedData,
+      "Disable Port Forwarding Test",
+    );
+    await expect(session.portForwardButton).toBeVisible();
+
+    await session.togglePortForwardingPreference();
+
+    await expect(session.portForwardButton).not.toBeVisible();
+  });
+
+  test("disabling visibility leaves an active tunnel available", async ({
+    testPage,
+    apiClient,
+    seedData,
+  }) => {
+    const { session } = await seedRemoteSession(
+      testPage,
+      apiClient,
+      seedData,
+      "Active Tunnel Visibility Test",
+    );
+    await session.portForwardButton.click();
+    await expect(session.portForwardDialog).toBeVisible();
+
+    await session.portForwardInput.fill("3000");
+    await session.portForwardAddButton.click();
+    const row = session.portForwardRow(3000);
+    await expect(row).toBeVisible();
+    await session.portForwardTunnelToggle(3000).click();
+    await session.portForwardTunnelStart(3000).click();
+    await expect(row.locator("a[target='_blank']")).toHaveCount(2);
+
+    await session.portForwardDialog.getByRole("button", { name: "Close" }).click();
+    await session.togglePortForwardingPreference();
+    await expect(session.portForwardButton).not.toBeVisible();
+
+    await session.togglePortForwardingPreference();
+    await expect(session.portForwardButton).toBeVisible();
+    await session.portForwardButton.click();
+    await expect(session.portForwardDialog).toBeVisible();
+    await expect(session.portForwardRow(3000).locator("a[target='_blank']")).toHaveCount(2);
+    await session.portForwardDialog.getByRole("button", { name: "Close" }).click();
+  });
+
+  test("preference survives a task page reload", async ({ testPage, apiClient, seedData }) => {
+    const { session } = await seedLocalSession(
+      testPage,
+      apiClient,
+      seedData,
+      "Persist Port Forwarding Test",
+    );
+    await session.enablePortForwarding();
+
+    await testPage.reload();
+    await session.waitForLoad();
+
     await expect(session.portForwardButton).toBeVisible();
   });
 
