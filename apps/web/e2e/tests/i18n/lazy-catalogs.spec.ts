@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { test, expect } from "../../fixtures/test-base";
 
 /**
@@ -19,9 +22,44 @@ import { test, expect } from "../../fixtures/test-base";
  */
 
 const APPEARANCE_URL = "/settings/general/appearance";
-const LAZY_LOCALE_CHUNK = /\/assets\/i18n-(pt-pt|zh-cn|pseudo)-[^/]+\.js$/;
+
+/**
+ * The locales this spec must account for, read from the same directory listing
+ * `localeChunkGroups()` in vite.config.ts reads to NAME the chunks. Deriving
+ * them is the point: a hardcoded `(pt-pt|zh-cn|pseudo)` does not fail the day
+ * `fr` is added — it just stops covering it, so an eagerly-bundled `fr` sails
+ * past the "no non-English catalog" assertion below and an `i18n-fr-<hash>.js`
+ * satisfies the "en is present" one. Both checks stay green while the thing
+ * they check shrinks.
+ *
+ * `SUPPORTED_LOCALES` would be the more obvious source and is not reachable
+ * here: importing `lib/i18n` executes `import.meta.glob` and reads
+ * `__KANDEV_PSEUDO_LOCALE_BUNDLED__` at module scope, both of which exist only
+ * under Vite, and Playwright loads this file in plain Node.
+ *
+ * A locale directory whose chunk this build did not emit — `pseudo` in a plain
+ * `vite build` — needs no special case: it only ever widens a "was not
+ * downloaded" assertion and an exclusion list, and no request can name it.
+ */
+const NON_EN_LOCALES = fs
+  .readdirSync(path.resolve(__dirname, "../../../src/locales"), { withFileTypes: true })
+  .filter((entry) => entry.isDirectory() && entry.name !== "en")
+  .map((entry) => entry.name);
+
+if (NON_EN_LOCALES.length === 0) {
+  // Both patterns below degrade to "matches nothing" on an empty list, which is
+  // a green run that checked nothing at all — the exact failure this derivation
+  // exists to prevent. Refuse to load instead.
+  throw new Error("no non-en locale directories under src/locales; this spec would assert nothing");
+}
+
+const LOCALE_ALTERNATION = NON_EN_LOCALES.map((locale) =>
+  locale.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+).join("|");
+
+const LAZY_LOCALE_CHUNK = new RegExp(`/assets/i18n-(?:${LOCALE_ALTERNATION})-[^/]+\\.js$`);
 /** The eager chunk: `i18n-<hash>.js`, with no locale segment. */
-const EAGER_EN_CHUNK = /\/assets\/i18n-(?!pt-pt-|zh-cn-|pseudo-)[^/]+\.js$/;
+const EAGER_EN_CHUNK = new RegExp(`/assets/i18n-(?!(?:${LOCALE_ALTERNATION})-)[^/]+\\.js$`);
 
 test.describe("i18n lazy catalogs", () => {
   test("ships only en up front and fetches a locale when it is activated", async ({ testPage }) => {
@@ -95,10 +133,11 @@ test.describe("i18n lazy catalogs", () => {
       `Untranslated keys rendered on a cold zh-cn boot: ${rawKeys.join(", ")}`,
     ).toEqual([]);
 
-    // Restore, so the persisted cookie does not leak into later specs.
-    const selectAfter = testPage.getByLabel("显示语言");
-    await selectAfter.click();
-    await testPage.getByRole("listbox").getByRole("option", { name: "English" }).click();
-    await expect(testPage.locator("html")).toHaveAttribute("lang", "en", { timeout: 10_000 });
+    // No cookie restore here on purpose. `kandev_locale` is browser state and
+    // nothing else — the switcher persists it with `document.cookie` and writes
+    // nothing server-side — while the `testPage` fixture opens a fresh
+    // `browser.newContext()` per test and closes it in teardown. The cookie dies
+    // with the context whether this test passes or throws, so a restore step
+    // would only ever be a conditional no-op that reads like a real guarantee.
   });
 });
