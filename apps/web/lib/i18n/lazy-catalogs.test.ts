@@ -163,9 +163,15 @@ describe("concurrent activation", () => {
 
     const stale = activateLocale("zh-cn");
     const current = activateLocale("pt-pt");
-    await Promise.all([stale, current]);
+    const [staleResult] = await Promise.all([stale, current]);
 
     expect(i18n.language).toBe("pt-pt");
+    // The abandoned call reports the winner, not what it was asked for. The
+    // switcher does `setLocale(await activateLocale(value))` and the stale call
+    // settles LAST, so returning "zh-cn" here would leave the dropdown reading
+    // 简体中文 over a Portuguese app — the race surviving in the one place the
+    // user looks to confirm it did not happen.
+    expect(staleResult).toBe("pt-pt");
     vi.doUnmock("../../src/locales/zh-cn/settings.json");
   });
 

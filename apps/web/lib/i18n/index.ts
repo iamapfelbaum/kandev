@@ -273,6 +273,14 @@ function ensureInitialized(locale: SupportedLocale) {
  * cookie the user never chose. Eager bundling had no such window. Each call
  * claims a sequence number and abandons everything after the await if a newer
  * one has started — the catalog it already registered stays, which is harmless.
+ *
+ * A stale call reports the locale that ACTUALLY won, not the one it was asked
+ * for. The switcher does `setLocale(await activateLocale(value))`, so returning
+ * the abandoned locale would leave the dropdown reading "简体中文" over a
+ * Portuguese app — the same race, surviving in the one place the user looks to
+ * confirm it did not happen. Both orderings converge on the winner: if the newer
+ * call already finished, this returns its locale; if it has not, this returns the
+ * pre-switch locale and the newer call's own `setLocale` lands after.
  */
 let latestActivation = 0;
 
@@ -281,7 +289,7 @@ export async function activateLocale(locale: string): Promise<SupportedLocale> {
   const activation = ++latestActivation;
   ensureInitialized(normalized);
   await loadLocaleOrFallback(normalized);
-  if (activation !== latestActivation) return normalized;
+  if (activation !== latestActivation) return normalizeLocale(i18next.language);
   if (i18next.language !== normalized) {
     await i18next.changeLanguage(normalized);
   }
