@@ -83,4 +83,48 @@ describe("PortForwardingVisibilityProvider", () => {
     expect(result.current.enabled).toBe(true);
     expect(result.current.dialogOpen).toBe(true);
   });
+
+  it("discards an in-flight toggle result when the task switches", async () => {
+    let resolveToggle!: () => void;
+    updateTaskPortForwardingMock.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveToggle = resolve;
+      }),
+    );
+    let providerProps = {
+      taskId: "task-1",
+      metadata: { port_forwarding_enabled: false } as Record<string, unknown>,
+    };
+    const dynamicWrapper = ({ children }: PropsWithChildren) => (
+      <PortForwardingVisibilityProvider
+        taskId={providerProps.taskId}
+        metadata={providerProps.metadata}
+        sessionId="session-1"
+        isAgentctlReady
+      >
+        {children}
+      </PortForwardingVisibilityProvider>
+    );
+    const { result, rerender } = renderHook(() => usePortForwardingVisibility(), {
+      wrapper: dynamicWrapper,
+    });
+
+    act(() => {
+      void result.current.togglePortForwarding({ openDialogOnEnable: true });
+    });
+    expect(updateTaskPortForwardingMock).toHaveBeenCalledWith("task-1", true);
+
+    providerProps = { taskId: "task-2", metadata: {} };
+    rerender();
+    expect(result.current.enabled).toBe(false);
+    expect(result.current.isUpdating).toBe(false);
+
+    await act(async () => {
+      resolveToggle();
+    });
+
+    expect(result.current.enabled).toBe(false);
+    expect(result.current.dialogOpen).toBe(false);
+    expect(result.current.isUpdating).toBe(false);
+  });
 });

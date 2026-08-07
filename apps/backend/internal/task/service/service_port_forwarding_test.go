@@ -25,19 +25,19 @@ func TestUpdateTaskMetadataPublishesMergedTaskUpdatedForPortForwarding(t *testin
 		WorkflowStepID: "step-port",
 		Title:          "Port task",
 		Priority:       "medium",
-		Metadata:       map[string]interface{}{"unrelated": "preserve", "port_forwarding_enabled": false},
+		Metadata:       map[string]interface{}{"unrelated": "preserve", models.MetaKeyPortForwardingEnabled: false},
 	}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
 	eventBus.ClearEvents()
 
 	updated, err := svc.UpdateTaskMetadata(ctx, "task-port", map[string]interface{}{
-		"port_forwarding_enabled": true,
+		models.MetaKeyPortForwardingEnabled: true,
 	})
 	if err != nil {
 		t.Fatalf("UpdateTaskMetadata: %v", err)
 	}
-	if got := updated.Metadata["port_forwarding_enabled"]; got != true {
+	if got := updated.Metadata[models.MetaKeyPortForwardingEnabled]; got != true {
 		t.Fatalf("updated preference = %#v, want true", got)
 	}
 	if got := updated.Metadata["unrelated"]; got != "preserve" {
@@ -48,7 +48,7 @@ func TestUpdateTaskMetadataPublishesMergedTaskUpdatedForPortForwarding(t *testin
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if got := persisted.Metadata["port_forwarding_enabled"]; got != true {
+	if got := persisted.Metadata[models.MetaKeyPortForwardingEnabled]; got != true {
 		t.Fatalf("persisted preference = %#v, want true", got)
 	}
 	if got := persisted.Metadata["unrelated"]; got != "preserve" {
@@ -70,7 +70,7 @@ func TestUpdateTaskMetadataPublishesMergedTaskUpdatedForPortForwarding(t *testin
 	if !ok {
 		t.Fatalf("event metadata type = %T, want map[string]interface{}", data["metadata"])
 	}
-	if got := metadata["port_forwarding_enabled"]; got != true {
+	if got := metadata[models.MetaKeyPortForwardingEnabled]; got != true {
 		t.Fatalf("event preference = %#v, want true", got)
 	}
 	if got := metadata["unrelated"]; got != "preserve" {
@@ -79,12 +79,12 @@ func TestUpdateTaskMetadataPublishesMergedTaskUpdatedForPortForwarding(t *testin
 
 	eventBus.ClearEvents()
 	updated, err = svc.UpdateTaskMetadata(ctx, "task-port", map[string]interface{}{
-		"port_forwarding_enabled": false,
+		models.MetaKeyPortForwardingEnabled: false,
 	})
 	if err != nil {
 		t.Fatalf("UpdateTaskMetadata disable: %v", err)
 	}
-	if got := updated.Metadata["port_forwarding_enabled"]; got != false {
+	if got := updated.Metadata[models.MetaKeyPortForwardingEnabled]; got != false {
 		t.Fatalf("disabled preference = %#v, want false", got)
 	}
 	if got := updated.Metadata["unrelated"]; got != "preserve" {
