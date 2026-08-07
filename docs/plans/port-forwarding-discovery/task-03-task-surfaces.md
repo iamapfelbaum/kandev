@@ -78,8 +78,11 @@ evidence, and synchronized task/plan status. Do not add E2E coverage in this tas
   disabling visibility closes only the control/dialog and leaves runtime tunnels untouched.
 - Added the enabled control to the phone top bar and a 44px active-task action in the phone Drawer
   and tablet Sheet; the existing dialog now uses dynamic viewport bounds and one scroll owner.
+- Hardened the Dockview launchers for routes without the task provider, ignored stale tunnel-list
+  responses after session changes, and reset the dialog when agentctl readiness is lost.
 - Verification: `rtk pnpm exec vitest run components/task/dockview-add-panel-items.test.tsx
   components/task/task-top-bar.test.tsx components/task/mobile/session-mobile-layout.test.tsx
-  components/task/port-forwarding-visibility-provider.test.tsx` — passed (39 tests across 4 files).
+  components/task/port-forwarding-visibility-provider.test.tsx components/task/port-forward-dialog.test.tsx`
+  — passed (43 tests across 5 files).
 - Verification: `rtk pnpm run typecheck` — passed.
 - Verification: `rtk pnpm --filter @kandev/web lint` — passed.

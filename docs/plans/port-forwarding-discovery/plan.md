@@ -165,7 +165,7 @@ remote-only assumptions and prove local, remote, persistence, failure, and mobil
   'Test.*PortForward'` — passed across both packages.
 - Backend suite: `rtk make -C apps/backend test` — passed.
 - Frontend focused Vitest coverage for the API, mapping, WS merge, visibility controller, launcher,
-  top bar, and mobile layout — 62 tests passed across 7 files, plus 39 surface tests across 4 files.
+  top bar, and mobile layout — 65 tests passed across 7 files, plus 43 surface tests across 5 files.
 - Frontend typecheck: `rtk pnpm run typecheck` — passed.
 - Frontend lint: `rtk pnpm --filter @kandev/web lint` — passed.
 - i18n checks: `rtk pnpm run i18n:check` and `rtk pnpm run i18n:ratchet` — passed; the catalog
@@ -178,9 +178,14 @@ remote-only assumptions and prove local, remote, persistence, failure, and mobil
   e2e/tests/session/port-forward-dialog.spec.ts --project=chromium` — 12 passed.
 - Mobile E2E: `rtk pnpm exec playwright test --config e2e/playwright.config.ts
   e2e/tests/session/mobile-port-forwarding.spec.ts --project=mobile-chrome` — 1 passed.
+- Review-fixup validation: backend port-forward tests — 9 passed across 2 packages; frontend
+  focused and surface coverage — 103 tests passed across 11 files; typecheck, lint, formatting,
+  and diff checks passed.
 
 All implementation task files and this plan are synchronized to completed status. The E2E fixture
-managed temporary repositories and exited cleanly.
+managed temporary repositories and exited cleanly. The not-ready agentctl transition remains an
+explicit E2E coverage risk recorded in Task 04; the shared readiness gate is covered by focused
+provider and launcher tests.
 
 ---
 

@@ -71,8 +71,30 @@ behavior, and synchronized task/plan status. Leave the launcher and top-bar rend
 - Added a shared visibility provider with readiness gating, optimistic writes, rollback feedback,
   task-change reconciliation, and successful-enable dialog opening.
 - Added translated failure feedback in the English, pseudo-locale, and Portuguese locale files.
+- Changed files:
+  - `apps/web/components/task/port-forwarding-visibility-provider.test.tsx`
+  - `apps/web/components/task/port-forwarding-visibility-provider.tsx`
+  - `apps/web/components/task/port-forwarding-visibility.test.ts`
+  - `apps/web/components/task/port-forwarding-visibility.ts`
+  - `apps/web/components/task/task-page-content-helpers.test.ts`
+  - `apps/web/components/task/task-page-content-helpers.ts`
+  - `apps/web/lib/api/domains/kanban-api.test.ts`
+  - `apps/web/lib/api/domains/kanban-api.ts`
+  - `apps/web/lib/kanban/map-task.test.ts`
+  - `apps/web/lib/kanban/map-task.ts`
+  - `apps/web/lib/ssr/mapper.test.ts`
+  - `apps/web/lib/ssr/mapper.ts`
+  - `apps/web/lib/state/slices/kanban/types.ts`
+  - `apps/web/lib/ws/handlers/tasks-port-forwarding.test.ts`
+  - `apps/web/lib/ws/handlers/tasks.ts`
+  - `apps/web/src/locales/en/task.json`
+  - `apps/web/src/locales/pseudo/task.json`
+  - `apps/web/src/locales/pt-pt/task.json`
+- Event reconciliation: an explicit metadata object replaces the cached metadata, while an omitted
+  metadata field preserves the existing preference.
 - Verification: `rtk pnpm exec vitest run lib/api/domains/kanban-api.test.ts lib/kanban/map-task.test.ts
   lib/ssr/mapper.test.ts lib/ws/handlers/tasks-port-forwarding.test.ts
   components/task/task-page-content-helpers.test.ts components/task/port-forwarding-visibility.test.ts
-  components/task/port-forwarding-visibility-provider.test.tsx` — passed (62 tests across 7 files).
+  components/task/port-forwarding-visibility-provider.test.tsx` — passed (65 tests across 7 files).
 - Verification: `rtk pnpm run typecheck` — passed.
+- Synchronized status: Task 02 and the implementation plan are marked completed.

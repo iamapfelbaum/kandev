@@ -523,14 +523,18 @@ export function PortForwardButton({ sessionId }: { sessionId?: string | null }) 
   );
 
   useEffect(() => {
-    if (!sessionId || !canToggle) return;
-    listTunnels(sessionId)
-      .then((tunnels) => {
-        setActiveTunnelsRaw(new Map(tunnels.map((t) => [t.port, t.tunnel_port])));
-      })
-      .catch(() => {
-        // Tunnel state is unavailable; keep the control in its zero-tunnel state.
-      });
+    if (!sessionId || !canToggle) {
+      setActiveTunnelsRaw(new Map());
+      return;
+    }
+    let cancelled = false;
+    listTunnels(sessionId).then((tunnels) => {
+      if (cancelled) return;
+      setActiveTunnelsRaw(new Map(tunnels.map((t) => [t.port, t.tunnel_port])));
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [canToggle, sessionId]);
 
   if (!enabled || !canToggle || !sessionId) return null;

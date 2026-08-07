@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -1331,6 +1332,10 @@ func (h *TaskHandlers) httpUpdateTaskPortForwarding(c *gin.Context) {
 	decoder := json.NewDecoder(c.Request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil || body.Enabled == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "enabled must be a boolean"})
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "enabled must be a boolean"})
 		return
 	}

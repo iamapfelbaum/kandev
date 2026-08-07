@@ -26,7 +26,6 @@ export type PortForwardingVisibility = {
   isUpdating: boolean;
   dialogOpen: boolean;
   setDialogOpen: (open: boolean) => void;
-  openDialog: () => void;
   togglePortForwarding: (options?: PortForwardingToggleOptions) => Promise<void>;
 };
 
@@ -41,8 +40,12 @@ type PortForwardingVisibilityProviderProps = {
 
 const PortForwardingVisibilityContext = createContext<PortForwardingVisibility | null>(null);
 
+export function useOptionalPortForwardingVisibility(): PortForwardingVisibility | undefined {
+  return useContext(PortForwardingVisibilityContext) ?? undefined;
+}
+
 export function usePortForwardingVisibility(): PortForwardingVisibility {
-  const context = useContext(PortForwardingVisibilityContext);
+  const context = useOptionalPortForwardingVisibility();
   if (!context) {
     throw new Error(
       "usePortForwardingVisibility must be used within PortForwardingVisibilityProvider",
@@ -88,9 +91,9 @@ export function PortForwardingVisibilityProvider({
     }
   }, [isUpdating, persistedEnabled, taskKey]);
 
-  const openDialog = useCallback(() => {
-    if (enabled && canToggle) setDialogOpen(true);
-  }, [canToggle, enabled]);
+  useEffect(() => {
+    if (!canToggle) setDialogOpen(false);
+  }, [canToggle]);
 
   const togglePortForwarding = useCallback(
     async (options?: PortForwardingToggleOptions) => {
@@ -131,10 +134,9 @@ export function PortForwardingVisibilityProvider({
       isUpdating,
       dialogOpen,
       setDialogOpen,
-      openDialog,
       togglePortForwarding,
     }),
-    [canToggle, dialogOpen, enabled, isUpdating, openDialog, togglePortForwarding],
+    [canToggle, dialogOpen, enabled, isUpdating, togglePortForwarding],
   );
 
   return (

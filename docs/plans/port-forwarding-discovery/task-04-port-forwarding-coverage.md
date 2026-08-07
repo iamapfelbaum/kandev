@@ -75,3 +75,14 @@ Verification:
 The fixture-managed E2E runs exited cleanly and created their temporary repositories under `/tmp`.
 Changed E2E files: `e2e/pages/session-page.ts`, `e2e/tests/session/port-forward-dialog.spec.ts`,
 and `e2e/tests/session/mobile-port-forwarding.spec.ts`.
+
+Not-ready path evidence: the focused launcher/provider coverage verifies the disabled `canToggle`
+state, but these E2E runs do not simulate an agentctl readiness loss, so the not-ready E2E scenario
+remains uncovered.
+
+Remaining risks: a dedicated E2E fixture is still needed to exercise the live agentctl-not-ready
+transition and its accessible disabled-state explanation. The implementation fails closed through
+the shared readiness gate, and the covered unit/surface tests continue to verify that behavior.
+
+Synchronized status: Task 04 and the implementation plan remain marked completed; the uncovered
+scenario is recorded explicitly as a validation risk rather than claimed as E2E coverage.

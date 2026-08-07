@@ -16,7 +16,7 @@ import { AddPanelMenuItems } from "./dockview-add-panel-items";
 import { NewSessionDialog } from "./new-session-dialog";
 import { useActiveSessionDevScript } from "./repository-scripts-menu";
 import { useTranslation } from "react-i18next";
-import { usePortForwardingVisibility } from "./port-forwarding-visibility-provider";
+import { useOptionalPortForwardingVisibility } from "./port-forwarding-visibility-provider";
 
 /**
  * Watermark rendered by Dockview when a group becomes empty (e.g. after
@@ -97,7 +97,7 @@ function useWatermarkMenuState(
   });
   const { prs } = useTaskPR(taskID);
   const mrs = useTaskMRs(taskID);
-  const portForwarding = usePortForwardingVisibility();
+  const portForwarding = useOptionalPortForwardingVisibility();
   return useMemo(
     () => ({
       taskId: taskID,

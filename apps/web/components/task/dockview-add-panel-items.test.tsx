@@ -214,7 +214,6 @@ describe("AddPanelMenuItems — port forwarding preference", () => {
       isUpdating: false,
       dialogOpen: false,
       setDialogOpen: vi.fn(),
-      openDialog: vi.fn(),
       togglePortForwarding: vi.fn(),
       ...overrides,
     };

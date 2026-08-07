@@ -3,6 +3,7 @@ import type { PropsWithChildren } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PortForwardingVisibilityProvider,
+  useOptionalPortForwardingVisibility,
   usePortForwardingVisibility,
 } from "./port-forwarding-visibility-provider";
 
@@ -36,12 +37,12 @@ function wrapper({ children }: PropsWithChildren) {
   );
 }
 
-describe("PortForwardingVisibilityProvider", () => {
-  beforeEach(() => {
-    updateTaskPortForwardingMock.mockReset();
-    toastMock.mockReset();
-  });
+beforeEach(() => {
+  updateTaskPortForwardingMock.mockReset();
+  toastMock.mockReset();
+});
 
+describe("PortForwardingVisibilityProvider", () => {
   it("rolls back a failed preference write and reports translated feedback", async () => {
     updateTaskPortForwardingMock.mockRejectedValueOnce(new Error("network"));
     const { result } = renderHook(() => usePortForwardingVisibility(), { wrapper });
@@ -126,5 +127,38 @@ describe("PortForwardingVisibilityProvider", () => {
     expect(result.current.enabled).toBe(false);
     expect(result.current.dialogOpen).toBe(false);
     expect(result.current.isUpdating).toBe(false);
+  });
+});
+
+describe("PortForwardingVisibility context boundaries", () => {
+  it("returns no visibility state outside a task provider", () => {
+    const { result } = renderHook(() => useOptionalPortForwardingVisibility());
+
+    expect(result.current).toBeUndefined();
+  });
+
+  it("closes the dialog when agentctl readiness is lost", () => {
+    let isAgentctlReady = true;
+    const dynamicWrapper = ({ children }: PropsWithChildren) => (
+      <PortForwardingVisibilityProvider
+        taskId="task-1"
+        metadata={{ port_forwarding_enabled: true }}
+        sessionId="session-1"
+        isAgentctlReady={isAgentctlReady}
+      >
+        {children}
+      </PortForwardingVisibilityProvider>
+    );
+    const { result, rerender } = renderHook(() => usePortForwardingVisibility(), {
+      wrapper: dynamicWrapper,
+    });
+
+    act(() => result.current.setDialogOpen(true));
+    expect(result.current.dialogOpen).toBe(true);
+
+    isAgentctlReady = false;
+    rerender();
+
+    expect(result.current.dialogOpen).toBe(false);
   });
 });

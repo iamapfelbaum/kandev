@@ -59,9 +59,19 @@ authorization caveat, and synchronized task/plan status. Do not modify the front
 - Added `MetaKeyPortForwardingEnabled` and a merge-preserving, authorized service mutation that
   publishes the normal `task.updated` event.
 - Added `PATCH /api/v1/tasks/:id/port-forwarding` with strict boolean payload validation and
-  updated-task response conversion.
+  updated-task response conversion; the handler also rejects trailing JSON values.
 - Added service and HTTP coverage for enable, disable, metadata preservation, malformed payloads,
   and missing tasks.
+- Changed files:
+  - `apps/backend/internal/task/handlers/task_handlers.go`
+  - `apps/backend/internal/task/handlers/task_http_handlers.go`
+  - `apps/backend/internal/task/handlers/task_port_forwarding_test.go`
+  - `apps/backend/internal/task/models/models.go`
+  - `apps/backend/internal/task/service/service_port_forwarding_test.go`
+  - `apps/backend/internal/task/service/service_workflow.go`
+- Event/authorization caveat: no caveat; the mutation uses the existing task visibility
+  authorization and publishes after a successful repository write.
 - Verification: `rtk go test ./internal/task/service ./internal/task/handlers -run 'Test.*PortForward'`
-  — passed (8 tests across 2 packages).
+  — passed (9 tests across 2 packages).
 - Verification: `rtk make -C apps/backend test` — passed.
+- Synchronized status: Task 01 and the implementation plan are marked completed.
