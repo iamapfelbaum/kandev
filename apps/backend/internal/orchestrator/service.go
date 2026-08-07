@@ -246,6 +246,16 @@ type sessionExecutorStore interface {
 	// than an idempotent same-owner observation.
 	ClaimTaskTitleSession(ctx context.Context, taskID, sessionID string) (owned bool, newlyClaimed bool, err error)
 	UpdateTask(ctx context.Context, task *models.Task) error
+	// SetTaskMetadataKey / RemoveTaskMetadataKey are concurrent-key-safe JSON
+	// patch helpers on tasks.metadata (implemented by the sqlite/Postgres
+	// repository). Used by startup reconciliation to mark interrupted tasks
+	// and by the session-start funnel to clear the marker.
+	SetTaskMetadataKey(ctx context.Context, taskID, key string, value interface{}) error
+	// SetTaskMetadataKeyIfNotArchived writes one metadata key only when the
+	// task row still has archived_at IS NULL (single statement — the archive
+	// check and the write cannot be separated by a concurrent archive).
+	SetTaskMetadataKeyIfNotArchived(ctx context.Context, taskID, key string, value interface{}) (bool, error)
+	RemoveTaskMetadataKey(ctx context.Context, taskID, key string) (bool, error)
 	ListChildCompletionRows(ctx context.Context, parentID string) ([]models.ChildCompletionRow, error)
 	// Git snapshots and commits
 	GetLatestGitSnapshot(ctx context.Context, sessionID string) (*models.GitSnapshot, error)
@@ -574,6 +584,12 @@ type Service struct {
 	// The spec allows at most one in-flight steer per session; a second attempt
 	// while one is outstanding queues instead. Keyed by sessionID, cleared when
 	// the steer dispatch is accepted or fails.
+	//
+	// Also read by the non-cancelling queue-drain paths (see isSteerInFlight):
+	// SteerTask releases the per-session message-queue admission lock before
+	// its own blocking dispatch, so a message queued in that window — with the
+	// turn completing in the same window — must not let an ordinary drain
+	// dispatch it ahead of the steer that was admitted first.
 	steerInFlight sync.Map
 	// Session reset flags: sessionID -> true while resetAgentContext is restarting process.
 	// Used to suppress stale ready events and avoid draining queued prompts mid-reset.
@@ -1808,6 +1824,21 @@ func (s *Service) reconcileOneSessionOnStartup(ctx context.Context, running *mod
 					zap.String("task_id", running.TaskID),
 					zap.Error(updateErr))
 			}
+		}
+	}
+
+	// Mark the task interrupted when its session was mid-turn when the backend
+	// died (STARTING/RUNNING) so task-list surfaces can show the red
+	// interruption icon. WAITING_FOR_INPUT sessions were idle, not interrupted.
+	// The write is archive-atomic (SetTaskMetadataKeyIfNotArchived), so an
+	// archive that commits after this check cannot leave a stale marker on an
+	// archived task. The marker is cleared when a session of the task next
+	// enters STARTING/RUNNING (see updateTaskSessionStateWithHook).
+	if running.TaskID != "" && (previousState == models.TaskSessionStateStarting || previousState == models.TaskSessionStateRunning) {
+		if _, setErr := s.repo.SetTaskMetadataKeyIfNotArchived(ctx, running.TaskID, models.MetaKeyInterruptedAt, time.Now().UTC().Format(time.RFC3339)); setErr != nil {
+			s.logger.Warn("failed to mark task interrupted on startup",
+				zap.String("task_id", running.TaskID),
+				zap.Error(setErr))
 		}
 	}
 

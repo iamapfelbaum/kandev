@@ -224,7 +224,12 @@ function TriggerFields({
       {state.triggerKind === "cron" && (
         <>
           <p className="text-xs text-muted-foreground -mt-2">
-            {t("office:standardCronExpressionExample")}
+            {/*
+              The cron expression is SYNTAX, not copy: it travels as a value so a
+              translator cannot reword it into something no parser accepts.
+              Guarded by app/office/office-cron-i18n.test.ts.
+            */}
+            {t("office:standardCronExpressionExample", { cron: "0 9 * * MON" })}
           </p>
           <div>
             <Label htmlFor="routine-timezone">{t("office:timezone")}</Label>

@@ -59,6 +59,7 @@ Kandev's task model: documents, execution stages, labels, blocker escalation, su
 |---|---|
 | [documents](tasks/documents.md) | shipped |
 | [execution-stages](tasks/execution-stages.md) | shipped |
+| [interrupted-task-indicator](tasks/interrupted-task-indicator.md) | complete |
 | [labels](tasks/labels.md) | shipped |
 | [title-length-limit](tasks/title-length-limit.md) | complete |
 | [model-unification](tasks/model-unification.md) | draft |
@@ -117,6 +118,7 @@ Per-workspace credentials and triage triggers for external services.
 | [github-authentication](integrations/github-authentication.md) | draft |
 | [gitlab-integration](gitlab-integration/spec.md) | shipped |
 | [jira-status-filter](jira-status-filter/spec.md) | shipped |
+| [enable-disable-toggle](integrations/enable-disable-toggle.md) | shipped |
 
 ## workspaces/ — workspace lifecycle
 
@@ -192,6 +194,7 @@ Subscription quota tracking and per-agent cheap-model profile routing.
 | [context-compaction-count](context-compaction-count/spec.md) | approved |
 | [context-window reset freshness](context-window-reset-freshness/spec.md) | shipped |
 | [cancel-turn-progress](ui/cancel-turn-progress.md) | approved |
+| [agent-todo-list-panel](ui/agent-todo-list-panel.md) | shipped |
 
 ## system-page/ — operational diagnostics & maintenance UI
 
@@ -230,6 +233,7 @@ System pages (Radarr/Sonarr-style) for status, disk usage, database maintenance,
 | [mobile-quick-chat-topbar](mobile-quick-chat-topbar/spec.md) | building |
 | [native-code-review](native-code-review/spec.md) | building |
 | [missing-task-route-recovery](missing-task-route-recovery/spec.md) | draft |
+| [browser-inspect-annotations-save](browser-inspect-annotations-save/spec.md) | shipped |
 
 ---
 

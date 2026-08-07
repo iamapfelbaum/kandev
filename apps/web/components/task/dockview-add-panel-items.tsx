@@ -7,8 +7,10 @@ import {
   IconFolder,
   IconGitBranch,
   IconGitPullRequest,
+  IconListCheck,
   IconNetwork,
 } from "@tabler/icons-react";
+import { useTranslation } from "react-i18next";
 import {
   DropdownMenuCheckboxItem,
   DropdownMenuItem,
@@ -26,7 +28,6 @@ import { mrTaskKey } from "@/components/gitlab/mr-detail-panel";
 import { RepositoryScriptsMenuItems } from "./repository-scripts-menu";
 import { SessionReopenMenuItems } from "./session-reopen-menu";
 import { TerminalReopenMenuItems } from "./terminal-reopen-menu";
-import { useTranslation } from "react-i18next";
 import type { PortForwardingVisibility } from "./port-forwarding-visibility-provider";
 
 export type AddPanelMenuState = {
@@ -144,6 +145,7 @@ export function AddPanelMenuItems({
   const addBrowserPanel = useDockviewStore((s) => s.addBrowserPanel);
   const addVscodePanel = useDockviewStore((s) => s.addVscodePanel);
   const addPlanPanel = useDockviewStore((s) => s.addPlanPanel);
+  const addTodosPanel = useDockviewStore((s) => s.addTodosPanel);
   const addFilesPanel = useDockviewStore((s) => s.addFilesPanel);
   const addChangesPanel = useDockviewStore((s) => s.addChangesPanel);
   const addPRPanel = useDockviewStore((s) => s.addPRPanel);
@@ -191,6 +193,12 @@ export function AddPanelMenuItems({
         </DropdownMenuCheckboxItem>
       )}
       <PluginTaskPanelMenuItems groupId={groupId} />
+      {!state.isPassthrough && (
+        <DropdownMenuItem onClick={() => addTodosPanel({ groupId })} className={MENU_ITEM_CLASS}>
+          <IconListCheck className={MENU_ICON_CLASS} />
+          {t("common:todos")}
+        </DropdownMenuItem>
+      )}
       {!state.hasChanges && (
         <DropdownMenuItem onClick={() => addChangesPanel(groupId)} className={MENU_ITEM_CLASS}>
           <IconGitBranch className={MENU_ICON_CLASS} />
