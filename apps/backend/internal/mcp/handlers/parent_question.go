@@ -231,6 +231,20 @@ func (h *Handlers) markParentQuestionAnswered(ctx context.Context, question *mod
 	return h.taskSvc.UpdateMessage(ctx, question)
 }
 
+func (h *Handlers) restoreParentQuestionPending(ctx context.Context, question *models.Message) error {
+	if question == nil || h.taskSvc == nil {
+		return errors.New("parent question is not available")
+	}
+	metadata := cloneTaskMessageMetadataMap(question.Metadata)
+	metadata["status"] = parentQuestionStatusPending
+	metadata[models.MetaKeyParentQuestionStatus] = parentQuestionStatusPending
+	delete(metadata, models.MetaKeyParentQuestionResponse)
+	delete(metadata, "parent_question_answered_at")
+	question.Metadata = metadata
+	question.RequestsInput = true
+	return h.taskSvc.UpdateMessage(ctx, question)
+}
+
 func parentQuestionMetadata(questionID string, parentTask, childTask *models.Task, questions []clarification.Question, questionContext string) map[string]interface{} {
 	questionData := make([]clarification.Question, len(questions))
 	copy(questionData, questions)

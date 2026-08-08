@@ -26,10 +26,10 @@ spec: "../../specs/tasks/autopilot-mode.md"
 ## Verification
 
 ```bash
-cd apps && pnpm install --frozen-lockfile
-cd apps/web && pnpm e2e:run --project chromium tests/task/autopilot-mode.spec.ts
-cd apps/web && pnpm e2e:run --project mobile-chrome tests/task/mobile-autopilot-mode.spec.ts
-cd apps/backend && go test ./internal/integration/... ./internal/mcp/handlers/... ./internal/task/statussummary/...
+(cd apps && pnpm install --frozen-lockfile)
+(cd apps/web && pnpm e2e:run --project chromium tests/task/autopilot-mode.spec.ts)
+(cd apps/web && pnpm e2e:run --project mobile-chrome tests/task/mobile-autopilot-mode.spec.ts)
+(cd apps/backend && go test ./internal/integration/... ./internal/mcp/handlers/... ./internal/task/statussummary/...)
 ```
 
 ## Files likely touched
@@ -71,4 +71,7 @@ layer with justification.
 Done. The mock agent invokes the real parent-question tool, waits for the parent
 answer, and replies through the real correlated message path. Chromium and mobile
 Playwright scenarios pass, including creation controls, prompt waiting, identity and
-question icons, chat chip, answer/resume, and horizontal-overflow checks.
+question icons, chat chip, answer/resume, and horizontal-overflow checks. Backend
+message/repository tests cover durable question reconstruction and idempotent
+answer state. A full process-restart Playwright scenario was not run; that remains
+an explicit follow-up for the fixture rather than an unverified claim.

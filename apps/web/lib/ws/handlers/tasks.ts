@@ -34,6 +34,7 @@ function preservePrimaryExecutorFields(
   merged: KanbanTask,
   payload: TaskEventPayload,
 ): void {
+  if (!hasPayloadField(payload, "autopilot")) merged.autopilot = existing.autopilot;
   const primarySessionCleared =
     hasPayloadField(payload, "primary_session_id") && payload.primary_session_id === null;
   if (primarySessionCleared) return;
@@ -49,7 +50,6 @@ function preservePrimaryExecutorFields(
   if (!hasPayloadField(payload, "is_remote_executor")) {
     merged.isRemoteExecutor = existing.isRemoteExecutor;
   }
-  if (!hasPayloadField(payload, "autopilot")) merged.autopilot = existing.autopilot;
 }
 
 // A lightweight task.updated may omit an unchanged field; only an explicit

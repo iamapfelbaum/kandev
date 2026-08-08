@@ -2058,6 +2058,10 @@ func (h *Handlers) handleMessageTask(ctx context.Context, msg *ws.Message) (*ws.
 
 	parentReply, err := h.validateParentQuestionReply(ctx, req.ReplyToQuestionID, req.TaskID, senderTask, targetTask)
 	if err != nil {
+		var parentQuestionErr *parentQuestionError
+		if errors.As(err, &parentQuestionErr) {
+			return ws.NewError(msg.ID, msg.Action, parentQuestionErr.code, parentQuestionErr.message, nil)
+		}
 		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeValidation, err.Error(), nil)
 	}
 	if parentReply != nil && parentReply.alreadyAnswered {
@@ -2100,9 +2104,22 @@ func (h *Handlers) handleMessageTask(ctx context.Context, msg *ws.Message) (*ws.
 		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeForbidden,
 			`delivery_mode="interrupt" is only allowed when the sender is the target task's direct parent`, nil)
 	}
+	if parentReply != nil {
+		// Claim the durable question before dispatch. A failed status update after
+		// delivery would make a retry send the same answer a second time.
+		if err := h.markParentQuestionAnswered(ctx, parentReply.message, req.Prompt); err != nil {
+			return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeInternalError, "parent question could not be claimed: "+err.Error(), nil)
+		}
+	}
 
 	result, err := h.dispatchTaskMessage(ctx, req.TaskID, session, wrappedPrompt, senderMeta, wantsInterrupt, req.SessionID != "")
 	if err != nil {
+		if parentReply != nil {
+			if restoreErr := h.restoreParentQuestionPending(ctx, parentReply.message); restoreErr != nil {
+				h.logger.Error("failed to restore parent question after answer dispatch failure",
+					zap.String("question_id", parentReply.message.ID), zap.Error(restoreErr))
+			}
+		}
 		var qfErr *queueFullDispatchError
 		if errors.As(err, &qfErr) {
 			return ws.NewError(msg.ID, msg.Action, messagequeue.QueueFullErrorCode,
@@ -2111,12 +2128,6 @@ func (h *Handlers) handleMessageTask(ctx context.Context, msg *ws.Message) (*ws.
 		}
 		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeInternalError, err.Error(), nil)
 	}
-	if parentReply != nil {
-		if err := h.markParentQuestionAnswered(ctx, parentReply.message, req.Prompt); err != nil {
-			return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeInternalError, "message delivered but parent question status could not be updated: "+err.Error(), nil)
-		}
-	}
-
 	return ws.NewResponse(msg.ID, msg.Action, map[string]interface{}{
 		"task_id":    req.TaskID,
 		"session_id": result.sessionID,

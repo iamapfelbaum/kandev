@@ -222,6 +222,14 @@ describe("TaskItem interrupted icon", () => {
   });
 });
 
+describe("TaskItem autopilot identity", () => {
+  it("does not show the autopilot icon when the marker is false", () => {
+    renderTaskItem({ autopilot: false });
+
+    expect(screen.queryByTestId("task-autopilot-icon")).toBeNull();
+  });
+});
+
 describe("TaskItem actions", () => {
   it("keeps row-focus actions visible when no diff stats are available", () => {
     renderTaskItem({ isSelected: true });

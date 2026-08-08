@@ -26,6 +26,18 @@ func TestAutopilotQuestionCapabilitiesCanBeSwapped(t *testing.T) {
 	}
 }
 
+func TestWithoutCapabilityDoesNotMutateSourceProfile(t *testing.T) {
+	source := New(SurfaceKanbanTask, []Capability{CapabilityParentQuestion, CapabilityTaskTitle}, nil)
+	derived := source.WithoutCapability(CapabilityParentQuestion)
+
+	if !source.HasCapability(CapabilityParentQuestion) || !source.HasCapability(CapabilityTaskTitle) {
+		t.Fatalf("source capabilities = %#v, want both capabilities preserved", source.Capabilities)
+	}
+	if derived.HasCapability(CapabilityParentQuestion) || !derived.HasCapability(CapabilityTaskTitle) {
+		t.Fatalf("derived capabilities = %#v, want only task title", derived.Capabilities)
+	}
+}
+
 func TestLegacyExternalHasNoQuestionCapability(t *testing.T) {
 	ctx := Legacy("external", false, nil)
 	if ctx.HasCapability(CapabilityUserQuestion) || ctx.HasCapability(CapabilityParentQuestion) {

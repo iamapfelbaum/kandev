@@ -420,6 +420,24 @@ func TestServerSetProfileSkipsEquivalentProfile(t *testing.T) {
 	}
 }
 
+func TestServerSetModePreservesAdditiveCapabilities(t *testing.T) {
+	log := newTestLogger(t)
+	backend := NewChannelBackendClient(log)
+	defer backend.Close()
+
+	profile := mcpprofile.New(mcpprofile.SurfaceKanbanTask, []mcpprofile.Capability{mcpprofile.CapabilityParentQuestion}, nil)
+	s := NewWithProfile(backend, "child-session", "child-task", 10005, log, "", false, profile)
+
+	s.SetMode(ModeConfig)
+	assert.True(t, s.Profile().HasCapability(mcpprofile.CapabilityParentQuestion))
+	assert.NotContains(t, getRegisteredToolNames(s), "ask_parent_question_kandev")
+
+	s.SetMode(ModeTask)
+	assert.True(t, s.Profile().HasCapability(mcpprofile.CapabilityParentQuestion))
+	assert.Contains(t, getRegisteredToolNames(s), "ask_parent_question_kandev")
+	assert.NotContains(t, getRegisteredToolNames(s), "ask_user_question_kandev")
+}
+
 func containsTool(tools []string, name string) bool {
 	for _, tool := range tools {
 		if tool == name {

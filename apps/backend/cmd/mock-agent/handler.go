@@ -244,7 +244,7 @@ func handleAutopilotParentQuestion(e *emitter, prompt string) bool {
 	childTaskID, questionID := matches[1], matches[2]
 	// Keep the pending state visible long enough for the desktop and mobile
 	// specs to observe the question icon before the deterministic answer.
-	waitForDelay(e.ctx, 25_000)
+	waitForDelay(e.ctx, 1_000)
 	toolID := nextToolID()
 	e.startTool(toolID, "message_task_kandev", acp.ToolKindOther, map[string]any{
 		"task_id":              childTaskID,

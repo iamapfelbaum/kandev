@@ -80,7 +80,7 @@ func (e *Executor) resolveTaskSessionMCPProfile(ctx context.Context, taskID stri
 	}
 	capabilities := make([]mcpprofile.Capability, 0, 2)
 	if task.Autopilot {
-		if task.ParentID != "" {
+		if task.ParentID != "" && !session.IsPassthrough {
 			capabilities = append(capabilities, mcpprofile.CapabilityParentQuestion)
 		}
 	} else if !session.IsPassthrough {

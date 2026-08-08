@@ -267,17 +267,18 @@ Wave 4:
 Targeted backend:
 
 ```bash
-cd apps/backend && go test ./internal/task/... ./internal/mcp/server/... ./internal/mcp/handlers/... ./internal/sysprompt/... ./internal/orchestrator/... ./internal/clarification/...
+(cd apps/backend && go test ./internal/task/... ./internal/mcp/server/... ./internal/mcp/handlers/... ./internal/sysprompt/... ./internal/orchestrator/... ./internal/clarification/...)
 ```
 
 Targeted frontend:
 
 ```bash
-cd apps && pnpm install --frozen-lockfile
-cd apps && pnpm --filter @kandev/web test -- --run components/task-create-dialog-defaults.test.ts components/task-create-dialog-form-body.test.tsx components/task/new-subtask-form-parts.test.tsx components/task/new-subtask-form-state.test.ts components/task/use-subtask-submit.test.ts components/task/task-item.test.tsx components/task/chat/chat-input-area.test.tsx lib/kanban/map-task.test.ts
-cd apps/web && pnpm run typecheck
-cd apps && pnpm run i18n:check
-cd apps && pnpm run i18n:ratchet
+(cd apps && pnpm install --frozen-lockfile)
+(cd apps && pnpm --filter @kandev/web test -- --run components/task-create-dialog-defaults.test.ts components/task-create-dialog-form-body.test.tsx components/task/new-subtask-form-parts.test.tsx components/task/new-subtask-form-state.test.ts components/task/use-subtask-submit.test.ts components/task/task-item.test.tsx components/task/chat/chat-input-area.test.tsx lib/kanban/map-task.test.ts)
+(cd apps/web && pnpm run typecheck)
+(cd apps/web && pnpm run lint)
+(cd apps/web && pnpm run i18n:check)
+(cd apps/web && pnpm run i18n:ratchet)
 ```
 
 E2E:
@@ -299,6 +300,9 @@ node scripts/validate-public-docs.mjs
 Implemented. Verification passed: 2,263 Go tests across 9 focused packages; 156
 focused web tests; web typecheck and lint; i18n checks/ratchet; public docs
 validation (58 tests, 41 pages); and desktop/mobile Playwright autopilot scenarios.
+The fixup adds profile-capability selection tests, parent-question ownership and
+claim/restore coverage, omitted-field preservation tests, and the autopilot hook
+fallback test.
 
 ## Risks
 

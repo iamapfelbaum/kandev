@@ -1,5 +1,5 @@
 ---
-status: draft
+status: implemented
 created: 2026-08-08
 owner: cfl
 ---
@@ -124,20 +124,25 @@ Autopilot child sessions with a direct parent discover this tool instead of
 
 ```json
 {
-  "question": "Should the migration preserve the legacy column?",
-  "reason": "Both retention policies are compatible with the public spec.",
-  "blocked_effect": "The schema migration and its rollback cannot be finalized.",
-  "options": [
-    {"label": "Preserve", "description": "Keep and backfill the column."},
-    {"label": "Remove", "description": "Migrate data and drop the column."}
-  ]
+  "questions": [
+    {
+      "id": "database",
+      "prompt": "Which database should I use?",
+      "options": [
+        {"label": "SQLite", "description": "Use the embedded database."},
+        {"label": "Postgres", "description": "Use the hosted database."}
+      ]
+    }
+  ],
+  "context": "The migration needs a database choice before implementation."
 }
 ```
 
-`question`, `reason`, and `blocked_effect` are required non-empty strings.
-`options` is optional and contains two to four distinct choices. Sender task and
+`questions` contains one to four question objects. Each question has a required
+non-empty `prompt`; `id`, `title`, and `options` are optional. Sender task and
 session identity come from the authenticated MCP context; the caller cannot choose
-the parent or child session.
+the parent or child session. `context` gives the parent the short reason for the
+request.
 
 The backend resolves the task's current direct parent, persists the question, and
 queues an attributed, structured prompt to that parent. The call returns immediately:
@@ -146,8 +151,7 @@ queues an attributed, structured prompt to that parent. The call returns immedia
 {
   "question_id": "<id>",
   "parent_task_id": "<direct parent id>",
-  "status": "pending",
-  "turn_end_required": true
+  "status": "waiting_for_parent"
 }
 ```
 

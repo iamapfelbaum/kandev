@@ -23,11 +23,12 @@ spec: "../../specs/tasks/autopilot-mode.md"
 ## Verification
 
 ```bash
-cd apps && pnpm install --frozen-lockfile
-cd apps && pnpm --filter @kandev/web test -- --run components/task-create-dialog-defaults.test.ts components/task-create-dialog-form-body.test.tsx components/task/new-subtask-form-parts.test.tsx components/task/new-subtask-form-state.test.ts components/task/use-subtask-submit.test.ts components/task/task-item.test.tsx components/task/chat/chat-input-area.test.tsx lib/kanban/map-task.test.ts
-cd apps/web && pnpm run typecheck
-cd apps && pnpm run i18n:check
-cd apps && pnpm run i18n:ratchet
+(cd apps && pnpm install --frozen-lockfile)
+(cd apps && pnpm --filter @kandev/web test -- --run components/task-create-dialog-defaults.test.ts components/task-create-dialog-form-body.test.tsx components/task/new-subtask-form-parts.test.tsx components/task/new-subtask-form-state.test.ts components/task/use-subtask-submit.test.ts components/task/task-item.test.tsx components/task/chat/chat-input-area.test.tsx lib/kanban/map-task.test.ts)
+(cd apps/web && pnpm run typecheck)
+(cd apps/web && pnpm run lint)
+(cd apps/web && pnpm run i18n:check)
+(cd apps/web && pnpm run i18n:ratchet)
 ```
 
 ## Files likely touched
@@ -89,4 +90,5 @@ result, tests/checks run, and screenshots or DOM evidence used for accessibility
 Done. Added create-only switches for tasks and subtasks, shared task mapping,
 localized yellow sidebar/chat indicators, pending-question precedence, and mobile
 sheet propagation. Focused tests, typecheck, lint, i18n checks, and narrow viewport
-overflow assertions pass.
+overflow assertions pass. The fixup also covers stale direct-task fallback and
+primary-session-clear WebSocket preservation.

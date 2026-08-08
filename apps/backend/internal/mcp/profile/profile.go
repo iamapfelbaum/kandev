@@ -55,7 +55,11 @@ func (c Context) WithCapability(capability Capability) Context {
 }
 
 func (c Context) WithoutCapability(capability Capability) Context {
-	c.Capabilities = slices.DeleteFunc(c.Capabilities, func(value Capability) bool { return value == capability })
+	// Clone before filtering so changing a derived profile never overwrites the
+	// backing array owned by the source profile.
+	capabilities := slices.Clone(c.Capabilities)
+	capabilities = slices.DeleteFunc(capabilities, func(value Capability) bool { return value == capability })
+	c.Capabilities = capabilities
 	return c
 }
 

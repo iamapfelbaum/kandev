@@ -9,7 +9,8 @@ export function useTaskAutopilot(taskId: string | null): boolean {
   return useAppStore((state) => {
     if (!taskId) return false;
     const direct = state.kanban.tasks.find((task) => task.id === taskId);
-    if (direct) return direct.autopilot === true;
+    if (direct?.autopilot === true) return true;
+    if (direct?.autopilot === false) return false;
     return Object.values(state.kanbanMulti.snapshots).some((snapshot) =>
       snapshot.tasks.some((task) => task.id === taskId && task.autopilot === true),
     );

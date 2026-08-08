@@ -20,7 +20,8 @@ spec: "../../specs/tasks/autopilot-mode.md"
 - The MCP schema uses the exact short description: "Start this task in autopilot
   mode. Default: false. The value is fixed at creation and is not inherited by
   subtasks. The agent does not ask the user directly; it asks its direct parent only
-  for critical decisions."
+  for critical decisions." At runtime, a root autopilot task has no question
+  capability, while an autopilot child has only the direct-parent question tool.
 - Update/edit APIs cannot mutate the property, and task read/list/boot payloads
   expose it consistently to clients.
 

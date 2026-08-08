@@ -127,7 +127,7 @@ func TestHandleMessageTask_AnswersParentQuestionIdempotently(t *testing.T) {
 	require.Equal(t, "already_answered", answerAgainPayload["status"])
 }
 
-func TestHandleAskParentQuestion_RejectsRootAndNonAutopilotTasks(t *testing.T) {
+func TestHandleAskParentQuestion_RejectsRootTask(t *testing.T) {
 	svc, repo := newTestTaskService(t)
 	parent, _, _, _ := seedParentQuestionScenario(t, svc, repo)
 	rootSession := &models.TaskSession{ID: "parent-question-root-session", TaskID: parent.ID, IsPrimary: true, State: models.TaskSessionStateRunning}
@@ -137,5 +137,49 @@ func TestHandleAskParentQuestion_RejectsRootAndNonAutopilotTasks(t *testing.T) {
 	resp, err := h.handleAskParentQuestion(context.Background(), parentQuestionMessage(t, parent.ID, rootSession.ID))
 	require.NoError(t, err)
 	assertWSError(t, resp, ws.ErrorCodeValidation)
+}
 
+func TestHandleAskParentQuestion_RejectsNonAutopilotTask(t *testing.T) {
+	svc, repo := newTestTaskService(t)
+	parent, _, _, _ := seedParentQuestionScenario(t, svc, repo)
+	normalChild, err := svc.CreateTask(context.Background(), &service.CreateTaskRequest{
+		WorkspaceID: "ws-parent-question",
+		WorkflowID:  "wf-parent-question",
+		ParentID:    parent.ID,
+		Title:       "Normal child",
+	})
+	require.NoError(t, err)
+	normalSession := &models.TaskSession{ID: "parent-question-normal-session", TaskID: normalChild.ID, IsPrimary: true, State: models.TaskSessionStateRunning}
+	require.NoError(t, repo.CreateTaskSession(context.Background(), normalSession))
+	h, _ := newMessageTaskHandler(t, svc, repo)
+
+	resp, err := h.handleAskParentQuestion(context.Background(), parentQuestionMessage(t, normalChild.ID, normalSession.ID))
+	require.NoError(t, err)
+	assertWSError(t, resp, ws.ErrorCodeValidation)
+}
+
+func TestHandleMessageTask_RejectsParentQuestionReplyFromUnrelatedTask(t *testing.T) {
+	svc, repo := newTestTaskService(t)
+	parent, child, _, childSession := seedParentQuestionScenario(t, svc, repo)
+	stranger, err := svc.CreateTask(context.Background(), &service.CreateTaskRequest{
+		WorkspaceID: "ws-parent-question",
+		WorkflowID:  "wf-parent-question",
+		Title:       "Unrelated task",
+	})
+	require.NoError(t, err)
+	strangerSession := &models.TaskSession{ID: "parent-question-stranger-session", TaskID: stranger.ID, IsPrimary: true, State: models.TaskSessionStateRunning}
+	require.NoError(t, repo.CreateTaskSession(context.Background(), strangerSession))
+	h, _ := newMessageTaskHandler(t, svc, repo)
+	h.inputPauser = &recordingClarificationInputPauser{}
+
+	questionResp, err := h.handleAskParentQuestion(context.Background(), parentQuestionMessage(t, child.ID, childSession.ID))
+	require.NoError(t, err)
+	var payload map[string]interface{}
+	require.NoError(t, json.Unmarshal(questionResp.Payload, &payload))
+	answer := senderPayload(child.ID, "Use SQLite.", stranger.ID)
+	answer["reply_to_question_id"] = payload["question_id"]
+	resp, err := h.handleMessageTask(context.Background(), makeWSMessage(t, ws.ActionMCPMessageTask, answer))
+	require.NoError(t, err)
+	assertWSError(t, resp, ws.ErrorCodeValidation)
+	_ = parent
 }

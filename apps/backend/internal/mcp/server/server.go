@@ -482,8 +482,26 @@ func (s *Server) SetMode(mode string) {
 		return
 	}
 	s.mode = normalizedMode
-	s.profile = mcpprofile.Legacy(normalizedMode, s.disableAskQuestion, s.mcpProviders)
+	s.profile = mcpprofile.New(surfaceForMode(normalizedMode), s.profile.Capabilities, s.mcpProviders)
+	if normalizedMode == ModeTaskTitlePending {
+		s.profile = s.profile.WithCapability(mcpprofile.CapabilityTaskTitle)
+	} else {
+		s.profile = s.profile.WithoutCapability(mcpprofile.CapabilityTaskTitle)
+	}
 	s.rebuildTools()
+}
+
+func surfaceForMode(mode string) mcpprofile.Surface {
+	switch mode {
+	case ModeConfig:
+		return mcpprofile.SurfaceConfiguration
+	case ModeExternal:
+		return mcpprofile.SurfaceExternal
+	case ModeOffice:
+		return mcpprofile.SurfaceOfficeTask
+	default:
+		return mcpprofile.SurfaceKanbanTask
+	}
 }
 
 // SetProviders replaces the provider capabilities advertised by task mode.
@@ -623,7 +641,7 @@ func (s *Server) profileToolGroups() []profileToolGroup {
 		{name: "github-pr", enabled: andProfilePredicates(kanban, func(ctx mcpprofile.Context) bool { return mcpproviders.Contains(ctx.Providers, mcpproviders.GitHub) }), register: func(s *Server) { s.registerPRAutomationTools() }},
 		{name: "gitlab-mr", enabled: andProfilePredicates(kanban, func(ctx mcpprofile.Context) bool { return mcpproviders.Contains(ctx.Providers, mcpproviders.GitLab) }), register: func(s *Server) { s.registerMRAutomationTools() }},
 		{name: "user-question", enabled: capabilityEnabled(mcpprofile.CapabilityUserQuestion), register: func(s *Server) { s.registerInteractionTools() }},
-		{name: "parent-question", enabled: capabilityEnabled(mcpprofile.CapabilityParentQuestion), register: func(s *Server) { s.registerParentQuestionTool() }},
+		{name: "parent-question", enabled: andProfilePredicates(kanban, capabilityEnabled(mcpprofile.CapabilityParentQuestion)), register: func(s *Server) { s.registerParentQuestionTool() }},
 		{name: "plan", enabled: func(ctx mcpprofile.Context) bool { return kanban(ctx) || office(ctx) }, register: func(s *Server) { s.registerPlanTools() }},
 		{name: "walkthrough", enabled: kanban, register: func(s *Server) { s.registerWalkthroughTools() }},
 		{name: "review", enabled: kanban, register: func(s *Server) { s.registerReviewTools() }},
