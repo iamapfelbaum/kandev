@@ -98,6 +98,7 @@ Detaching changes task hierarchy only. An inherited workspace remains shared wit
 Call `create_task_kandev` with `parent_id: "self"`. `workspace_mode` defaults to `inherit_parent`; set it to `new_workspace` for isolated materialization.
 
 - `start_agent` defaults to `true`. Supply a detailed `prompt` when it is true; if omitted, Kandev still starts the agent without task-specific instructions. Set it to `false` for a placeholder task.
+- `autopilot` defaults to `false`. Set it to `true` to start an autonomous task. This choice is immutable and is not inherited by subtasks. An autopilot child receives `ask_parent_question_kandev` instead of `ask_user_question_kandev`; an autopilot root receives neither question tool. See [Agent Communication](agent-communication.md#autopilot-parent-questions) for the answer protocol.
 - The tool inherits the parent workspace, workflow, profile, executor, repositories, and base branches unless overridden.
 - Inherited repository attachments deliberately do not copy an explicit checkout branch.
 - An explicit same-repository child uses the inherited base branch. An explicit cross-repository child defaults to that repository's default branch unless `base_branch` is supplied.

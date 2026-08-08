@@ -165,6 +165,44 @@ Task tools use normal client discovery. When `step_complete_kandev` is required 
 
 `create_task_kandev` advertises `prompt` for instructions delivered to a newly started agent. Older callers may still send `description` when `prompt` is absent, but sending both is an error; the compatibility name is intentionally omitted from the advertised schema.
 
+### Autopilot tasks and MCP profiles
+
+Task creation accepts one optional boolean:
+
+```go
+mcp.WithBoolean(
+    "autopilot",
+    mcp.Description(
+        "Start this task in autopilot mode. Default: false. The value is fixed at creation and is not inherited by subtasks. The agent does not ask the user directly; it asks its direct parent only for critical decisions.",
+    ),
+),
+```
+
+The value defaults to `false`. It is fixed when the task is created and is not
+copied to a subtask. The task record is the source of truth after creation; a
+later task update cannot switch the prompt or MCP tools between normal and
+autopilot behavior.
+
+Kandev builds the task MCP server from a backend-owned profile. The base
+surfaces are `kanban-task`, `office-task`, `configuration`, and `external`.
+Optional capability groups, such as task titles, provider automation, user
+questions, and parent questions, are added or removed from that base profile.
+This keeps tool discovery small and makes a context change atomic.
+
+For a Kanban task, normal sessions receive `ask_user_question_kandev`.
+An autopilot child receives `ask_parent_question_kandev` instead. An autopilot
+root receives neither question tool. Kandev never registers both question
+tools for one task session. Office sessions use their smaller skill/CLI
+surface and do not receive Kanban task-creation tools.
+
+An autopilot child should ask its parent only when a decision blocks useful
+progress. `ask_parent_question_kandev` returns a `question_id` immediately;
+the child turn then ends. The parent receives a durable question message and
+answers with `message_task_kandev` using the child task ID and
+`reply_to_question_id`. The child stays in the waiting-for-input state until
+the correlated answer arrives, so the sidebar shows the normal question
+indicator during the wait.
+
 A task session currently registers these tool groups:
 
 | Group                               | Available operations                                                                                                                                                                                                                                               |

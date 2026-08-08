@@ -735,6 +735,7 @@ type httpCreateTaskRequest struct {
 	Title             string                    `json:"title"`
 	Description       string                    `json:"description,omitempty"`
 	AutoTitle         bool                      `json:"auto_title,omitempty"`
+	Autopilot         bool                      `json:"autopilot,omitempty"`
 	Priority          string                    `json:"priority,omitempty"`
 	State             *v1.TaskState             `json:"state,omitempty"`
 	Repositories      []httpTaskRepositoryInput `json:"repositories,omitempty"`
@@ -894,6 +895,7 @@ func (h *TaskHandlers) httpCreateTask(c *gin.Context) {
 		Title:          title,
 		Description:    description,
 		AutoTitle:      body.AutoTitle,
+		Autopilot:      body.Autopilot,
 		Priority:       body.Priority,
 		State:          body.State,
 		Repositories:   convertToServiceRepos(repos),

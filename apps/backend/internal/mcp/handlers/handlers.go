@@ -353,6 +353,7 @@ func (h *Handlers) RegisterHandlers(d *ws.Dispatcher) {
 	d.RegisterFunc(ws.ActionMCPSpawnSession, h.handleSpawnSession)
 	d.RegisterFunc(ws.ActionMCPGetTaskConversation, h.handleGetTaskConversation)
 	d.RegisterFunc(ws.ActionMCPAskUserQuestion, h.handleAskUserQuestion)
+	d.RegisterFunc(ws.ActionMCPAskParentQuestion, h.handleAskParentQuestion)
 	d.RegisterFunc(ws.ActionMCPCreateTaskPlan, h.handleCreateTaskPlan)
 	d.RegisterFunc(ws.ActionMCPGetTaskPlan, h.handleGetTaskPlan)
 	d.RegisterFunc(ws.ActionMCPUpdateTaskPlan, h.handleUpdateTaskPlan)
@@ -567,6 +568,7 @@ func (h *Handlers) handleCreateTask(ctx context.Context, msg *ws.Message) (*ws.M
 		WorkspaceMode          string               `json:"workspace_mode"`
 		Title                  string               `json:"title"`
 		Description            string               `json:"description"`
+		Autopilot              bool                 `json:"autopilot"`
 		AgentProfileID         string               `json:"agent_profile_id"`
 		ExecutorProfileID      string               `json:"executor_profile_id"`
 		StartAgent             *bool                `json:"start_agent"`               // nil means default to true for backward compatibility
@@ -696,6 +698,7 @@ func (h *Handlers) handleCreateTask(ctx context.Context, msg *ws.Message) (*ws.M
 		WorkflowStepID:         req.WorkflowStepID,
 		Title:                  req.Title,
 		Description:            req.Description,
+		Autopilot:              req.Autopilot,
 		Repositories:           repos,
 		BlockedBy:              req.BlockedBy,
 		AssigneeAgentProfileID: req.AssigneeAgentProfileID,
@@ -1991,12 +1994,13 @@ func (h *Handlers) publishStepCompletionEvent(
 // unattributed message.
 func (h *Handlers) handleMessageTask(ctx context.Context, msg *ws.Message) (*ws.Message, error) {
 	var req struct {
-		TaskID          string `json:"task_id"`
-		SessionID       string `json:"session_id"`
-		Prompt          string `json:"prompt"`
-		SenderTaskID    string `json:"sender_task_id"`
-		SenderSessionID string `json:"sender_session_id"`
-		DeliveryMode    string `json:"delivery_mode"`
+		TaskID            string `json:"task_id"`
+		SessionID         string `json:"session_id"`
+		Prompt            string `json:"prompt"`
+		SenderTaskID      string `json:"sender_task_id"`
+		SenderSessionID   string `json:"sender_session_id"`
+		DeliveryMode      string `json:"delivery_mode"`
+		ReplyToQuestionID string `json:"reply_to_question_id"`
 	}
 	if err := json.Unmarshal(msg.Payload, &req); err != nil {
 		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeBadRequest, "Invalid payload: "+err.Error(), nil)
@@ -2052,6 +2056,18 @@ func (h *Handlers) handleMessageTask(ctx context.Context, msg *ws.Message) (*ws.
 			"failed to look up target task: "+err.Error(), nil)
 	}
 
+	parentReply, err := h.validateParentQuestionReply(ctx, req.ReplyToQuestionID, req.TaskID, senderTask, targetTask)
+	if err != nil {
+		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeValidation, err.Error(), nil)
+	}
+	if parentReply != nil && parentReply.alreadyAnswered {
+		return ws.NewResponse(msg.ID, msg.Action, map[string]interface{}{
+			"task_id":              req.TaskID,
+			"reply_to_question_id": req.ReplyToQuestionID,
+			"status":               "already_answered",
+		})
+	}
+
 	session, errResp := h.resolveMessageTargetSession(ctx, msg, req.TaskID, req.SessionID)
 	if errResp != nil {
 		return errResp, nil
@@ -2060,6 +2076,10 @@ func (h *Handlers) handleMessageTask(ctx context.Context, msg *ws.Message) (*ws.
 	prompt := h.appendPromptReferenceExpansionContext(ctx, req.Prompt)
 	senderSessionName := h.lookupSenderSessionName(ctx, req.SenderTaskID, req.SenderSessionID)
 	wrappedPrompt, senderMeta := wrapAgentMessage(prompt, senderTask, req.SenderSessionID, senderSessionName, req.SenderTaskID == req.TaskID)
+	if req.ReplyToQuestionID != "" {
+		senderMeta[models.MetaKeyParentQuestionID] = req.ReplyToQuestionID
+		senderMeta[models.MetaKeyParentQuestionResponse] = req.Prompt
+	}
 
 	// Interrupt intent is explicit, never inferred: a parent/child
 	// relationship alone no longer drives interruption (see
@@ -2090,6 +2110,11 @@ func (h *Handlers) handleMessageTask(ctx context.Context, msg *ws.Message) (*ws.
 				qfErr.toPayload())
 		}
 		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeInternalError, err.Error(), nil)
+	}
+	if parentReply != nil {
+		if err := h.markParentQuestionAnswered(ctx, parentReply.message, req.Prompt); err != nil {
+			return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeInternalError, "message delivered but parent question status could not be updated: "+err.Error(), nil)
+		}
 	}
 
 	return ws.NewResponse(msg.ID, msg.Action, map[string]interface{}{
@@ -3356,12 +3381,27 @@ func (h *Handlers) setSessionWaitingForInput(ctx context.Context, taskID, sessio
 		return
 	}
 
-	// Update task state to REVIEW
+	// Update task state to REVIEW. Use the task service when available so the
+	// state change publishes the pending-action projection after the
+	// clarification message is persisted. The repository fallback keeps this
+	// helper usable in small handler tests and alternate integrations.
 	if taskID != "" {
-		if err := h.taskRepo.UpdateTaskState(ctx, taskID, v1.TaskStateReview); err != nil {
+		var stateErr error
+		if h.taskSvc != nil {
+			_, stateErr = h.taskSvc.UpdateTaskStateIfSessionState(
+				ctx,
+				taskID,
+				sessionID,
+				models.TaskSessionStateWaitingForInput,
+				v1.TaskStateReview,
+			)
+		} else if h.taskRepo != nil {
+			stateErr = h.taskRepo.UpdateTaskState(ctx, taskID, v1.TaskStateReview)
+		}
+		if stateErr != nil {
 			h.logger.Warn("failed to update task state to REVIEW",
 				zap.String("task_id", taskID),
-				zap.Error(err))
+				zap.Error(stateErr))
 		}
 	}
 

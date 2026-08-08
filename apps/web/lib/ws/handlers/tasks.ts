@@ -23,7 +23,6 @@ import {
   type KanbanTask,
   type TaskEventPayload,
 } from "@/lib/ws/handlers/task-archive-cache";
-
 const lifecycleDebug = createDebugLogger("task-lifecycle:ws");
 
 function hasPayloadField(payload: TaskEventPayload, field: keyof TaskEventPayload): boolean {
@@ -50,6 +49,7 @@ function preservePrimaryExecutorFields(
   if (!hasPayloadField(payload, "is_remote_executor")) {
     merged.isRemoteExecutor = existing.isRemoteExecutor;
   }
+  if (!hasPayloadField(payload, "autopilot")) merged.autopilot = existing.autopilot;
 }
 
 // A lightweight task.updated may omit an unchanged field; only an explicit

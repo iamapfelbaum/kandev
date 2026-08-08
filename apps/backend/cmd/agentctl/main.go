@@ -29,6 +29,7 @@ import (
 	"github.com/kandev/kandev/internal/agentctl/server/process"
 	"github.com/kandev/kandev/internal/common/logger"
 	"github.com/kandev/kandev/internal/githubauth"
+	mcpprofile "github.com/kandev/kandev/internal/mcp/profile"
 	mcpserver "github.com/kandev/kandev/internal/mcp/server"
 	"github.com/kandev/kandev/pkg/agent"
 	"go.uber.org/zap"
@@ -180,7 +181,16 @@ func run(cfg *config.Config, log *logger.Logger) {
 		mcpBackendClient := mcpserver.NewChannelBackendClient(instLog)
 
 		// Create MCP server using the channel-based backend client
-		mcpSrv := mcpserver.New(mcpBackendClient, instCfg.SessionID, instCfg.TaskID, instCfg.Port, instLog, cfg.McpLogFile, instCfg.DisableAskQuestion, instCfg.McpMode, instCfg.McpProviders)
+		var mcpSrv *mcpserver.Server
+		if instCfg.McpProfile != nil {
+			profileContext := *instCfg.McpProfile
+			if instCfg.DisableAskQuestion {
+				profileContext = profileContext.WithoutCapability(mcpprofile.CapabilityUserQuestion)
+			}
+			mcpSrv = mcpserver.NewWithProfile(mcpBackendClient, instCfg.SessionID, instCfg.TaskID, instCfg.Port, instLog, cfg.McpLogFile, instCfg.DisableAskQuestion, profileContext)
+		} else {
+			mcpSrv = mcpserver.New(mcpBackendClient, instCfg.SessionID, instCfg.TaskID, instCfg.Port, instLog, cfg.McpLogFile, instCfg.DisableAskQuestion, instCfg.McpMode, instCfg.McpProviders)
+		}
 		mcpSrv.SetAttachmentReporter(procMgr.PublishMCPAttachment)
 		instLog.Info("MCP server enabled (channel-based)",
 			zap.String("session_id", instCfg.SessionID))

@@ -31,6 +31,7 @@ import { useAppStore } from "@/components/state-provider";
 import { TaskCreateDialogPopoverContainerProvider } from "@/hooks/use-task-create-dialog-popover-container";
 import { shouldShowTaskTitleField } from "@/components/task-create-dialog-helpers";
 import { useTaskCreateDialogSetup } from "@/components/task-create-dialog-setup";
+import { TaskAutopilotToggle } from "@/components/task-autopilot-toggle";
 
 export interface TaskCreateDialogProps {
   open: boolean;
@@ -106,21 +107,12 @@ function CreateModeBody(props: DialogFormBodyProps) {
     workspaceId,
     onJiraImport,
     onLinearImport,
-    agentProfileOptions,
-    executorProfileOptions,
-    agentProfiles,
-    agentProfilesLoading,
-    executorsLoading,
-    isCreatingSession,
     fs,
     onTaskNameChange,
     onRowRepositoryChange,
     onRowBranchChange,
-    onAgentProfileChange,
-    onExecutorProfileChange,
     onToggleRemote,
     onToggleFreshBranch,
-    workflowAgentLocked,
     repositories,
     onRefreshRepositories,
     repositoriesRefreshing,
@@ -160,6 +152,12 @@ function CreateModeBody(props: DialogFormBodyProps) {
           autoFocus={taskNameAutoFocus}
         />
       )}
+      <CreateModeAutopilot
+        fs={fs}
+        isCreateMode={isCreateMode}
+        isEditMode={isEditMode}
+        isTaskStarted={isTaskStarted}
+      />
       <DialogPromptSection
         isSessionMode={false}
         isTaskStarted={isTaskStarted}
@@ -177,23 +175,45 @@ function CreateModeBody(props: DialogFormBodyProps) {
         autoFocusDescription={!isTaskStarted && !(showTaskName && taskNameAutoFocus)}
         onVoiceAutoSend={props.onVoiceAutoSend}
       />
-      <CreateModeSelectors
-        isTaskStarted={isTaskStarted}
-        agentProfileOptions={agentProfileOptions}
-        executorProfileOptions={executorProfileOptions}
-        agentProfiles={agentProfiles}
-        agentProfilesLoading={agentProfilesLoading}
-        executorsLoading={executorsLoading}
-        isCreatingSession={isCreatingSession}
-        fs={fs}
-        onAgentProfileChange={onAgentProfileChange}
-        onExecutorProfileChange={onExecutorProfileChange}
-        workflowAgentLocked={workflowAgentLocked}
-        noCompatibleAgent={props.noCompatibleAgent}
-        executorProfileName={props.executorProfileName}
-      />
+      <CreateModeAgentSelectors {...props} />
       {props.bottomSlot}
     </>
+  );
+}
+
+function CreateModeAgentSelectors(props: DialogFormBodyProps) {
+  return (
+    <CreateModeSelectors
+      isTaskStarted={props.isTaskStarted}
+      agentProfileOptions={props.agentProfileOptions}
+      executorProfileOptions={props.executorProfileOptions}
+      agentProfiles={props.agentProfiles}
+      agentProfilesLoading={props.agentProfilesLoading}
+      executorsLoading={props.executorsLoading}
+      isCreatingSession={props.isCreatingSession}
+      fs={props.fs}
+      onAgentProfileChange={props.onAgentProfileChange}
+      onExecutorProfileChange={props.onExecutorProfileChange}
+      workflowAgentLocked={props.workflowAgentLocked}
+      noCompatibleAgent={props.noCompatibleAgent}
+      executorProfileName={props.executorProfileName}
+    />
+  );
+}
+
+function CreateModeAutopilot({
+  fs,
+  isCreateMode,
+  isEditMode,
+  isTaskStarted,
+}: Pick<DialogFormBodyProps, "fs" | "isCreateMode" | "isEditMode" | "isTaskStarted">) {
+  if (!isCreateMode || isEditMode) return null;
+  return (
+    <TaskAutopilotToggle
+      checked={fs.autopilot}
+      onCheckedChange={fs.setAutopilot}
+      disabled={isTaskStarted || fs.isCreatingTask || fs.isCreatingSession}
+    />
   );
 }
 

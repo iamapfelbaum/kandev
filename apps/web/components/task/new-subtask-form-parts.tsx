@@ -27,6 +27,7 @@ import {
 } from "./session-dialog-shared";
 import { ContextZone } from "./chat/context-items/context-zone";
 import { clampTaskTitleInput } from "@/lib/task-title";
+import { TaskAutopilotToggle } from "@/components/task-autopilot-toggle";
 
 export function WorktreeBadge({ show, branch }: { show: boolean; branch: string | null }) {
   const { t } = useTranslation();
@@ -258,6 +259,7 @@ type SubtaskFormBodyProps = {
   title: string;
   setTitle: (v: string) => void;
   autoTitle?: boolean;
+  autopilot: boolean;
   workspaceId: string | null;
   availableRepositories: Repository[];
   parentRepositoryId: string | null;
@@ -404,6 +406,7 @@ export function SubtaskFormBody({
   title,
   setTitle,
   autoTitle = false,
+  autopilot,
   workspaceId,
   availableRepositories,
   parentRepositoryId,
@@ -448,6 +451,11 @@ export function SubtaskFormBody({
           />
         </div>
       )}
+      <TaskAutopilotToggle
+        checked={autopilot}
+        onCheckedChange={fs.setAutopilot}
+        disabled={isCreating}
+      />
       <WorkspaceModeToggle
         value={workspaceMode}
         onChange={onWorkspaceModeChange}
