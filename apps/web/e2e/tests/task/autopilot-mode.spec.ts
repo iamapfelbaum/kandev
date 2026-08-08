@@ -48,6 +48,28 @@ async function waitForSessionState(
     .toBe(state);
 }
 
+async function waitForParentQuestion(apiClient: ApiClient, parentTaskID: string): Promise<string> {
+  let questionID = "";
+  await expect
+    .poll(
+      async () => {
+        const parentSessions = await apiClient.listTaskSessions(parentTaskID);
+        const parentMessages = await apiClient.listSessionMessages(parentSessions.sessions[0].id);
+        const questions = parentMessages.messages.filter(
+          (message) =>
+            message.metadata?.parent_question === true &&
+            typeof message.metadata.parent_question_id === "string",
+        );
+        questionID =
+          questions.length === 1 ? String(questions[0].metadata?.parent_question_id) : "";
+        return questionID;
+      },
+      { timeout: 30_000, message: "one durable parent question should be delivered" },
+    )
+    .not.toBe("");
+  return questionID;
+}
+
 test.describe("Task autopilot", () => {
   test("shows the profile, waits for the parent, and resumes once", async ({
     testPage,
@@ -107,18 +129,7 @@ test.describe("Task autopilot", () => {
       timeout: 15_000,
     });
 
-    await expect
-      .poll(
-        async () => {
-          const parentSessions = await apiClient.listTaskSessions(parent.id);
-          const parentMessages = await apiClient.listSessionMessages(parentSessions.sessions[0].id);
-          return parentMessages.messages.some((message) =>
-            message.content.includes("AUTOPILOT CHILD QUESTION"),
-          );
-        },
-        { timeout: 30_000 },
-      )
-      .toBe(true);
+    const questionID = await waitForParentQuestion(apiClient, parent.id);
 
     await expect
       .poll(
@@ -140,8 +151,15 @@ test.describe("Task autopilot", () => {
     const childSessions = await apiClient.listTaskSessions(child.id);
     const childMessages = await apiClient.listSessionMessages(childSessions.sessions[0].id);
     const answeredQuestion = childMessages.messages.find(
-      (message) => message.metadata?.status === "answered",
+      (message) =>
+        message.metadata?.status === "answered" && message.metadata.question_id === questionID,
     );
     expect(answeredQuestion).toBeDefined();
+    const correlatedAnswers = childMessages.messages.filter(
+      (message) =>
+        message.metadata?.parent_question_id === questionID &&
+        typeof message.metadata.parent_question_response === "string",
+    );
+    expect(correlatedAnswers).toHaveLength(1);
   });
 });
