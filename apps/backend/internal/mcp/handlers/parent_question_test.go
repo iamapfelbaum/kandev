@@ -17,13 +17,14 @@ func seedParentQuestionScenario(t *testing.T, svc *service.Service, repo seedRep
 	ctx := context.Background()
 	require.NoError(t, repo.CreateWorkspace(ctx, &models.Workspace{ID: "ws-parent-question", Name: "Parent questions"}))
 	require.NoError(t, repo.CreateWorkflow(ctx, &models.Workflow{ID: "wf-parent-question", WorkspaceID: "ws-parent-question", Name: "Board"}))
-	parent, err := svc.CreateTask(ctx, &service.CreateTaskRequest{
+	parentResult, err := svc.CreateTask(ctx, &service.CreateTaskRequest{
 		WorkspaceID: "ws-parent-question",
 		WorkflowID:  "wf-parent-question",
 		Title:       "Parent task",
 	})
 	require.NoError(t, err)
-	child, err := svc.CreateTask(ctx, &service.CreateTaskRequest{
+	parent := parentResult.Task
+	childResult, err := svc.CreateTask(ctx, &service.CreateTaskRequest{
 		WorkspaceID: "ws-parent-question",
 		WorkflowID:  "wf-parent-question",
 		ParentID:    parent.ID,
@@ -31,6 +32,7 @@ func seedParentQuestionScenario(t *testing.T, svc *service.Service, repo seedRep
 		Autopilot:   true,
 	})
 	require.NoError(t, err)
+	child := childResult.Task
 	parentSession := &models.TaskSession{ID: "parent-question-parent-session", TaskID: parent.ID, IsPrimary: true, State: models.TaskSessionStateRunning}
 	childSession := &models.TaskSession{ID: "parent-question-child-session", TaskID: child.ID, IsPrimary: true, State: models.TaskSessionStateRunning}
 	require.NoError(t, repo.CreateTaskSession(ctx, parentSession))
@@ -142,13 +144,14 @@ func TestHandleAskParentQuestion_RejectsRootTask(t *testing.T) {
 func TestHandleAskParentQuestion_RejectsNonAutopilotTask(t *testing.T) {
 	svc, repo := newTestTaskService(t)
 	parent, _, _, _ := seedParentQuestionScenario(t, svc, repo)
-	normalChild, err := svc.CreateTask(context.Background(), &service.CreateTaskRequest{
+	normalChildResult, err := svc.CreateTask(context.Background(), &service.CreateTaskRequest{
 		WorkspaceID: "ws-parent-question",
 		WorkflowID:  "wf-parent-question",
 		ParentID:    parent.ID,
 		Title:       "Normal child",
 	})
 	require.NoError(t, err)
+	normalChild := normalChildResult.Task
 	normalSession := &models.TaskSession{ID: "parent-question-normal-session", TaskID: normalChild.ID, IsPrimary: true, State: models.TaskSessionStateRunning}
 	require.NoError(t, repo.CreateTaskSession(context.Background(), normalSession))
 	h, _ := newMessageTaskHandler(t, svc, repo)
@@ -161,12 +164,13 @@ func TestHandleAskParentQuestion_RejectsNonAutopilotTask(t *testing.T) {
 func TestHandleMessageTask_RejectsParentQuestionReplyFromUnrelatedTask(t *testing.T) {
 	svc, repo := newTestTaskService(t)
 	parent, child, _, childSession := seedParentQuestionScenario(t, svc, repo)
-	stranger, err := svc.CreateTask(context.Background(), &service.CreateTaskRequest{
+	strangerResult, err := svc.CreateTask(context.Background(), &service.CreateTaskRequest{
 		WorkspaceID: "ws-parent-question",
 		WorkflowID:  "wf-parent-question",
 		Title:       "Unrelated task",
 	})
 	require.NoError(t, err)
+	stranger := strangerResult.Task
 	strangerSession := &models.TaskSession{ID: "parent-question-stranger-session", TaskID: stranger.ID, IsPrimary: true, State: models.TaskSessionStateRunning}
 	require.NoError(t, repo.CreateTaskSession(context.Background(), strangerSession))
 	h, _ := newMessageTaskHandler(t, svc, repo)

@@ -138,6 +138,7 @@ export type WorkflowsState = {
     workspaceId: string;
     name: string;
     description?: string | null;
+    prompt?: string;
     sortOrder?: number;
     agent_profile_id?: string;
     hidden?: boolean;

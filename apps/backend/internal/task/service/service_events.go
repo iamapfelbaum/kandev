@@ -397,6 +397,13 @@ func (s *Service) publishTaskEventNow(ctx context.Context, eventType string, tas
 	if task.ParentID != "" {
 		data["parent_id"] = task.ParentID
 	}
+	// external_id (docs/specs/tasks/external-id-idempotency): omitted rather
+	// than sent as null/"" when the task holds none, matching the REST DTO's
+	// omitempty and parent_id's convention above. This map is hand-built, not
+	// derived from TaskDTO, so it needs its own explicit field.
+	if task.ExternalID != "" {
+		data["external_id"] = task.ExternalID
+	}
 	data["archived_at"] = nil
 	if task.ArchivedAt != nil {
 		data["archived_at"] = task.ArchivedAt.Format(time.RFC3339)
@@ -763,6 +770,7 @@ func (s *Service) publishWorkflowEvent(ctx context.Context, eventType string, wo
 		"workspace_id":     workflow.WorkspaceID,
 		"name":             workflow.Name,
 		"description":      workflow.Description,
+		"prompt":           workflow.Prompt,
 		"agent_profile_id": workflow.AgentProfileID,
 		"hidden":           workflow.Hidden,
 		"source":           workflow.Source,
