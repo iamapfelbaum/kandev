@@ -164,6 +164,16 @@ test.describe("Subtask basics", () => {
       const dialog = testPage.getByTestId("new-subtask-dialog");
       await expect(dialog.getByTestId("subtask-title-input")).toHaveCount(0);
       await expect(dialog.getByTestId("subtask-context-autopilot-row")).toBeVisible();
+      const contextTrigger = dialog
+        .getByTestId("subtask-context-autopilot-row")
+        .locator('[data-slot="select-trigger"]');
+      const contextHeight = await contextTrigger.evaluate((element) =>
+        Math.round(element.getBoundingClientRect().height),
+      );
+      const autopilotHeight = await dialog
+        .getByTestId("autopilot-toggle-row")
+        .evaluate((element) => Math.round(element.getBoundingClientRect().height));
+      expect(autopilotHeight).toBe(contextHeight);
       await expect(dialog.getByTestId("autopilot-info")).not.toBeFocused();
       await expect(dialog.getByTestId("subtask-prompt-input")).toBeFocused();
       await expect(

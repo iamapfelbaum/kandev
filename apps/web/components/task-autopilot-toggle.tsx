@@ -23,7 +23,7 @@ export function TaskAutopilotToggle({
   return (
     <div
       className={cn(
-        "inline-flex min-h-9 w-fit max-w-full items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-0.5",
+        "inline-flex h-11 w-fit max-w-full items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-0 sm:h-7",
         checked ? "border-yellow-500/40 bg-yellow-500/5" : "border-border/60",
       )}
       data-testid="autopilot-toggle-row"
@@ -45,7 +45,7 @@ export function TaskAutopilotToggle({
               type="button"
               variant="ghost"
               size="icon-sm"
-              className="relative size-11 shrink-0 cursor-help text-muted-foreground after:absolute after:-inset-1 hover:text-foreground focus-visible:text-foreground sm:size-8"
+              className="relative size-11 shrink-0 cursor-help text-muted-foreground after:absolute after:-inset-1 hover:text-foreground focus-visible:text-foreground sm:size-7"
               aria-label={t("task:autopilotInfoLabel")}
               onClick={() => setHelpOpen((current) => !current)}
               data-testid="autopilot-info"

@@ -388,6 +388,16 @@ test.describe("Mobile sidebar task actions", () => {
       /Mobile create subtask parent \/ Subtask 1/,
     );
     await expect(testPage.getByTestId("subtask-context-autopilot-row")).toBeVisible();
+    const contextTrigger = testPage
+      .getByTestId("subtask-context-autopilot-row")
+      .locator('[data-slot="select-trigger"]');
+    const contextHeight = await contextTrigger.evaluate((element) =>
+      Math.round(element.getBoundingClientRect().height),
+    );
+    const autopilotHeight = await testPage
+      .getByTestId("autopilot-toggle-row")
+      .evaluate((element) => Math.round(element.getBoundingClientRect().height));
+    expect(autopilotHeight).toBe(contextHeight);
     await expect(dialog.getByTestId("autopilot-toggle-row")).toBeVisible();
     await dialog.getByRole("switch", { name: "Autopilot" }).tap();
     await expect(dialog.getByRole("switch", { name: "Autopilot" })).toHaveAttribute(
