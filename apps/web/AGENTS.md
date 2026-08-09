@@ -19,10 +19,9 @@ import { Dialog } from "@kandev/ui/dialog";
 
 **Do NOT** import from `@/components/ui/*` - always use `@kandev/ui` package.
 
-- Always prefer native shadcn components over custom implementations.
 - Check `apps/packages/ui/src/` for available components (pagination, table, dialog, etc.).
 - For data tables, use `@kandev/ui/table` with TanStack Table; use shadcn Pagination components.
-- Only create custom components when shadcn doesn't provide what's needed.
+- Prefer native shadcn components; create custom ones only when needed. Shared primitives can use higher-specificity data-attribute styles, so use an important responsive utility and verify rendered dimensions in desktop and mobile E2E paths when geometry changes.
 
 ### Responsive and touch surfaces
 
