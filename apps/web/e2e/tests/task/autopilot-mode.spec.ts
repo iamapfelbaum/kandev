@@ -157,6 +157,7 @@ test.describe("Task autopilot", () => {
     expect(answeredQuestion).toBeDefined();
     const correlatedAnswers = childMessages.messages.filter(
       (message) =>
+        message.author_type === "user" &&
         message.metadata?.parent_question_id === questionID &&
         typeof message.metadata.parent_question_response === "string",
     );
