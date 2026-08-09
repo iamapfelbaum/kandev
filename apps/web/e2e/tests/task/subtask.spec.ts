@@ -97,6 +97,17 @@ test.describe("Subtask basics", () => {
     await session.openCreateSubtaskForSidebarTask("Subtask Parent");
 
     // The compact NewSubtaskDialog should open with pre-filled title containing numeric suffix
+    const dialog = testPage.getByTestId("new-subtask-dialog");
+    await expect(dialog.getByTestId("autopilot-toggle-row")).toBeVisible();
+    await expect(dialog.getByRole("switch", { name: "Autopilot" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    await dialog.getByTestId("autopilot-info").hover();
+    await expect(testPage.getByRole("tooltip")).toContainText(
+      "The agent works independently and asks the parent task only when a critical decision blocks progress.",
+    );
+
     const titleInput = testPage.getByTestId("subtask-title-input");
     await expect(titleInput).toBeVisible({ timeout: 5_000 });
     await expect(titleInput).toHaveValue(/Subtask Parent \/ Subtask \d+/);

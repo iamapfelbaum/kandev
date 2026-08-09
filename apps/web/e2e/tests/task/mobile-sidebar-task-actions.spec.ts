@@ -384,6 +384,12 @@ test.describe("Mobile sidebar task actions", () => {
     await expect(testPage.getByTestId("subtask-title-input")).toHaveValue(
       /Mobile create subtask parent \/ Subtask 1/,
     );
+    await expect(dialog.getByTestId("autopilot-toggle-row")).toBeVisible();
+    await dialog.getByRole("switch", { name: "Autopilot" }).tap();
+    await expect(dialog.getByRole("switch", { name: "Autopilot" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(dialog).toBeHidden();
   });

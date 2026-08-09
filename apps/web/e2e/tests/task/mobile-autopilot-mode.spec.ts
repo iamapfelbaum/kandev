@@ -46,12 +46,7 @@ test.describe("Mobile task autopilot", () => {
     await mobile.goto();
     await mobile.mobileFab.click();
     const createDialog = testPage.getByTestId("create-task-dialog");
-    await expect(createDialog.getByTestId("autopilot-toggle-row")).toBeVisible();
-    await createDialog.getByRole("switch", { name: "Autopilot" }).tap();
-    await expect(createDialog.getByRole("switch", { name: "Autopilot" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
+    await expect(createDialog.getByTestId("autopilot-toggle-row")).toHaveCount(0);
     await assertNoDocumentHorizontalOverflow(testPage, "mobile autopilot create dialog");
     await createDialog.getByRole("button", { name: "Cancel", exact: true }).tap();
 

@@ -31,7 +31,6 @@ import { useAppStore } from "@/components/state-provider";
 import { TaskCreateDialogPopoverContainerProvider } from "@/hooks/use-task-create-dialog-popover-container";
 import { shouldShowTaskTitleField } from "@/components/task-create-dialog-helpers";
 import { useTaskCreateDialogSetup } from "@/components/task-create-dialog-setup";
-import { TaskAutopilotToggle } from "@/components/task-autopilot-toggle";
 
 export interface TaskCreateDialogProps {
   open: boolean;
@@ -152,12 +151,6 @@ function CreateModeBody(props: DialogFormBodyProps) {
           autoFocus={taskNameAutoFocus}
         />
       )}
-      <CreateModeAutopilot
-        fs={fs}
-        isCreateMode={isCreateMode}
-        isEditMode={isEditMode}
-        isTaskStarted={isTaskStarted}
-      />
       <DialogPromptSection
         isSessionMode={false}
         isTaskStarted={isTaskStarted}
@@ -197,22 +190,6 @@ function CreateModeAgentSelectors(props: DialogFormBodyProps) {
       workflowAgentLocked={props.workflowAgentLocked}
       noCompatibleAgent={props.noCompatibleAgent}
       executorProfileName={props.executorProfileName}
-    />
-  );
-}
-
-function CreateModeAutopilot({
-  fs,
-  isCreateMode,
-  isEditMode,
-  isTaskStarted,
-}: Pick<DialogFormBodyProps, "fs" | "isCreateMode" | "isEditMode" | "isTaskStarted">) {
-  if (!isCreateMode || isEditMode) return null;
-  return (
-    <TaskAutopilotToggle
-      checked={fs.autopilot}
-      onCheckedChange={fs.setAutopilot}
-      disabled={isTaskStarted || fs.isCreatingTask || fs.isCreatingSession}
     />
   );
 }

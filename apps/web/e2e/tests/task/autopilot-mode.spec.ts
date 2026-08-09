@@ -82,11 +82,7 @@ test.describe("Task autopilot", () => {
     await kanban.goto();
     await kanban.createTaskButton.first().click();
     const createDialog = testPage.getByTestId("create-task-dialog");
-    await expect(createDialog.getByTestId("autopilot-toggle-row")).toBeVisible();
-    await expect(createDialog.getByRole("switch", { name: "Autopilot" })).toHaveAttribute(
-      "aria-checked",
-      "false",
-    );
+    await expect(createDialog.getByTestId("autopilot-toggle-row")).toHaveCount(0);
     await createDialog.getByRole("button", { name: "Cancel", exact: true }).click();
 
     const parent = await apiClient.createTaskWithAgent(

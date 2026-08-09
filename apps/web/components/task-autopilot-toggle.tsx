@@ -1,7 +1,10 @@
 "use client";
 
-import { IconRobot } from "@tabler/icons-react";
+import { useState } from "react";
+import { IconInfoCircle, IconRobot } from "@tabler/icons-react";
+import { Button } from "@kandev/ui/button";
 import { Switch } from "@kandev/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@kandev/ui/tooltip";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 
@@ -15,22 +18,45 @@ export function TaskAutopilotToggle({
   disabled: boolean;
 }) {
   const { t } = useTranslation();
+  const [helpOpen, setHelpOpen] = useState(false);
+
   return (
     <div
       className={cn(
-        "flex min-h-11 items-center justify-between gap-3 rounded-md border px-3 py-2",
-        checked ? "border-yellow-500/50 bg-yellow-500/10" : "border-border",
+        "flex min-h-10 items-center justify-between gap-2 rounded-md border px-2 py-1",
+        checked ? "border-yellow-500/40 bg-yellow-500/5" : "border-border/60",
       )}
       data-testid="autopilot-toggle-row"
     >
-      <div className="flex min-w-0 items-center gap-2">
-        <IconRobot className="h-4 w-4 shrink-0 text-yellow-500" aria-hidden="true" />
-        <div className="min-w-0">
-          <label htmlFor="task-autopilot-toggle" className="text-sm font-medium">
-            {t("task:autopilot")}
-          </label>
-          <p className="text-xs text-muted-foreground">{t("task:autopilotDescription")}</p>
-        </div>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <IconRobot
+          className={cn(
+            "h-3.5 w-3.5 shrink-0",
+            checked ? "text-yellow-500" : "text-muted-foreground",
+          )}
+          aria-hidden="true"
+        />
+        <label htmlFor="task-autopilot-toggle" className="cursor-pointer text-xs font-medium">
+          {t("task:autopilot")}
+        </label>
+        <Tooltip open={helpOpen} onOpenChange={setHelpOpen}>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="relative size-11 shrink-0 cursor-help text-muted-foreground after:absolute after:-inset-1 hover:text-foreground focus-visible:text-foreground sm:size-8"
+              aria-label={t("task:autopilotInfoLabel")}
+              onClick={() => setHelpOpen((current) => !current)}
+              data-testid="autopilot-info"
+            >
+              <IconInfoCircle className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-[280px] text-xs leading-relaxed">
+            {t("task:autopilotDescription")}
+          </TooltipContent>
+        </Tooltip>
       </div>
       <Switch
         id="task-autopilot-toggle"

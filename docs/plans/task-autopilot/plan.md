@@ -166,15 +166,16 @@ Likely files:
 - `apps/web/src/locales/pseudo/task.json`
 - `apps/web/src/locales/zh-cn/task.json`
 
-Add `autopilot` to the shared task type and mapping. Add an off-by-default switch
-only to task/subtask creation modes and include it in the creation request. In the
-shared chat status row, render a yellow localized badge for autopilot tasks. In the
-shared task item, keep the existing primary status icon (including the question
-indicator) and add a secondary autopilot icon with localized hover/focus tooltip and
-accessible name.
+Add `autopilot` to the shared task type and mapping. Keep top-level task creation
+UI free of an Autopilot control for now; expose an off-by-default compact switch
+only in the subtask creation dialog and include it in the creation request. Give
+the switch a localized hover/focus help control. In the shared chat status row,
+render a yellow localized badge for autopilot tasks. In the shared task item, keep
+the existing primary status icon (including the question indicator) and add a
+secondary autopilot icon with localized hover/focus tooltip and accessible name.
 
 All new copy goes through `t()`. The pseudo-locale and i18n checks must cover the
-chip, switch label/description, and tooltip. Existing tasks whose payload omits the
+chip, subtask switch label/help, and tooltip. Existing tasks whose payload omits the
 field map to false during rolling compatibility.
 
 ## Mobile design contract

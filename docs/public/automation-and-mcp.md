@@ -183,6 +183,10 @@ copied to a subtask. The task record is the source of truth after creation; a
 later task update cannot switch the prompt or MCP tools between normal and
 autopilot behavior.
 
+The top-level task dialog does not expose this option. The subtask dialog has a
+compact Autopilot switch with help text, but the value remains fixed after the
+subtask is created.
+
 Kandev builds the task MCP server from a backend-owned profile. The base
 surfaces are `kanban-task`, `office-task`, `configuration`, and `external`.
 Optional capability groups, such as task titles, provider automation, user

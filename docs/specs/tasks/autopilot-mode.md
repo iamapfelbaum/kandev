@@ -25,8 +25,11 @@ MCP profile decision: [ADR-2026-08-08-mcp-tool-profiles](../../decisions/2026-08
 
 ### Creation and identity
 
-- Task and subtask creation surfaces contain an **Autopilot** switch, off by
-  default.
+- Top-level task creation through the UI does not expose an **Autopilot** switch;
+  set it through `create_task_kandev` for now.
+- The subtask creation dialog contains a compact **Autopilot** switch, off by
+  default. Its info control explains that the child works independently and
+  asks its parent only when a critical decision blocks progress.
 - The setting is immutable after creation. Edit-task and session-creation surfaces
   display no control that implies it can be changed.
 - An autopilot task shows a yellow **Autopilot** chip in the status row above its
