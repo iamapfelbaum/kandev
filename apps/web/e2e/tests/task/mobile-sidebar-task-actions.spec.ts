@@ -381,9 +381,13 @@ test.describe("Mobile sidebar task actions", () => {
 
     const dialog = testPage.getByTestId("new-subtask-dialog");
     await expect(dialog).toBeVisible();
+    await expect(testPage.locator('[data-slot="tooltip-content"][data-state="open"]')).toHaveCount(
+      0,
+    );
     await expect(testPage.getByTestId("subtask-title-input")).toHaveValue(
       /Mobile create subtask parent \/ Subtask 1/,
     );
+    await expect(testPage.getByTestId("subtask-context-autopilot-row")).toBeVisible();
     await expect(dialog.getByTestId("autopilot-toggle-row")).toBeVisible();
     await dialog.getByRole("switch", { name: "Autopilot" }).tap();
     await expect(dialog.getByRole("switch", { name: "Autopilot" })).toHaveAttribute(

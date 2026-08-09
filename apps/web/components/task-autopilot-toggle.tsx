@@ -23,7 +23,7 @@ export function TaskAutopilotToggle({
   return (
     <div
       className={cn(
-        "flex min-h-10 items-center justify-between gap-2 rounded-md border px-2 py-1",
+        "inline-flex min-h-9 w-fit max-w-full items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-0.5",
         checked ? "border-yellow-500/40 bg-yellow-500/5" : "border-border/60",
       )}
       data-testid="autopilot-toggle-row"

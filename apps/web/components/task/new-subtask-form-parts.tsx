@@ -451,11 +451,6 @@ export function SubtaskFormBody({
           />
         </div>
       )}
-      <TaskAutopilotToggle
-        checked={autopilot}
-        onCheckedChange={fs.setAutopilot}
-        disabled={isCreating}
-      />
       <WorkspaceModeToggle
         value={workspaceMode}
         onChange={onWorkspaceModeChange}
@@ -481,13 +476,23 @@ export function SubtaskFormBody({
         disabled={isCreating}
         hideExecutor={inheritParent}
       />
-      <ContextSelect
-        value={contextValue}
-        onValueChange={onContextChange}
-        hasInitialPrompt={hasInitialPrompt}
-        sessionOptions={sessionOptions}
-        isSummarizing={isSummarizing}
-      />
+      <div
+        className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-2"
+        data-testid="subtask-context-autopilot-row"
+      >
+        <ContextSelect
+          value={contextValue}
+          onValueChange={onContextChange}
+          hasInitialPrompt={hasInitialPrompt}
+          sessionOptions={sessionOptions}
+          isSummarizing={isSummarizing}
+        />
+        <TaskAutopilotToggle
+          checked={autopilot}
+          onCheckedChange={fs.setAutopilot}
+          disabled={isCreating}
+        />
+      </div>
       {promptZone}
       <DialogFooter>
         <Button
