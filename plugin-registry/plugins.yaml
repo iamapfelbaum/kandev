@@ -29,6 +29,9 @@ plugins:
   - id: kandev-provider-usage
     repo: kdlbs/kandev-plugin-provider-usage
     categories: [analytics]
+  - id: kandev-augpool
+    repo: kdlbs/kandev-plugin-augpool
+    categories: [analytics]
   - id: kandev-plugin-kandy
     repo: kdlbs/kandev-plugin-kandy
     categories: [tools]
