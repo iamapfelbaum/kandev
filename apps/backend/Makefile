@@ -362,7 +362,7 @@ test-windows:
 	# which requires Developer Mode on Windows. Add new //go:build windows tests here.
 	$(CGO_LOCALE) $(CGO_PREFIX) $(GO) test -tags fts5 -v ./internal/agent/managedruntime -run TestRemoveNpxExecutionTreeTreatsMissingWindowsChildAsAbsent
 	@echo "Running task LSP UNC containment tests..."
-	$(CGO_LOCALE) $(CGO_PREFIX) $(GO) test -tags fts5 -v ./internal/agentctl/server/lsp -run '^TestDocumentWorkspaceRejectsUntrustedUNCBeforeResolution$$'
+	$(CGO_LOCALE) $(CGO_PREFIX) $(GO) test -tags fts5 -v ./internal/agentctl/server/lsp -run '^TestDocumentWorkspaceRejects(UntrustedUNC|InRootUNCReparse)BeforeResolution$$'
 	@echo "Running Windows port-collision tests..."
 	$(CGO_LOCALE) $(CGO_PREFIX) $(GO) test -tags fts5 -v ./internal/common/netutil -run TestIsAddrInUse
 	$(CGO_LOCALE) $(CGO_PREFIX) $(GO) test -tags fts5 -v ./internal/agentctl/server/instance -run TestAllocatePortAndListenerRetriesAddressInUse
