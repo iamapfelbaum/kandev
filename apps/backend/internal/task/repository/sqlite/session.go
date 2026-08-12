@@ -839,12 +839,12 @@ func (r *Repository) loadInitialSessionRuntimeSeedTx(
 }
 
 // CreateOfficeTaskSession creates an Office session and atomically marks it as
-// the task's initial session when no earlier session exists. The task row lock
-// serializes callers across PostgreSQL connections; SQLite's single writer
-// connection serializes the transaction. Within that same transaction it also
-// enforces office-session uniqueness for the (task_id, agent_profile_id) pair:
-// if a live row already exists for the pair, the insert is refused with
-// ErrOfficeSessionRaceConflict rather than creating a second live session.
+// the task's initial session when no earlier session exists. The cleanup
+// admission and task-row locks serialize callers across PostgreSQL connections;
+// SQLite's single writer connection serializes the transaction. Within that
+// transaction it also enforces office-session uniqueness for the
+// (task_id, agent_profile_id) pair: if a live row already exists for the pair,
+// the insert is refused with ErrOfficeSessionRaceConflict.
 func (r *Repository) CreateOfficeTaskSession(ctx context.Context, session *models.TaskSession) error {
 	tx, err := r.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -852,13 +852,8 @@ func (r *Repository) CreateOfficeTaskSession(ctx context.Context, session *model
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if dialect.IsPostgres(r.db.DriverName()) {
-		var lockedTaskID string
-		if err := tx.QueryRowContext(ctx, r.db.Rebind(
-			`SELECT id FROM tasks WHERE id = ? FOR UPDATE`,
-		), session.TaskID).Scan(&lockedTaskID); err != nil {
-			return fmt.Errorf("lock task for office session: %w", err)
-		}
+	if err := r.taskCleanupBarrierLocked(ctx, tx, session.TaskID); err != nil {
+		return err
 	}
 
 	var sessionCount int

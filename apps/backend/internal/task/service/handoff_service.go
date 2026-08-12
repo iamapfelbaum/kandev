@@ -289,6 +289,10 @@ type taskResourceCleanupCoordinator interface {
 	CancelPreparedTaskResourceCleanup(ctx context.Context, operationID string) error
 }
 
+type taskResourceCleanupResolver interface {
+	ResolvePreparedTaskResourceCleanup(ctx context.Context, operationID string) error
+}
+
 type taskLSPMutationCleaner interface {
 	CleanupTaskLSP(ctx context.Context, taskID, reason string) error
 }

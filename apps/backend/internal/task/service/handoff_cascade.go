@@ -249,7 +249,7 @@ func (s *HandoffService) ArchiveTaskTree(ctx context.Context, rootID string, cas
 	for i := len(all) - 1; i >= 0; i-- {
 		ok, err := s.tasks.ArchiveTaskIfActive(postArchiveCtx, all[i], cascadeID)
 		if err != nil {
-			s.cancelCascadeResourceCleanupRange(postArchiveCtx, all[:i+1], cleanupOps)
+			s.resolveCascadeResourceCleanupRange(postArchiveCtx, all[:i+1], cleanupOps)
 			archiveErr := fmt.Errorf("archive %s: %w", all[i], err)
 			archiveErr = s.rollbackWorkspaceEnvironmentOwnershipAfterFailure(
 				postArchiveCtx,
@@ -398,7 +398,7 @@ func (s *HandoffService) DeleteTaskTree(ctx context.Context, rootID string, casc
 		// rows are still queryable for the gather step. The actual destroy work
 		// runs async after this returns. Delete cascade removes the env row.
 		if err := s.tasks.DeleteTask(postDeleteCtx, all[i]); err != nil {
-			s.cancelCascadeResourceCleanupRange(postDeleteCtx, all[:i+1], cleanupOps)
+			s.resolveCascadeResourceCleanupRange(postDeleteCtx, all[:i+1], cleanupOps)
 			deleteErr := fmt.Errorf("delete %s: %w", all[i], err)
 			deleteErr = s.rollbackWorkspaceEnvironmentOwnershipAfterFailure(
 				ctx,
@@ -738,6 +738,31 @@ func (s *HandoffService) cancelCascadeResourceCleanupRange(
 ) {
 	for _, taskID := range taskIDs {
 		s.cancelCascadeResourceCleanup(ctx, operations[taskID])
+	}
+}
+
+func (s *HandoffService) resolveCascadeResourceCleanupRange(
+	ctx context.Context,
+	taskIDs []string,
+	operations map[string]string,
+) {
+	resolver, ok := s.resourceCleaner.(taskResourceCleanupResolver)
+	if !ok {
+		// Older focused cleaners can still provide prepare/start/cancel without
+		// durable outcome probing. Their mutation errors are known synchronous
+		// failures, so retain the previous safe cancellation behavior.
+		s.cancelCascadeResourceCleanupRange(ctx, taskIDs, operations)
+		return
+	}
+	for _, taskID := range taskIDs {
+		operationID := operations[taskID]
+		if operationID == "" {
+			continue
+		}
+		if err := resolver.ResolvePreparedTaskResourceCleanup(ctx, operationID); err != nil {
+			s.logf().Error("resolve cascade resource cleanup",
+				zap.String("operation_id", operationID), zap.Error(err))
+		}
 	}
 }
 
