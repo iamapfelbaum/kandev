@@ -40,13 +40,16 @@ type persistedTaskStopTarget struct {
 }
 
 type taskResourceCleanupSnapshot struct {
-	Sessions              []*models.TaskSession     `json:"sessions,omitempty"`
-	Worktrees             []*worktree.Worktree      `json:"worktrees,omitempty"`
-	WorktreeHeadOIDs      map[string]string         `json:"worktree_head_oids,omitempty"`
-	StopTargets           []persistedTaskStopTarget `json:"stop_targets,omitempty"`
-	TaskEnvironment       *models.TaskEnvironment   `json:"task_environment,omitempty"`
-	DeleteEnvironmentRow  bool                      `json:"delete_environment_row,omitempty"`
-	LegacyWorktreeCleanup bool                      `json:"legacy_worktree_cleanup,omitempty"`
+	Sessions                         []*models.TaskSession     `json:"sessions,omitempty"`
+	Worktrees                        []*worktree.Worktree      `json:"worktrees,omitempty"`
+	WorktreeHeadOIDs                 map[string]string         `json:"worktree_head_oids,omitempty"`
+	StopTargets                      []persistedTaskStopTarget `json:"stop_targets,omitempty"`
+	TaskEnvironment                  *models.TaskEnvironment   `json:"task_environment,omitempty"`
+	TaskEnvironmentAuthSecretID      string                    `json:"task_environment_auth_secret_id,omitempty"`
+	TaskEnvironmentBootstrapSecretID string                    `json:"task_environment_bootstrap_secret_id,omitempty"`
+	DeleteEnvironmentRow             bool                      `json:"delete_environment_row,omitempty"`
+	DeleteEnvironmentSecrets         bool                      `json:"delete_environment_secrets,omitempty"`
+	LegacyWorktreeCleanup            bool                      `json:"legacy_worktree_cleanup,omitempty"`
 	// SSHTaskDirs records the remote task directories this task launched into.
 	// Additive and absent-tolerant: a job row written by an older backend
 	// decodes with an empty list and reclaims nothing.
@@ -86,10 +89,15 @@ func (s *Service) persistTaskResourceCleanup(
 	}
 	snapshot := taskResourceCleanupSnapshot{
 		Sessions: sessions, Worktrees: worktrees, WorktreeHeadOIDs: worktreeHeadOIDs,
-		StopTargets:           persistStopTargets(stopTargets),
-		TaskEnvironment:       envCleanup.env,
-		DeleteEnvironmentRow:  envCleanup.deleteRow,
-		LegacyWorktreeCleanup: s.hasLegacyWorktreeCleanup(),
+		StopTargets:              persistStopTargets(stopTargets),
+		TaskEnvironment:          envCleanup.env,
+		DeleteEnvironmentRow:     envCleanup.deleteRow,
+		DeleteEnvironmentSecrets: envCleanup.deleteSecrets,
+		LegacyWorktreeCleanup:    s.hasLegacyWorktreeCleanup(),
+	}
+	if envCleanup.env != nil {
+		snapshot.TaskEnvironmentAuthSecretID = envCleanup.env.AgentctlAuthSecretID
+		snapshot.TaskEnvironmentBootstrapSecretID = envCleanup.env.AgentctlBootstrapSecretID
 	}
 	if !prepared {
 		// A prepared job stores a deliberately empty placeholder snapshot that
@@ -473,11 +481,10 @@ func (s *Service) executeTaskResourceCleanupJob(
 	if cancelled, err := s.cancelIfTaskUnarchived(ctx, job); err != nil || cancelled {
 		return err
 	}
+	environmentCleanup := restoreTaskEnvironmentCleanup(snapshot)
+	environmentCleanup.preserveBranches = job.IsArchive()
 	errs := s.performTaskCleanup(ctx, job.TaskID, snapshot.Sessions, snapshot.Worktrees, targets,
-		taskEnvironmentCleanup{
-			env: snapshot.TaskEnvironment, deleteRow: snapshot.DeleteEnvironmentRow,
-			preserveBranches: job.IsArchive(),
-		},
+		environmentCleanup,
 		taskCleanupPreserveRows(stopOutcome))
 	if cause := context.Cause(ctx); cause != nil {
 		return errors.Join(append(errs, cause)...)
@@ -500,6 +507,24 @@ func (s *Service) executeTaskResourceCleanupJob(
 		errs = append(errs, fmt.Errorf("%d runtime stop operations failed", len(failedStops)))
 	}
 	return errors.Join(errs...)
+}
+
+func restoreTaskEnvironmentCleanup(snapshot taskResourceCleanupSnapshot) taskEnvironmentCleanup {
+	environment := snapshot.TaskEnvironment
+	if environment != nil {
+		copy := *environment
+		copy.AgentctlAuthSecretID = snapshot.TaskEnvironmentAuthSecretID
+		copy.AgentctlBootstrapSecretID = snapshot.TaskEnvironmentBootstrapSecretID
+		environment = &copy
+	}
+	return taskEnvironmentCleanup{
+		env:       environment,
+		deleteRow: snapshot.DeleteEnvironmentRow,
+		// Older durable snapshots only recorded row deletion. Preserve their
+		// cleanup semantics while letting task/workspace delete jobs remove
+		// credentials after the task FK already removed the environment row.
+		deleteSecrets: snapshot.DeleteEnvironmentSecrets || snapshot.DeleteEnvironmentRow,
+	}
 }
 
 func (s *Service) hasLegacyWorktreeCleanup() bool {
