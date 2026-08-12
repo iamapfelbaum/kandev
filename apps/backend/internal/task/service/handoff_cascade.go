@@ -210,13 +210,23 @@ func (s *HandoffService) ArchiveTaskTree(ctx context.Context, rootID string, cas
 	}
 	releaseLSPMutations := s.acquireTaskLSPMutationGuards(all)
 	defer releaseLSPMutations()
-	// Archive cleanup must not tear down a shared workspace while an active
-	// group member remains. Transfer ownership before taking the cleanup
-	// snapshot, using the same ownership handoff as delete cascades.
-	ownershipTransfers, err := s.transferSharedWorkspaceEnvironmentOwnership(ctx, all)
+	releaseEnvironmentMutations, err := s.acquireTaskLSPEnvironmentMutationGuards(ctx, all)
 	if err != nil {
 		return out, err
 	}
+	defer releaseEnvironmentMutations()
+	ownershipTransfers, err := s.preserveTaskEnvironmentsForTerminalMutation(ctx, all)
+	if err != nil {
+		return out, err
+	}
+	// Archive cleanup must not tear down a shared workspace while an active
+	// group member remains. Transfer ownership before taking the cleanup
+	// snapshot, using the same ownership handoff as delete cascades.
+	groupTransfers, err := s.transferSharedWorkspaceEnvironmentOwnership(ctx, all)
+	if err != nil {
+		return out, s.rollbackWorkspaceEnvironmentOwnershipAfterFailure(ctx, ownershipTransfers, err)
+	}
+	ownershipTransfers = append(ownershipTransfers, groupTransfers...)
 	cleanupOps, err := s.prepareCascadeResourceCleanup(ctx, all, cascadeID, models.TaskResourceCleanupTriggerCascadeArchive)
 	if err != nil {
 		return out, s.rollbackWorkspaceEnvironmentOwnershipAfterFailure(ctx, ownershipTransfers, err)
@@ -240,7 +250,11 @@ func (s *HandoffService) ArchiveTaskTree(ctx context.Context, rootID string, cas
 		ok, err := s.tasks.ArchiveTaskIfActive(postArchiveCtx, all[i], cascadeID)
 		if err != nil {
 			s.cancelCascadeResourceCleanupRange(postArchiveCtx, all[:i+1], cleanupOps)
-			return out, fmt.Errorf("archive %s: %w", all[i], err)
+			archiveErr := fmt.Errorf("archive %s: %w", all[i], err)
+			if len(out.ArchivedTaskIDs) == 0 {
+				archiveErr = s.rollbackWorkspaceEnvironmentOwnershipAfterFailure(postArchiveCtx, ownershipTransfers, archiveErr)
+			}
+			return out, archiveErr
 		}
 		if ok {
 			// The archive mutation committed, so finalization and cleanup must
@@ -328,10 +342,20 @@ func (s *HandoffService) DeleteTaskTree(ctx context.Context, rootID string, casc
 	}
 	releaseLSPMutations := s.acquireTaskLSPMutationGuards(all)
 	defer releaseLSPMutations()
-	ownershipTransfers, err := s.transferSharedWorkspaceEnvironmentOwnership(ctx, all)
+	releaseEnvironmentMutations, err := s.acquireTaskLSPEnvironmentMutationGuards(ctx, all)
 	if err != nil {
 		return out, err
 	}
+	defer releaseEnvironmentMutations()
+	ownershipTransfers, err := s.preserveTaskEnvironmentsForTerminalMutation(ctx, all)
+	if err != nil {
+		return out, err
+	}
+	groupTransfers, err := s.transferSharedWorkspaceEnvironmentOwnership(ctx, all)
+	if err != nil {
+		return out, s.rollbackWorkspaceEnvironmentOwnershipAfterFailure(ctx, ownershipTransfers, err)
+	}
+	ownershipTransfers = append(ownershipTransfers, groupTransfers...)
 	cleanupOps, err := s.prepareCascadeResourceCleanup(ctx, all, cascadeID, models.TaskResourceCleanupTriggerCascadeDelete)
 	if err != nil {
 		return out, s.rollbackWorkspaceEnvironmentOwnershipAfterFailure(ctx, ownershipTransfers, err)
@@ -443,6 +467,28 @@ func (s *HandoffService) acquireTaskLSPMutationGuards(taskIDs []string) func() {
 			releases[index]()
 		}
 	}
+}
+
+func (s *HandoffService) acquireTaskLSPEnvironmentMutationGuards(
+	ctx context.Context,
+	taskIDs []string,
+) (func(), error) {
+	guard, ok := s.resourceCleaner.(taskLSPEnvironmentMutationGuard)
+	if !ok {
+		return func() {}, nil
+	}
+	return guard.acquireTaskLSPEnvironmentMutations(ctx, taskIDs)
+}
+
+func (s *HandoffService) preserveTaskEnvironmentsForTerminalMutation(
+	ctx context.Context,
+	taskIDs []string,
+) ([]workspaceEnvironmentOwnershipTransfer, error) {
+	guard, ok := s.resourceCleaner.(taskLSPEnvironmentMutationGuard)
+	if !ok {
+		return nil, nil
+	}
+	return guard.preserveTaskEnvironmentsForTerminalMutation(ctx, taskIDs)
 }
 
 // transferSharedWorkspaceEnvironmentOwnership moves a materialized environment
