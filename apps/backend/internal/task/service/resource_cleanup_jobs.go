@@ -87,18 +87,8 @@ func (s *Service) persistTaskResourceCleanup(
 	if err != nil {
 		return nil, err
 	}
-	snapshot := taskResourceCleanupSnapshot{
-		Sessions: sessions, Worktrees: worktrees, WorktreeHeadOIDs: worktreeHeadOIDs,
-		StopTargets:              persistStopTargets(stopTargets),
-		TaskEnvironment:          envCleanup.env,
-		DeleteEnvironmentRow:     envCleanup.deleteRow,
-		DeleteEnvironmentSecrets: envCleanup.deleteSecrets,
-		LegacyWorktreeCleanup:    s.hasLegacyWorktreeCleanup(),
-	}
-	if envCleanup.env != nil {
-		snapshot.TaskEnvironmentAuthSecretID = envCleanup.env.AgentctlAuthSecretID
-		snapshot.TaskEnvironmentBootstrapSecretID = envCleanup.env.AgentctlBootstrapSecretID
-	}
+	snapshot := s.buildTaskResourceCleanupSnapshot(sessions, worktrees, stopTargets, envCleanup)
+	snapshot.WorktreeHeadOIDs = worktreeHeadOIDs
 	if !prepared {
 		// A prepared job stores a deliberately empty placeholder snapshot that
 		// PrepareTaskResourceCleanup replaces once the barrier is reserved;
@@ -142,6 +132,27 @@ func (s *Service) captureWorktreeCleanupHeadOIDs(
 		return nil, fmt.Errorf("capture worktree cleanup identities: %w", err)
 	}
 	return identities, nil
+}
+
+func (s *Service) buildTaskResourceCleanupSnapshot(
+	sessions []*models.TaskSession,
+	worktrees []*worktree.Worktree,
+	stopTargets []taskStopTarget,
+	envCleanup taskEnvironmentCleanup,
+) taskResourceCleanupSnapshot {
+	snapshot := taskResourceCleanupSnapshot{
+		Sessions: sessions, Worktrees: worktrees,
+		StopTargets:              persistStopTargets(stopTargets),
+		TaskEnvironment:          envCleanup.env,
+		DeleteEnvironmentRow:     envCleanup.deleteRow,
+		DeleteEnvironmentSecrets: envCleanup.deleteSecrets,
+		LegacyWorktreeCleanup:    s.hasLegacyWorktreeCleanup(),
+	}
+	if envCleanup.env != nil {
+		snapshot.TaskEnvironmentAuthSecretID = envCleanup.env.AgentctlAuthSecretID
+		snapshot.TaskEnvironmentBootstrapSecretID = envCleanup.env.AgentctlBootstrapSecretID
+	}
+	return snapshot
 }
 
 func persistStopTargets(targets []taskStopTarget) []persistedTaskStopTarget {
@@ -715,14 +726,18 @@ func (s *Service) PrepareTaskResourceCleanup(
 	if err != nil {
 		return fmt.Errorf("list remote task directories for cleanup snapshot: %w", err)
 	}
-	snapshot := taskResourceCleanupSnapshot{
-		Sessions: sessions, Worktrees: worktrees, WorktreeHeadOIDs: worktreeHeadOIDs,
-		StopTargets:           persistStopTargets(stopTargets),
-		TaskEnvironment:       taskEnv,
-		DeleteEnvironmentRow:  deleteEnvironmentRow,
-		LegacyWorktreeCleanup: s.hasLegacyWorktreeCleanup(),
-		SSHTaskDirs:           sshTaskDirs,
-	}
+	snapshot := s.buildTaskResourceCleanupSnapshot(
+		sessions,
+		worktrees,
+		stopTargets,
+		taskEnvironmentCleanup{
+			env:           taskEnv,
+			deleteRow:     deleteEnvironmentRow,
+			deleteSecrets: deleteEnvironmentRow,
+		},
+	)
+	snapshot.WorktreeHeadOIDs = worktreeHeadOIDs
+	snapshot.SSHTaskDirs = sshTaskDirs
 	encoded, err := json.Marshal(snapshot)
 	if err != nil {
 		return fmt.Errorf("encode task resource cleanup snapshot: %w", err)
