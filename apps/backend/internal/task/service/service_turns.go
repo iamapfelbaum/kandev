@@ -844,7 +844,9 @@ func (s *Service) GetWorkspaceInfoForSession(ctx context.Context, taskID, sessio
 		}
 		for _, folder := range folders {
 			if folder != nil {
-				info.WorkspaceFolders = append(info.WorkspaceFolders, lifecycle.WorkspaceFolderSpec{Name: folder.DisplayName, LocalPath: folder.LocalPath})
+				info.WorkspaceFolders = append(info.WorkspaceFolders, lifecycle.WorkspaceFolderSpec{
+					Name: folder.DisplayName, LocalPath: folder.LocalPath, Position: folder.Position,
+				})
 			}
 		}
 	}
@@ -905,6 +907,12 @@ func (s *Service) GetWorkspaceInfoForSession(ctx context.Context, taskID, sessio
 		if running.ContainerID != "" {
 			ensureWorkspaceMetadata(info)[lifecycle.MetadataKeyContainerID] = running.ContainerID
 		}
+	}
+	// The task environment is the durable owner for Docker control
+	// credentials. Re-apply it after legacy session metadata so a stale
+	// executors_running mirror cannot override a rotated task-owned reference.
+	if taskEnv != nil {
+		applyTaskEnvironmentRuntimeSecretsToWorkspaceInfo(info, taskEnv)
 	}
 	if session.ExecutorID != "" {
 		exec, err := s.executors.GetExecutor(ctx, session.ExecutorID)
@@ -975,6 +983,7 @@ func (s *Service) populateWorkspaceRepositorySpecs(ctx context.Context, taskID s
 		}
 		spec := lifecycle.WorkspaceRepositorySpec{
 			RepositoryID: taskRepository.RepositoryID, RepositoryPath: repository.LocalPath, RepoName: projection.repoName,
+			Position:   taskRepository.Position,
 			BaseBranch: taskRepository.BaseBranch, DefaultBranch: repository.DefaultBranch,
 			CheckoutBranch: taskRepository.CheckoutBranch, WorktreeBranchPrefix: repository.WorktreeBranchPrefix,
 			WorktreeBranchTemplate: branchTemplate, PullBeforeWorktree: repository.PullBeforeWorktree,
@@ -1145,6 +1154,19 @@ func applyTaskEnvironmentToWorkspaceInfo(info *lifecycle.WorkspaceInfo, env *mod
 	if env.SandboxID != "" {
 		ensureWorkspaceMetadata(info)["sprite_name"] = env.SandboxID
 	}
+	applyTaskEnvironmentRuntimeSecretsToWorkspaceInfo(info, env)
+}
+
+func applyTaskEnvironmentRuntimeSecretsToWorkspaceInfo(
+	info *lifecycle.WorkspaceInfo,
+	env *models.TaskEnvironment,
+) {
+	if env.AgentctlAuthSecretID != "" {
+		ensureWorkspaceMetadata(info)[lifecycle.MetadataKeyAuthTokenSecret] = env.AgentctlAuthSecretID
+	}
+	if env.AgentctlBootstrapSecretID != "" {
+		ensureWorkspaceMetadata(info)[lifecycle.MetadataKeyBootstrapNonceSecret] = env.AgentctlBootstrapSecretID
+	}
 }
 
 func mergePersistentWorkspaceMetadata(info *lifecycle.WorkspaceInfo, metadata map[string]interface{}) {
@@ -1256,7 +1278,7 @@ func (s *Service) getTaskOwnedWorkspaceInfo(
 		for _, folder := range folders {
 			if folder != nil {
 				info.WorkspaceFolders = append(info.WorkspaceFolders, lifecycle.WorkspaceFolderSpec{
-					Name: folder.DisplayName, LocalPath: folder.LocalPath,
+					Name: folder.DisplayName, LocalPath: folder.LocalPath, Position: folder.Position,
 				})
 			}
 		}

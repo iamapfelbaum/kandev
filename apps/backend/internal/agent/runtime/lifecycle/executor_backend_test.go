@@ -99,3 +99,14 @@ func TestToAgentExecutionCapturesRunID(t *testing.T) {
 	})
 	require.Equal(t, "run-1", execution.RunID)
 }
+
+func TestToAgentExecutionCapturesDefensiveMetadata(t *testing.T) {
+	requestMetadata := map[string]interface{}{"request": "original"}
+	execution := (&ExecutorInstance{
+		InstanceID: "execution",
+		Metadata:   map[string]interface{}{"runtime": "value"},
+	}).ToAgentExecution(&ExecutorCreateRequest{Metadata: requestMetadata})
+
+	execution.setMetadataValue("persisted", "secret-ref")
+	require.Equal(t, map[string]interface{}{"request": "original"}, requestMetadata)
+}
