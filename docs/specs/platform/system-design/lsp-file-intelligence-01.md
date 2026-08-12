@@ -4,7 +4,7 @@ system: platform
 requirements:
   - REQ-PLATFORM-LSP-FILE-INTELLIGENCE-001
 created: 2026-07-09
-updated: 2026-08-11
+updated: 2026-08-12
 owners:
   - tbd
 ---
