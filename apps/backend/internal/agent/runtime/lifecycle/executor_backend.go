@@ -440,13 +440,17 @@ type ExecutorCreateRequest struct {
 	// WorkspaceReuseRequired means this runtime must attach to the supplied
 	// environment handle and must never fall back to provisioning a replacement.
 	WorkspaceReuseRequired bool
-	AgentProfileID         string
-	OfficeAgentProfileID   string
-	PromptTurnID           string
-	WorkspacePath          string
-	WorkspaceSourceRoots   []string
-	Protocol               string
-	Env                    map[string]string
+	// RequireExistingInstance permits transport reattachment only. Executors
+	// must return errTaskHostRuntimeNotFound instead of creating or resuming a
+	// physical task-host runtime when the stable instance is absent.
+	RequireExistingInstance bool
+	AgentProfileID          string
+	OfficeAgentProfileID    string
+	PromptTurnID            string
+	WorkspacePath           string
+	WorkspaceSourceRoots    []string
+	Protocol                string
+	Env                     map[string]string
 	// ApprovedSecretEnvKeys contains repository binding keys explicitly
 	// approved for SSH forwarding. Other request env keys remain filtered.
 	ApprovedSecretEnvKeys  []string
