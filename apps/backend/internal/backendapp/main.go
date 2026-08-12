@@ -497,7 +497,7 @@ func startAgentInfrastructure(
 		restoreCleanups = append(restoreCleanups, stop)
 		return stop
 	}
-	userSecretStore := secrets.NewUserVisibleStore(repos.Secrets)
+	agentSecrets := newAgentSecretStores(repos.Secrets)
 	mcpScopeResolver := mcpscope.NewResolver(
 		repos.Task,
 		services.Auth,
@@ -514,7 +514,7 @@ func startAgentInfrastructure(
 		eventBus,
 		repos.AgentSettings,
 		agentRegistry,
-		userSecretStore,
+		agentSecrets,
 		services.Task.TaskBaseBranches,
 		services.Task.TaskComparisonTargets,
 		services.ManagedRuntimeSelections,
@@ -550,11 +550,13 @@ func startAgentInfrastructure(
 
 	lifecycleMgr.SetWorkspaceInfoProvider(services.Task)
 	// Session/environment-scoped HTTP surfaces (shell, files, ports, vscode,
-	// LSP, terminals) enforce per-user workspace scoping (opt-in auth). The
+	// terminals) enforce per-user workspace scoping (opt-in auth). Their
 	// GetOrEnsure* execution paths run these checks internally; the vscode and
 	// port reverse proxies (bare lookup + cache) call CheckSessionAccess at
 	// the handler, and the SSR terminal-list routes call CheckTaskAccess /
 	// CheckEnvironmentAccess / CheckTaskEnvironmentAccess in a route guard.
+	// Task-scoped LSP authorizes the task before resolving its canonical task
+	// environment through the same access-checker family.
 	wireLifecycleAccessCheckers(lifecycleMgr, services.Task)
 	log.Info("Workspace info provider configured for session recovery")
 
@@ -608,7 +610,7 @@ func startAgentInfrastructure(
 	log.Info("Initializing Orchestrator...")
 
 	orchestratorSvc, msgCreator, err := provideOrchestrator(cfg, log, dbPool, eventBus, repos.Task, services.Task, services.User,
-		lifecycleMgr, agentRegistry, services.Workflow, userSecretStore, repoCloner, services.Prompts, services.GitHub, services.GitCredentials)
+		lifecycleMgr, agentRegistry, services.Workflow, agentSecrets.userVisible, repoCloner, services.Prompts, services.GitHub, services.GitCredentials)
 	if err != nil {
 		log.Error("Failed to initialize orchestrator", zap.Error(err))
 		return false

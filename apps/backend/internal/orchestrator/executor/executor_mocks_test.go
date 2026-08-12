@@ -30,6 +30,7 @@ type mockAgentManager struct {
 	isAgentCommandConfiguredFunc     func(agentExecutionID string) bool
 	isAgentRunningForSessionFunc     func(ctx context.Context, sessionID string) bool
 	cleanupStaleExecutionFunc        func(ctx context.Context, sessionID string) error
+	deleteRuntimeSecretsFunc         func(ctx context.Context, taskEnvironmentID, authSecretID, bootstrapSecretID string) error
 	promptAgentFunc                  func(ctx context.Context, agentExecutionID, prompt string, attachments []v1.MessageAttachment, dispatchOnly bool) (*PromptResult, error)
 	isPassthroughSessionFunc         func(ctx context.Context, sessionID string) bool
 	writePassthroughStdinFunc        func(ctx context.Context, sessionID, data string) error
@@ -59,6 +60,16 @@ func (m *mockAgentManager) LaunchAgent(ctx context.Context, req *LaunchAgentRequ
 		ContainerID:      "container-123",
 		Status:           v1.AgentStatusStarting,
 	}, nil
+}
+
+func (m *mockAgentManager) DeleteTaskEnvironmentRuntimeSecrets(
+	ctx context.Context,
+	taskEnvironmentID, authSecretID, bootstrapSecretID string,
+) error {
+	if m.deleteRuntimeSecretsFunc != nil {
+		return m.deleteRuntimeSecretsFunc(ctx, taskEnvironmentID, authSecretID, bootstrapSecretID)
+	}
+	return nil
 }
 
 func (m *mockAgentManager) SetExecutionDescription(ctx context.Context, agentExecutionID string, description string) error {
@@ -1229,6 +1240,11 @@ func (m *mockRepository) FinalizeTaskEnvironmentMaterialization(_ context.Contex
 	m.finalizeTaskEnvironmentCalls = append(m.finalizeTaskEnvironmentCalls, env)
 	m.taskEnvironments[env.ID] = env
 	m.taskEnvironmentRepos[env.ID] = repos
+	return nil
+}
+func (m *mockRepository) DeleteTaskEnvironment(_ context.Context, id string) error {
+	delete(m.taskEnvironments, id)
+	delete(m.taskEnvironmentRepos, id)
 	return nil
 }
 func (m *mockRepository) CreateTaskEnvironmentRepo(_ context.Context, repo *models.TaskEnvironmentRepo) error {

@@ -1131,6 +1131,7 @@ func (m *Manager) persistRuntimeSecrets(
 	instance *ExecutorInstance,
 	execution *AgentExecution,
 ) error {
+	liveDockerExecutions := m.propagateDockerTaskEnvironmentAuthToken(execution, instance.AuthToken)
 	if err := m.persistAuthToken(ctx, instance, execution); err != nil {
 		return err
 	}
@@ -1143,7 +1144,7 @@ func (m *Manager) persistRuntimeSecrets(
 	if err := m.persistTaskEnvironmentRuntimeSecretRefs(ctx, execution); err != nil {
 		return err
 	}
-	m.propagateDockerTaskEnvironmentAuthToken(ctx, execution, instance.AuthToken)
+	m.persistDockerTaskEnvironmentAuthTokenMirrors(ctx, execution, instance.AuthToken, liveDockerExecutions)
 	return nil
 }
 
@@ -1170,27 +1171,40 @@ func (m *Manager) persistTaskEnvironmentRuntimeSecretRefs(ctx context.Context, e
 }
 
 // propagateDockerTaskEnvironmentAuthToken adopts a rotated Docker control
-// credential across every live client for the task environment. The token is
-// transport state shared by the container's agentctl server, not session-owned
-// lifecycle state. Task-environment secret references are the durable owner;
-// live session rows retain a compatibility mirror for reconnect recovery.
+// credential across every live client before any durable write can fail. The
+// token is transport state shared by the container's agentctl server, not
+// session-owned lifecycle state.
 func (m *Manager) propagateDockerTaskEnvironmentAuthToken(
-	ctx context.Context,
 	source *AgentExecution,
 	authToken string,
-) {
+) []*AgentExecution {
 	if authToken == "" || source == nil || source.RuntimeName != agentruntime.RuntimeDocker ||
 		source.TaskEnvironmentID == "" || m.executionStore == nil {
-		return
+		return nil
 	}
+	live := make([]*AgentExecution, 0)
 	for _, execution := range m.executionStore.List() {
 		if execution == nil || execution.TaskEnvironmentID != source.TaskEnvironmentID ||
 			execution.RuntimeName != agentruntime.RuntimeDocker {
 			continue
 		}
+		live = append(live, execution)
 		if client := execution.GetAgentCtlClient(); client != nil {
 			client.SetAuthToken(authToken)
 		}
+	}
+	return live
+}
+
+// persistDockerTaskEnvironmentAuthTokenMirrors retains session-row compatibility
+// metadata after the task-environment credential owner has been committed.
+func (m *Manager) persistDockerTaskEnvironmentAuthTokenMirrors(
+	ctx context.Context,
+	source *AgentExecution,
+	authToken string,
+	live []*AgentExecution,
+) {
+	for _, execution := range live {
 		if execution.IsTaskHost {
 			continue
 		}
@@ -1236,7 +1250,7 @@ func (m *Manager) persistRuntimeSecret(
 	if value == "" {
 		return nil
 	}
-	if m.secretStore == nil {
+	if m.runtimeSecretStore == nil {
 		return errors.New("runtime secret store is not configured")
 	}
 
@@ -1260,7 +1274,7 @@ func (m *Manager) persistRuntimeSecret(
 
 func (m *Manager) storeRuntimeSecret(ctx context.Context, secret *secrets.SecretWithValue, id string) error {
 	if id == "" {
-		if err := m.secretStore.Create(ctx, secret); err != nil {
+		if err := m.runtimeSecretStore.Create(ctx, secret); err != nil {
 			return fmt.Errorf("create runtime secret: %w", err)
 		}
 		return nil
@@ -1269,14 +1283,14 @@ func (m *Manager) storeRuntimeSecret(ctx context.Context, secret *secrets.Secret
 	secret.ID = id
 	name := secret.Name
 	value := secret.Value
-	if err := m.secretStore.Update(ctx, id, &secrets.UpdateSecretRequest{
+	if err := m.runtimeSecretStore.Update(ctx, id, &secrets.UpdateSecretRequest{
 		Name: &name, Value: &value,
 	}); err == nil {
 		return nil
 	} else if !errors.Is(err, secrets.ErrNotFound) {
 		return fmt.Errorf("update runtime secret: %w", err)
 	}
-	if err := m.secretStore.Create(ctx, secret); err != nil {
+	if err := m.runtimeSecretStore.Create(ctx, secret); err != nil {
 		return fmt.Errorf("create runtime secret: %w", err)
 	}
 	return nil
@@ -1285,6 +1299,13 @@ func (m *Manager) storeRuntimeSecret(ctx context.Context, secret *secrets.Secret
 func deterministicRuntimeSecretID(execution *AgentExecution, metadataKey string) string {
 	if execution == nil || execution.RuntimeName != agentruntime.RuntimeDocker ||
 		execution.TaskEnvironmentID == "" {
+		return ""
+	}
+	return deterministicTaskEnvironmentRuntimeSecretID(execution.TaskEnvironmentID, metadataKey)
+}
+
+func deterministicTaskEnvironmentRuntimeSecretID(taskEnvironmentID, metadataKey string) string {
+	if taskEnvironmentID == "" {
 		return ""
 	}
 	kind := ""
@@ -1296,7 +1317,37 @@ func deterministicRuntimeSecretID(execution *AgentExecution, metadataKey string)
 	default:
 		return ""
 	}
-	return fmt.Sprintf("runtime:task-environment:%s:%s", execution.TaskEnvironmentID, kind)
+	return fmt.Sprintf("runtime:task-environment:%s:%s", taskEnvironmentID, kind)
+}
+
+// DeleteTaskEnvironmentRuntimeSecrets removes the two deterministic encrypted
+// control credentials owned by a task environment. It is intentionally
+// idempotent so teardown can retry after partial cleanup without retaining a
+// stale secret or deleting any user-visible credential.
+func (m *Manager) DeleteTaskEnvironmentRuntimeSecrets(
+	ctx context.Context,
+	taskEnvironmentID, authSecretID, bootstrapSecretID string,
+) error {
+	if taskEnvironmentID == "" {
+		return errors.New("task_environment_id is required")
+	}
+	if m.runtimeSecretStore == nil {
+		return errors.New("runtime secret store is not configured")
+	}
+	var cleanupErr error
+	secretIDs := []string{authSecretID, bootstrapSecretID}
+	if secretIDs[0] == "" {
+		secretIDs[0] = deterministicTaskEnvironmentRuntimeSecretID(taskEnvironmentID, MetadataKeyAuthTokenSecret)
+	}
+	if secretIDs[1] == "" {
+		secretIDs[1] = deterministicTaskEnvironmentRuntimeSecretID(taskEnvironmentID, MetadataKeyBootstrapNonceSecret)
+	}
+	for _, secretID := range secretIDs {
+		if err := m.runtimeSecretStore.Delete(ctx, secretID); err != nil && !errors.Is(err, secrets.ErrNotFound) {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("delete runtime secret %s: %w", secretID, err))
+		}
+	}
+	return cleanupErr
 }
 
 // revealRuntimeSecretValue reveals a configured runtime secret and preserves
@@ -1306,10 +1357,10 @@ func (m *Manager) revealRuntimeSecretValue(ctx context.Context, metadata map[str
 	if secretID == "" {
 		return "", nil
 	}
-	if m.secretStore == nil {
+	if m.runtimeSecretStore == nil {
 		return "", errors.New("runtime secret store is unavailable")
 	}
-	value, err := revealGlobalSecret(ctx, m.secretStore, secretID)
+	value, err := revealGlobalSecret(ctx, m.runtimeSecretStore, secretID)
 	if err != nil {
 		return "", fmt.Errorf("reveal runtime secret %q: %w", metadataKey, err)
 	}
