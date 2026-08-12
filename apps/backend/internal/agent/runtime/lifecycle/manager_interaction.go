@@ -948,6 +948,11 @@ func (m *Manager) StopAgentWithReason(ctx context.Context, executionID string, r
 	if err := m.stopAgentViaBackend(ctx, executionID, execution, reason, force, agentStopFailed); err != nil {
 		return fmt.Errorf("stop runtime for execution %q: %w", executionID, err)
 	}
+	if runtimeStopErr == nil && reason != StopReasonBackendShutdown {
+		if err := m.deleteExecutionRuntimeSecrets(ctx, execution); err != nil {
+			return fmt.Errorf("delete execution runtime secrets: %w", err)
+		}
+	}
 	if execution.IsTaskHost && execution.agentctl != nil {
 		execution.agentctl.Close()
 	}
