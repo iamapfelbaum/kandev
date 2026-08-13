@@ -324,7 +324,10 @@ function spawnBackendProcess(
 export const backendFixture = base.extend<object, { backend: BackendContext }>({
   backend: [
     async ({ browserName: _browserName }, use, workerInfo) => {
-      const backendPort = backendPortFor(E2E_PORT_OFFSET, workerInfo.workerIndex);
+      // parallelIndex, not workerIndex: it is bounded by the worker count and
+      // the replacement process reuses it after a worker restart, so ports stay
+      // put across retries. See e2e/worker-ports.ts.
+      const backendPort = backendPortFor(E2E_PORT_OFFSET, workerInfo.parallelIndex);
       const frontendPort = backendPort;
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), `kandev-e2e-${workerInfo.workerIndex}-`),
@@ -353,7 +356,7 @@ export const backendFixture = base.extend<object, { backend: BackendContext }>({
         // See e2e/worker-ports.ts for the allocation and its budget assertion.
         const { base: agentctlPortBase, max: agentctlPortMax } = agentctlPortRangeFor(
           E2E_PORT_OFFSET,
-          workerInfo.workerIndex,
+          workerInfo.parallelIndex,
         );
 
         // Install a `git` shim that can sleep on `fetch`/`pull` before execing

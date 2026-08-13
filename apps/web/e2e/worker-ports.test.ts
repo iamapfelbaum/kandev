@@ -38,7 +38,7 @@ describe("backendPortFor", () => {
   // The regression this guards: with a stride of 1, offset N worker 1 landed on
   // the same port as offset N+1 worker 0, so run-e2e.sh's adjacent-offset local
   // shards collided the moment a shard ran more than one worker.
-  it("assigns a unique port to every offset/worker slot", () => {
+  it("assigns a unique port to every offset/parallel slot", () => {
     const ports = SLOTS.map(({ offset, worker }) => backendPortFor(offset, worker));
     expect(new Set(ports).size).toBe(SLOTS.length);
   });
@@ -52,9 +52,23 @@ describe("backendPortFor", () => {
     expect(backendPortFor(MAX_PORT_OFFSET, E2E_MAX_WORKERS - 1)).toBeLessThan(65_536);
   });
 
-  it("rejects a worker index beyond the reserved slots", () => {
-    expect(() => backendPortFor(0, E2E_MAX_WORKERS)).toThrow(/workerIndex/);
-    expect(() => backendPortFor(0, -1)).toThrow(/workerIndex/);
+  it("rejects a parallel index beyond the reserved slots", () => {
+    expect(() => backendPortFor(0, E2E_MAX_WORKERS)).toThrow(/parallelIndex/);
+    expect(() => backendPortFor(0, -1)).toThrow(/parallelIndex/);
+  });
+
+  // Playwright's `workerIndex` counts every worker process a run creates, so a
+  // shard with failures walks it past the reserved slots (CI shard 11 reached
+  // 321). Only `parallelIndex` is bounded and reused after a restart. Passing
+  // the wrong one has to fail loudly rather than hand back a drifting port
+  // that climbs into another offset's range and then past 65535.
+  it("refuses a restart-incremented index instead of drifting the port", () => {
+    for (const restartedIndex of [E2E_MAX_WORKERS, 12, 321]) {
+      expect(() => backendPortFor(0, restartedIndex)).toThrow(/parallelIndex/);
+      expect(() => agentctlPortRangeFor(0, restartedIndex)).toThrow(/parallelIndex/);
+    }
+    // What the unguarded math would have produced for that last index.
+    expect(30_001 + 321 * 200).toBeGreaterThan(65_535);
   });
 
   it("rejects an out-of-range offset", () => {

@@ -182,10 +182,10 @@ Why a script instead of raw `docker run`: in docker mode it builds the CGO/`fts5
 
 Every Playwright worker gets:
 
-- A unique backend port (`18080 + E2E_PORT_OFFSET * E2E_MAX_WORKERS + workerIndex`).
+- A unique backend port (`18080 + E2E_PORT_OFFSET * E2E_MAX_WORKERS + parallelIndex`).
   The backend also serves the SPA, so the frontend uses that same port.
 - A fresh tmpdir (`HOME`, `KANDEV_HOME_DIR`, worktree base, repo clone base — all under that tmpdir).
-- A unique agentctl instance port range (`30001 + E2E_PORT_OFFSET * 1000 + workerIndex * 200`).
+- A unique agentctl instance port range (`30001 + E2E_PORT_OFFSET * 1000 + parallelIndex * 200`).
 - Its own SQLite DB.
 - A process-scoped Docker ownership label for backend-created E2E containers
   and test-created SSH/storage fixtures. Cleanup and storage reporting filter
