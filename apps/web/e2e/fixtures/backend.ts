@@ -19,6 +19,11 @@ const WEB_DIST_DIR = path.join(WEB_DIR, "dist");
 // has to agree with it on how many worker slots each offset reserves.
 const E2E_PORT_OFFSET = parsePortOffset(process.env.E2E_PORT_OFFSET, process.pid);
 const HEALTH_TIMEOUT_MS = 30_000;
+// Generous because it is only ever paid when the port is genuinely still held:
+// a predecessor worker's backend shutting down releases it in well under a
+// second. If it does expire we spawn anyway and waitForHealth reports the bind
+// failure, so a leaked holder still surfaces rather than hanging the shard.
+const PORT_RELEASE_TIMEOUT_MS = 30_000;
 const HEALTH_POLL_MS = 250;
 
 /**
@@ -135,7 +140,7 @@ export async function waitForHealth(
  * OS may hold the port in TIME_WAIT for up to 60 s under heavy load, and
  * sleeping a fixed 2 s races against that window.
  */
-async function waitForPortFree(port: number, timeoutMs = 10_000): Promise<void> {
+export async function waitForPortFree(port: number, timeoutMs = 10_000): Promise<void> {
   const { createConnection } = await import("node:net");
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -460,6 +465,18 @@ export const backendFixture = base.extend<object, { backend: BackendContext }>({
         const scopedEnv = new BackendFixtureEnvOverrides();
 
         // --- Spawn backend ---
+        // Wait for the port before the *first* spawn too, not just in restart()
+        // below. When Playwright replaces a worker after a failure the new
+        // process keeps the same parallelIndex, so it rebinds the exact port its
+        // predecessor was using, and the predecessor's backend can still be
+        // shutting down. Losing that race exits the new backend with code 1 and
+        // takes down every test in the worker.
+        //
+        // This never happened while ports were derived from workerIndex, because
+        // each replacement drifted onto a fresh port — the same drift that made
+        // ports climb out of their range. Waiting here is what makes the stable
+        // parallelIndex slot safe to reuse.
+        await waitForPortFree(backendPort, PORT_RELEASE_TIMEOUT_MS);
         backendProc = spawnBackendProcess(scopedEnv.apply(baselineEnv), debug, backendPort);
         registerProcess(backendProc);
         await waitForHealth(`${baseUrl}/health`, HEALTH_TIMEOUT_MS, backendProc);
