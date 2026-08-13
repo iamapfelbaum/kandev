@@ -182,8 +182,8 @@ Why a script instead of raw `docker run`: in docker mode it builds the CGO/`fts5
 
 Every Playwright worker gets:
 
-- A unique backend port in `BACKEND_BASE_PORT + workerIndex` (default `18080+`).
-- A unique frontend port in `FRONTEND_BASE_PORT + workerIndex` (default `13000+`).
+- A unique backend port (`18080 + E2E_PORT_OFFSET * E2E_MAX_WORKERS + workerIndex`).
+  The backend also serves the SPA, so the frontend uses that same port.
 - A fresh tmpdir (`HOME`, `KANDEV_HOME_DIR`, worktree base, repo clone base — all under that tmpdir).
 - A unique agentctl instance port range (`30001 + E2E_PORT_OFFSET * 1000 + workerIndex * 200`).
 - Its own SQLite DB.
@@ -192,9 +192,19 @@ Every Playwright worker gets:
   by that label and never sweep another shard's `kandev.managed=true`
   containers.
 
-Workers run in parallel across CI manifest shards; within a worker, tests run
-serially because the `testPage` fixture calls `e2eReset` on the shared backend
-before each test.
+Both port formulas are derived in `e2e/worker-ports.ts`, which reserves
+`E2E_MAX_WORKERS` slots per `E2E_PORT_OFFSET`. That stride is what lets the two
+axes coexist: `run-e2e.sh` gives concurrent local shards adjacent offsets, so
+without it offset _N_ worker 1 would land on the port offset _N+1_ worker 0 uses.
+
+Within a worker, tests run serially because the `testPage` fixture calls
+`e2eReset` on the shared backend before each test. Across workers, the unit of
+parallelism is the spec **file** (`fullyParallel: false`) — tests in one file
+never split across workers, so specs may keep relying on in-file ordering.
+
+Worker count comes from `E2E_WORKERS` (default 1, max `E2E_MAX_WORKERS`). CI's
+chromium/mobile-chrome shards set it to 2; the containers job leaves it unset
+because each of those workers also drives a real Docker daemon.
 
 Docker image usage remains daemon-wide because images and their layers are
 shared across shards; only container records, cleanup, and container-based

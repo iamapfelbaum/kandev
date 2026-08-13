@@ -1,18 +1,33 @@
 import { defineConfig, devices } from "@playwright/test";
+import { resolveWorkerCount } from "./worker-ports";
 
 const CI = !!process.env.CI;
 
 export default defineConfig({
   testDir: "./tests",
-  // `fullyParallel: true` keeps direct local `--shard=N/M` runs at test level.
-  // CI uses explicit duration-aware file manifests from e2e/scripts instead;
-  // this setting preserves the existing local debugging behavior.
+  // The file is the unit of parallelism: different files run concurrently
+  // across workers, tests inside one file stay serial and in order on a single
+  // worker.
   //
-  // Concurrency is still capped by `workers: 1` below — only one test runs at a
-  // time per shard process, preserving the worker-scoped backend invariant that
-  // the testPage fixture relies on (e2eReset before each test on a shared
-  // backend). `fullyParallel: true` alone does not introduce intra-shard
-  // parallelism unless workers > 1.
+  // This was `true` while `workers: 1` pinned everything to one worker, so
+  // test-level splitting never actually happened and no spec has ever had to
+  // prove its tests are order-independent. Turning on a second worker with
+  // `fullyParallel: true` would have cashed that unverified assumption across
+  // all ~640 specs at once, and — because CI keeps `failOnFlakyTests` off —
+  // any order-dependence would have surfaced as a test that passes on retry
+  // rather than as an honest failure. File-level parallelism gets the same
+  // wall-clock win with today's semantics intact, and it matches how the
+  // duration-aware planner already reasons (it packs shards by file).
+  //
+  // Intra-shard concurrency is set by `workers` below (default 1, opt in via
+  // E2E_WORKERS). The worker-scoped backend invariant the testPage fixture
+  // relies on (e2eReset before each test on a shared backend) holds at any
+  // worker count: the fixture gives every worker its own backend process,
+  // port, agentctl range, HOME, tmpdir, and database, so tests only ever share
+  // a backend with others on the same worker — which Playwright runs serially.
+  // `beforeAll`/`afterAll` specs that call `backend.restart()` stay correct
+  // too: Playwright brackets those hooks per file per worker, and each worker
+  // restarts only its own backend.
   //
   // Isolation strategy: office-routing-* specs are gathered into their own
   // Playwright project (see below) so the worker-scoped backend env
@@ -21,11 +36,16 @@ export default defineConfig({
   // topbar agent name. Each routing spec restarts the backend back to
   // baseline in `afterAll` (see backend.restart() — no args = revert to
   // the fixture's baseline env snapshot).
-  fullyParallel: true,
+  fullyParallel: false,
   forbidOnly: CI,
   failOnFlakyTests: !CI || process.env.E2E_FAIL_ON_FLAKY === "1",
   retries: CI ? 2 : 0,
-  workers: 1,
+  // Each worker costs a backend process plus a browser, so this is bounded by
+  // runner CPU/RAM rather than by test isolation. CI's chromium/mobile-chrome
+  // shards set E2E_WORKERS=2 (4 vCPU / 16 GB runners); the container-backed
+  // project and local runs stay at 1 unless explicitly opted in, since each of
+  // those workers also drives real Docker containers.
+  workers: resolveWorkerCount(process.env.E2E_WORKERS),
   timeout: 60_000,
   // CI uses blob reporter for cross-shard merge-reports; local uses list.
   reporter: CI ? [["blob", { outputDir: "./blob-report" }]] : "list",
@@ -95,11 +115,12 @@ export default defineConfig({
       testMatch: [/docker\/.*\.spec\.ts/, /ssh\/.*\.spec\.ts/],
       use: { ...devices["Desktop Chrome"] },
       timeout: 180_000,
-      // Local `--shard=N/6` runs can still split this project at test level.
-      // CI uses explicit files from the duration-aware containers manifests.
-      // Each CI shard is its own process, and workers:1 still serializes tests
-      // within a shard, so the worker-scoped backend remains safe.
-      fullyParallel: true,
+      // Local `--shard=N/6` runs split this project by file, as CI does with
+      // the duration-aware containers manifests. Each CI shard is its own
+      // process, and the containers job deliberately leaves E2E_WORKERS unset
+      // (workers: 1) — these tests build images and run real containers, so a
+      // second worker contends for the Docker daemon for no critical-path gain.
+      fullyParallel: false,
     },
   ],
 
