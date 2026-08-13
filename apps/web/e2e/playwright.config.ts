@@ -115,12 +115,15 @@ export default defineConfig({
       testMatch: [/docker\/.*\.spec\.ts/, /ssh\/.*\.spec\.ts/],
       use: { ...devices["Desktop Chrome"] },
       timeout: 180_000,
-      // Local `--shard=N/6` runs split this project by file, as CI does with
-      // the duration-aware containers manifests. Each CI shard is its own
-      // process, and the containers job deliberately leaves E2E_WORKERS unset
-      // (workers: 1) — these tests build images and run real containers, so a
-      // second worker contends for the Docker daemon for no critical-path gain.
-      fullyParallel: false,
+      // Single-worker operation for this project is enforced by the CI job, not
+      // here: `workers` is a top-level Playwright option with no per-project
+      // form, so the contract is the containers job leaving E2E_WORKERS unset.
+      // These tests build images and drive real containers, where a second
+      // worker contends for the Docker daemon for no critical-path gain.
+      //
+      // Parallelism granularity is inherited from the top-level
+      // `fullyParallel: false`, so local `--shard=N/6` runs split this project
+      // by file, matching the duration-aware containers manifests CI uses.
     },
   ],
 
