@@ -330,17 +330,24 @@ jobs:
       # container-bound specs would run here too, fail seeding (Docker not
       # enabled for these shards), and spam every shard.
       #
-      # E2E_WORKERS=2 runs two Playwright workers per shard. The backend
-      # fixture is fully worker-indexed (own backend process, port, agentctl
-      # range, HOME, tmpdir and database per worker — see e2e/worker-ports.ts),
-      # so the only limit is the runner: ubuntu-latest is 4 vCPU / 16 GB, which
-      # fits two backends plus two Chromiums. Deliberately not set on the
-      # `e2e-containers` job, which drives a real Docker daemon per worker.
+      # E2E_WORKERS is deliberately left at its default of 1.
+      #
+      # Two workers per shard cut shard time from ~11m to ~7m, but every shard
+      # then hit exactly one "Backend process exited with code 1" during a
+      # worker's backend boot (14/14 shards, twice in a row; zero occurrences on
+      # main at one worker). That took flaky from 4 to 18 and failed a shard
+      # outright. It is not the port reuse it first looked like — pinning the
+      # port slot and waiting for release before rebinding changed nothing — and
+      # two backends start fine side by side locally, so the cause is still
+      # unidentified.
+      #
+      # waitForHealth now reports the backend's own output on exit, so the next
+      # attempt at two workers can read the actual reason instead of guessing.
+      # Flip this to "2" to resume that experiment.
       - name: Run planned E2E tests (shard ${{ matrix.shard }}/14)
         working-directory: apps/web
         env:
           E2E_SHARD: ${{ matrix.shard }}
-          E2E_WORKERS: "2"
         run: bash e2e/scripts/run-planned-shard.sh "$GITHUB_WORKSPACE/e2e-manifests/normal/${{ matrix.shard }}.json"
 
       - name: Upload blob report

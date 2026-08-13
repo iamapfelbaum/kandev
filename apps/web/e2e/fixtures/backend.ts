@@ -19,11 +19,12 @@ const WEB_DIST_DIR = path.join(WEB_DIR, "dist");
 // has to agree with it on how many worker slots each offset reserves.
 const E2E_PORT_OFFSET = parsePortOffset(process.env.E2E_PORT_OFFSET, process.pid);
 const HEALTH_TIMEOUT_MS = 30_000;
-// Generous because it is only ever paid when the port is genuinely still held:
-// a predecessor worker's backend shutting down releases it in well under a
-// second. If it does expire we spawn anyway and waitForHealth reports the bind
-// failure, so a leaked holder still surfaces rather than hanging the shard.
-const PORT_RELEASE_TIMEOUT_MS = 30_000;
+// Must stay well under the 60 s fixture timeout minus HEALTH_TIMEOUT_MS: this
+// wait and the health wait run back to back, so 30 s here consumed the whole
+// budget and Playwright reported an opaque "fixture timeout" instead of the
+// backend's own boot error. A predecessor releases the port in well under a
+// second, so the shorter budget costs nothing real.
+const PORT_RELEASE_TIMEOUT_MS = 10_000;
 const HEALTH_POLL_MS = 250;
 
 /**
@@ -102,6 +103,33 @@ function observeProcessExit(proc?: ChildProcess): {
   };
 }
 
+/**
+ * Last lines the backend wrote before dying.
+ *
+ * Without this the fixture discarded backend output unless E2E_DEBUG was set,
+ * so a backend that exited during startup in CI reported only its exit code —
+ * enough to know something failed, never enough to know why. A boot failure you
+ * cannot reproduce locally is then pure guesswork.
+ */
+const recentBackendOutput = new WeakMap<ChildProcess, string[]>();
+const CAPTURED_OUTPUT_LINES = 40;
+
+function captureBackendOutput(proc: ChildProcess, chunk: Buffer): void {
+  const lines = recentBackendOutput.get(proc) ?? [];
+  for (const line of chunk.toString().split("\n")) {
+    if (line.trim()) lines.push(line.trimEnd());
+  }
+  if (lines.length > CAPTURED_OUTPUT_LINES) {
+    lines.splice(0, lines.length - CAPTURED_OUTPUT_LINES);
+  }
+  recentBackendOutput.set(proc, lines);
+}
+
+export function backendOutputTail(proc?: ChildProcess): string {
+  const lines = proc ? recentBackendOutput.get(proc) : undefined;
+  return lines?.length ? lines.join("\n") : "";
+}
+
 export async function waitForHealth(
   url: string,
   timeoutMs: number,
@@ -116,8 +144,12 @@ export async function waitForHealth(
         throw processExit.state.error;
       }
       if (processExit.state.exited) {
+        const tail = backendOutputTail(proc);
         throw new Error(
-          `Backend process exited with code ${processExit.state.exitCode} while waiting for health at ${url}`,
+          `Backend process exited with code ${processExit.state.exitCode} while waiting for health at ${url}\n` +
+            (tail
+              ? `Backend output before exit:\n${tail}`
+              : "Backend produced no output before exiting."),
         );
       }
       try {
@@ -304,12 +336,14 @@ function spawnBackendProcess(
     logFile?.end();
   });
   proc.stderr?.on("data", (chunk: Buffer) => {
+    captureBackendOutput(proc, chunk);
     if (debug) {
       process.stderr.write(`[backend:${port}] ${chunk.toString()}`);
       logFile?.write(chunk);
     }
   });
   proc.stdout?.on("data", (chunk: Buffer) => {
+    captureBackendOutput(proc, chunk);
     if (debug) {
       process.stderr.write(`[backend-log:${port}] ${chunk.toString()}`);
       logFile?.write(chunk);
@@ -466,16 +500,15 @@ export const backendFixture = base.extend<object, { backend: BackendContext }>({
 
         // --- Spawn backend ---
         // Wait for the port before the *first* spawn too, not just in restart()
-        // below. When Playwright replaces a worker after a failure the new
-        // process keeps the same parallelIndex, so it rebinds the exact port its
-        // predecessor was using, and the predecessor's backend can still be
-        // shutting down. Losing that race exits the new backend with code 1 and
-        // takes down every test in the worker.
+        // below. Playwright reuses a worker's parallelIndex when it replaces
+        // that worker, so the replacement rebinds the exact port its predecessor
+        // held; ports used to drift onto a fresh value on every restart, so this
+        // path could not previously collide. Same reasoning as restart()'s wait.
         //
-        // This never happened while ports were derived from workerIndex, because
-        // each replacement drifted onto a fresh port — the same drift that made
-        // ports climb out of their range. Waiting here is what makes the stable
-        // parallelIndex slot safe to reuse.
+        // Note this is a consistency guard, not a fix for any observed failure:
+        // an occupied port does not kill the backend, it just stops it becoming
+        // healthy. Cheap either way, since a free port returns in well under
+        // 100 ms.
         await waitForPortFree(backendPort, PORT_RELEASE_TIMEOUT_MS);
         backendProc = spawnBackendProcess(scopedEnv.apply(baselineEnv), debug, backendPort);
         registerProcess(backendProc);
