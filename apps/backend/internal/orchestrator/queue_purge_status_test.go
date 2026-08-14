@@ -115,7 +115,6 @@ func TestDeleteSessionCancelsQueuedPromptsAndPublishesStatus(t *testing.T) {
 	}
 }
 
-
 func TestQueueStatusNotifyUsesDetachedContext(t *testing.T) {
 	// Production: ArchiveTask commits then calls notify with the request ctx.
 	// A cancelled request must not starve the badge-zero publish/handler work.
