@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { captureRepositoryState } from "./pipeline-eval-repository.mjs";
 import { validateGoModuleProvision } from "./pipeline-eval-go-provision-contract.mjs";
+import { quickStartEvaluation, validatePipelineEvaluation } from "./pipeline-eval-scenario.mjs";
 import { git, isInside } from "./pipeline-eval-shared.mjs";
 
 const IMAGE_DIGEST = "sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48";
@@ -319,6 +320,10 @@ function validatePlanInput(input) {
   return {
     source: repositoryProof(input.sourceProof, "source", { needsOrigin: true }),
     landing: repositoryProof(input.landingProof, "landing"),
+    evaluation: validatePipelineEvaluation(
+      input.evaluation ?? quickStartEvaluation(),
+      input.sourceProof,
+    ),
     uid: positiveInteger(input.uid, "Docker worker uid"),
     gid: positiveInteger(input.gid, "Docker worker gid"),
     environment: dockerEnvironment(input.environment),
@@ -368,6 +373,7 @@ function createBoundaryRequest(input, trusted, mounts) {
     },
     source: trusted.source,
     landing: trusted.landing,
+    evaluation: trusted.evaluation,
     mounts,
     goModuleCache: goModuleCache(input.goModuleCache, mounts, trusted.source),
     environment: trusted.environment,
@@ -602,6 +608,19 @@ function assertAuthorizationHeader(value, request) {
   }
 }
 
+function assertRequestDigest(request) {
+  if (!request || typeof request !== "object" || Array.isArray(request)) {
+    throw new Error("Docker boundary request digest needs an object request");
+  }
+  const { requestDigest, ...requestBody } = request;
+  if (
+    !/^sha256:[a-f0-9]{64}$/.test(requestDigest ?? "") ||
+    digestValue(requestBody) !== requestDigest
+  ) {
+    throw new Error("Docker boundary request digest does not bind the complete request");
+  }
+}
+
 function assertAuthorizationInspection(value, request) {
   const invalid = [
     value.containerId !== value.inspection?.containerId,
@@ -616,6 +635,7 @@ function assertAuthorizationInspection(value, request) {
 }
 
 export function validateDockerBoundaryAuthorization(value, request) {
+  assertRequestDigest(request);
   assertAuthorizationHeader(value, request);
   assertAuthorizationInspection(value, request);
   return structuredClone(value);

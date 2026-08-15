@@ -13,6 +13,22 @@ const FIXTURE_SNAPSHOT = "/external/eval/snapshot";
 const FIXTURE_SCENARIO = `${FIXTURE_SNAPSHOT}/eval/quick-start.scenario.json`;
 const FIXTURE_ARTIFACTS = "/external/eval/artifacts";
 const MAIN_REF = "refs/heads/main";
+const QUICK_CHAT_SCENARIO = "apps/web/e2e/highlights/quick-chat.scenario.json";
+const SCENARIO_OPTION = "--scenario";
+
+function committedScenarioEvaluation(sourceHead = "a".repeat(40)) {
+  return {
+    contract: "kandev-highlight-pipeline-evaluation-v1",
+    mode: "committed-scenario",
+    scenario: {
+      path: QUICK_CHAT_SCENARIO,
+      sourceHead,
+      gitBlobSha: "c".repeat(40),
+      bytes: 1234,
+      sha256: `sha256:${"d".repeat(64)}`,
+    },
+  };
+}
 
 async function exec(command, args, { cwd } = {}) {
   const { execFile } = await import("node:child_process");
@@ -47,11 +63,13 @@ test("facade preserves the public eval contract", () => {
     "assertRuntimeEvidenceLinks",
     "assertTechnicalReview",
     "buildPipelineCommandSequence",
+    "captureCommittedScenarioEvaluation",
     "captureRepositoryState",
     "commitScenarioAsPrHead",
     "installFrozenOfflineDependencies",
     "linkIgnoredDependencies",
     "normalizeDeterminismEvidence",
+    "parsePipelineEvalOptions",
     "projectSemanticPointerEvidence",
     "runBoundedSubprocess",
     "runFreshAgentPipelineEvaluation",
@@ -63,6 +81,137 @@ test("facade preserves the public eval contract", () => {
     assert.equal(typeof pipeline[name], "function", `${name} must remain exported`);
   }
   assert.equal(pipeline.linkIgnoredDependencies, pipeline.installFrozenOfflineDependencies);
+});
+
+test("CLI parser preserves zero-argument Quick Start and accepts one safe scenario option", () => {
+  assert.equal(
+    typeof pipeline.parsePipelineEvalOptions,
+    "function",
+    "pipeline facade must expose the trusted CLI parser",
+  );
+  if (typeof pipeline.parsePipelineEvalOptions !== "function") return;
+
+  const defaults = pipeline.parsePipelineEvalOptions([]);
+  assert.equal(defaults.scenarioPath, null);
+  const supplied = pipeline.parsePipelineEvalOptions([SCENARIO_OPTION, QUICK_CHAT_SCENARIO]);
+  assert.equal(supplied.scenarioPath, QUICK_CHAT_SCENARIO);
+
+  for (const unsafe of [
+    "/tmp/quick-chat.scenario.json",
+    "../quick-chat.scenario.json",
+    "apps/web/../quick-chat.scenario.json",
+    String.raw`apps\web\quick-chat.scenario.json`,
+    "apps/web/e2e/highlights/quick-chat.json",
+  ]) {
+    assert.throws(
+      () => pipeline.parsePipelineEvalOptions([SCENARIO_OPTION, unsafe]),
+      /scenario.*repository-relative|scenario.*safe|scenario.*\.scenario\.json/i,
+    );
+  }
+  assert.throws(
+    () =>
+      pipeline.parsePipelineEvalOptions([
+        SCENARIO_OPTION,
+        QUICK_CHAT_SCENARIO,
+        SCENARIO_OPTION,
+        QUICK_CHAT_SCENARIO,
+      ]),
+    /--scenario may be specified only once/i,
+  );
+});
+
+test("committed scenario proof binds tracked HEAD bytes and rejects modified or untracked input", async (t) => {
+  assert.equal(
+    typeof pipeline.captureCommittedScenarioEvaluation,
+    "function",
+    "pipeline facade must expose committed scenario proof",
+  );
+  if (typeof pipeline.captureCommittedScenarioEvaluation !== "function") return;
+
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "highlight-pipeline-scenario-test-"));
+  t.after(() => fs.rm(temp, { recursive: true, force: true }));
+  const sourceRoot = path.join(temp, "source");
+  await initRepository(sourceRoot);
+  const scenarioPath = path.join(sourceRoot, QUICK_CHAT_SCENARIO);
+  await fs.mkdir(path.dirname(scenarioPath), { recursive: true });
+  const scenarioBytes = '{"schemaVersion":1,"id":"quick-chat"}\n';
+  await fs.writeFile(scenarioPath, scenarioBytes);
+  await exec("git", ["add", "--", QUICK_CHAT_SCENARIO], { cwd: sourceRoot });
+  await exec("git", ["commit", "-m", "add quick chat scenario"], { cwd: sourceRoot });
+  const sourceHead = (await exec("git", ["rev-parse", "HEAD"], { cwd: sourceRoot })).stdout.trim();
+
+  const proof = await pipeline.captureCommittedScenarioEvaluation({
+    sourceRoot,
+    scenarioPath: QUICK_CHAT_SCENARIO,
+  });
+  assert.deepEqual(proof, {
+    contract: "kandev-highlight-pipeline-evaluation-v1",
+    mode: "committed-scenario",
+    scenario: {
+      path: QUICK_CHAT_SCENARIO,
+      sourceHead,
+      gitBlobSha: proof.scenario.gitBlobSha,
+      bytes: Buffer.byteLength(scenarioBytes),
+      sha256: proof.scenario.sha256,
+    },
+  });
+  assert.match(proof.scenario.gitBlobSha, /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/);
+  assert.match(proof.scenario.sha256, /^sha256:[a-f0-9]{64}$/);
+
+  const untracked = "apps/web/e2e/highlights/untracked.scenario.json";
+  await fs.writeFile(path.join(sourceRoot, untracked), scenarioBytes);
+  await assert.rejects(
+    () =>
+      pipeline.captureCommittedScenarioEvaluation({
+        sourceRoot,
+        scenarioPath: untracked,
+      }),
+    /scenario.*tracked|scenario.*committed/i,
+  );
+  await fs.writeFile(scenarioPath, `${scenarioBytes} `);
+  await assert.rejects(
+    () =>
+      pipeline.captureCommittedScenarioEvaluation({
+        sourceRoot,
+        scenarioPath: QUICK_CHAT_SCENARIO,
+      }),
+    /scenario.*modified|scenario.*committed.*bytes/i,
+  );
+});
+
+test("committed scenario proof rejects traversal, absolute paths, and tracked symlinks", async (t) => {
+  assert.equal(
+    typeof pipeline.captureCommittedScenarioEvaluation,
+    "function",
+    "pipeline facade must expose committed scenario proof",
+  );
+  if (typeof pipeline.captureCommittedScenarioEvaluation !== "function") return;
+
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "highlight-pipeline-symlink-test-"));
+  t.after(() => fs.rm(temp, { recursive: true, force: true }));
+  const sourceRoot = path.join(temp, "source");
+  await initRepository(sourceRoot);
+  const target = path.join(sourceRoot, "target.scenario.json");
+  const linked = path.join(sourceRoot, "linked.scenario.json");
+  await fs.writeFile(target, '{"schemaVersion":1}\n');
+  await fs.symlink("target.scenario.json", linked);
+  await exec("git", ["add", "target.scenario.json", "linked.scenario.json"], { cwd: sourceRoot });
+  await exec("git", ["commit", "-m", "add linked scenario fixture"], { cwd: sourceRoot });
+
+  for (const scenarioPath of [
+    path.join(temp, "outside.scenario.json"),
+    "../outside.scenario.json",
+    "linked.scenario.json",
+  ]) {
+    await assert.rejects(
+      () =>
+        pipeline.captureCommittedScenarioEvaluation({
+          sourceRoot,
+          scenarioPath,
+        }),
+      /repository-relative|symlink|canonical|inside.*repository/i,
+    );
+  }
 });
 
 test("CLI launches trusted Docker boundary and reserves direct orchestration for inner worker", async () => {
@@ -139,6 +288,42 @@ test("pipeline command sequence uses production CLI and exact safe arguments", a
     packageJson.scripts["e2e:highlight-pipeline"],
     "node e2e/highlights/run-pipeline-integration.mjs",
   );
+});
+
+test("supplied scenario command sequence validates existing bytes and runs production once", () => {
+  const commands = pipeline.buildPipelineCommandSequence({
+    cloneRoot: FIXTURE_SNAPSHOT,
+    scenarioPath: `${FIXTURE_SNAPSHOT}/${QUICK_CHAT_SCENARIO}`,
+    artifactRoot: FIXTURE_ARTIFACTS,
+    landingRoot: "/workspace/landing",
+    reviewPath: `${FIXTURE_ARTIFACTS}/quick-chat/stages/deadbeef/review.json`,
+    prNumber: 1,
+    prBaseSha: "b".repeat(40),
+    nodeExecutable: "/usr/bin/node",
+    evaluation: committedScenarioEvaluation(),
+  });
+
+  assert.deepEqual(
+    commands.map(({ phase }) => phase),
+    ["validate", "storyboard", "run-1", "stage-recovery", "promote-dry-run"],
+  );
+  assert.equal(
+    commands.some(({ phase }) => phase === "scaffold"),
+    false,
+  );
+  assert.equal(commands.filter(({ phase }) => phase.startsWith("run-")).length, 1);
+  assert.deepEqual(commands[0].args.slice(1), [
+    "validate",
+    `${FIXTURE_SNAPSHOT}/${QUICK_CHAT_SCENARIO}`,
+  ]);
+  assert.deepEqual(commands[1].args.slice(1), [
+    "storyboard",
+    `${FIXTURE_SNAPSHOT}/${QUICK_CHAT_SCENARIO}`,
+    "--format",
+    "json",
+  ]);
+  assert.equal(commands[2].args[1], "run");
+  assert.equal(commands[2].args[2], `${FIXTURE_SNAPSHOT}/${QUICK_CHAT_SCENARIO}`);
 });
 
 test("snapshot keeps immutable main while scaffold commit becomes isolated pr_head", async (t) => {

@@ -9,6 +9,8 @@ const REPO_ROOT = path.resolve(HERE, "../../../..");
 const EVAL_MODULES = [
   "run-pipeline-integration.mjs",
   "pipeline-eval-shared.mjs",
+  "pipeline-eval-scenario.mjs",
+  "pipeline-eval-commands.mjs",
   "pipeline-eval-repository.mjs",
   "pipeline-eval-evidence.mjs",
   "pipeline-eval-artifacts.mjs",

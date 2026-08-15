@@ -20,6 +20,10 @@ import {
   preparePrivateGoModuleCache,
 } from "./pipeline-eval-docker-cache.mjs";
 import { CONTAINER_GO_ROOT, compactTreeProof } from "./pipeline-eval-go-provision-contract.mjs";
+import {
+  captureCommittedScenarioEvaluation,
+  validatePipelineEvaluation,
+} from "./pipeline-eval-scenario.mjs";
 import { runBoundedSubprocess } from "./pipeline-eval-shared.mjs";
 
 function mountInfoMode(mountInfo, target) {
@@ -93,6 +97,8 @@ function innerDependencies(overrides = {}) {
     readJson: overrides.readJson ?? readJson,
     readFile: overrides.readFile ?? fs.readFile,
     captureRepositoryProof: overrides.captureRepositoryProof ?? captureDockerRepositoryProof,
+    captureScenarioEvaluation:
+      overrides.captureScenarioEvaluation ?? captureCommittedScenarioEvaluation,
     capturePathIdentity: overrides.capturePathIdentity ?? capturePathIdentity,
     captureTreeProof: overrides.captureTreeProof ?? captureTreeProof,
     captureFileProof:
@@ -182,13 +188,24 @@ async function validateInnerBoundary(requestPath, deps) {
   ]);
   sameRepositoryProof(source, request.source, "source");
   sameRepositoryProof(landing, request.landing, "landing");
-  return { request, authorization };
+  const evaluation = validatePipelineEvaluation(request.evaluation, source);
+  if (evaluation.mode === "committed-scenario") {
+    const mounted = await deps.captureScenarioEvaluation({
+      sourceRoot: request.inner.sourceRoot,
+      scenarioPath: evaluation.scenario.path,
+    });
+    if (canonicalJson(mounted) !== canonicalJson(evaluation)) {
+      throw new Error("mounted scenario does not match the request-bound evaluation proof");
+    }
+  }
+  return { request, authorization, evaluation };
 }
 
 async function executeBoundaryEvaluation({
   deps,
   request,
   authorization,
+  evaluation,
   environment,
   runEvaluation,
 }) {
@@ -205,6 +222,7 @@ async function executeBoundaryEvaluation({
       securityEnvironment: environment,
       prNumber: request.inner.prNumber,
       securityBoundary: authorization,
+      evaluation,
       beforeCapture: async (context) => {
         gate.calls += 1;
         if (gate.calls !== 1) {
@@ -235,7 +253,7 @@ function failureEvidence(failure) {
 
 export async function runInsideDockerBoundary({ requestPath, dependencies = {} } = {}) {
   const deps = innerDependencies(dependencies);
-  const { request, authorization } = await validateInnerBoundary(requestPath, deps);
+  const { request, authorization, evaluation } = await validateInnerBoundary(requestPath, deps);
   const runEvaluation =
     deps.runEvaluation ??
     (await import("./pipeline-eval-orchestrator.mjs")).runFreshAgentPipelineEvaluation;
@@ -250,10 +268,11 @@ export async function runInsideDockerBoundary({ requestPath, dependencies = {} }
     });
     environment.GOMODCACHE = request.goModuleCache.targetRoot;
   }
-  const evaluation = await executeBoundaryEvaluation({
+  const execution = await executeBoundaryEvaluation({
     deps,
     request,
     authorization,
+    evaluation,
     environment,
     runEvaluation,
   });
@@ -265,19 +284,20 @@ export async function runInsideDockerBoundary({ requestPath, dependencies = {} }
         provision: structuredClone(request.goModuleCache.provision),
       };
     } catch (error) {
-      evaluation.failure = evaluation.failure
+      execution.failure = execution.failure
         ? new AggregateError(
-            [evaluation.failure, error],
+            [execution.failure, error],
             "Docker evaluation and private Go module cache postflight failed",
           )
         : error;
     }
   }
-  const { result, failure, networkGate } = evaluation;
+  const { result, failure, networkGate } = execution;
   const record = {
     contract: "kandev-highlight-docker-boundary-inner-result-v1",
     status: failure ? "failed" : "passed",
     requestDigest: request.requestDigest,
+    evaluation,
     containerId: authorization.containerId,
     networkGate,
     goModuleCache,

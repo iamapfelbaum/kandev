@@ -232,6 +232,25 @@ export async function commitScenarioAsPrHead({ cloneRoot, scenarioPath } = {}) {
   return proof;
 }
 
+export async function proveExistingPrHead({ cloneRoot } = {}) {
+  const repository = await canonicalDirectory(path.resolve(cloneRoot), "eval snapshot");
+  const head = (await git(repository, ["rev-parse", "HEAD"])).stdout.trim();
+  if (!SHA_PATTERN.test(head)) throw new Error("existing pr_head is not an exact Git SHA");
+  const origin = await localBareOrigin(repository);
+  const proof = await currentMainProof(repository, origin, head);
+  if (
+    proof.headSha !== head ||
+    proof.currentMainSha !== proof.originMainSha ||
+    proof.currentMainSha === head ||
+    !proof.clean
+  ) {
+    throw new Error(
+      "existing pr_head proof must keep immutable origin/main while binding clean source HEAD",
+    );
+  }
+  return proof;
+}
+
 /** @deprecated Safe compatibility alias; never mutates origin/main. */
 export const commitScenarioAndBindCurrentMain = commitScenarioAsPrHead;
 

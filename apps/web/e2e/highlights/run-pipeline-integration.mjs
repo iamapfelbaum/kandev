@@ -7,6 +7,7 @@ import {
   runFreshAgentPipelineEvaluationInDocker,
   runInsideDockerBoundary,
 } from "./pipeline-eval-docker-launcher.mjs";
+import { normalizeRepositoryRelativeScenarioPath } from "./pipeline-eval-scenario.mjs";
 import { DEFAULT_CAPTURE_DEADLINE_MS } from "./pipeline-eval-shared.mjs";
 
 export {
@@ -31,19 +32,26 @@ export {
   runFreshAgentPipelineEvaluation,
   runWithEvalRetention,
 } from "./pipeline-eval-orchestrator.mjs";
+export { captureCommittedScenarioEvaluation } from "./pipeline-eval-scenario.mjs";
 export { runBoundedSubprocess } from "./pipeline-eval-shared.mjs";
 export {
   runFreshAgentPipelineEvaluationInDocker,
   runInsideDockerBoundary,
 } from "./pipeline-eval-docker-launcher.mjs";
 
-function parseOptions(argv) {
+export function parsePipelineEvalOptions(argv) {
   const values = {};
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index];
     if (option === "--help") return { help: true };
     if (
-      !["--source-root", "--landing-root", "--eval-parent", "--capture-timeout-ms"].includes(option)
+      ![
+        "--source-root",
+        "--landing-root",
+        "--eval-parent",
+        "--capture-timeout-ms",
+        "--scenario",
+      ].includes(option)
     ) {
       throw new Error(`unknown pipeline eval option ${option}`);
     }
@@ -66,6 +74,9 @@ function parseOptions(argv) {
       : DEFAULT_LANDING_ROOT,
     evalParent: values["--eval-parent"] ? path.resolve(values["--eval-parent"]) : os.tmpdir(),
     captureDeadlineMs: timeout,
+    scenarioPath: values["--scenario"]
+      ? normalizeRepositoryRelativeScenarioPath(values["--scenario"])
+      : null,
   };
 }
 
@@ -78,10 +89,10 @@ export async function main(argv = process.argv.slice(2)) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return;
   }
-  const options = parseOptions(argv);
+  const options = parsePipelineEvalOptions(argv);
   if (options.help) {
     process.stdout.write(
-      "Usage: pnpm e2e:highlight-pipeline [--source-root <clean-repo>] [--landing-root <clean-landing-repo>] [--eval-parent <external-dir>] [--capture-timeout-ms <ms>]\n",
+      "Usage: pnpm e2e:highlight-pipeline [--source-root <clean-repo>] [--landing-root <clean-landing-repo>] [--eval-parent <external-dir>] [--capture-timeout-ms <ms>] [--scenario <committed-repo-relative.scenario.json>]\n",
     );
     return;
   }

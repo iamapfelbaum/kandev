@@ -79,6 +79,19 @@ test("fresh-agent eval keeps the budgeted quick-start story under five seconds",
   assert.match(source, /storyboardTimeline\.totalDurationMs > MAX_QUICK_START_EVAL_DURATION_MS/);
 });
 
+test("supplied scenario execution selects phases by contract without scaffold or second-run positions", async () => {
+  const source = await fs.readFile(path.join(HERE, ORCHESTRATOR_FILE), "utf8");
+  assert.match(source, /evaluation\.mode/);
+  assert.match(source, /filter\([\s\S]{0,100}phase\.startsWith\(["']run-["']\)/);
+  assert.match(source, /find\([\s\S]{0,100}phase\s*===\s*["']stage-recovery["']/);
+  assert.match(source, /find\([\s\S]{0,100}phase\s*===\s*["']promote-dry-run["']/);
+  assert.match(
+    source,
+    /invokeInitialCommands\(\s*\{[\s\S]{0,160}evaluation:\s*context\.evaluation/,
+  );
+  assert.doesNotMatch(source, /context\.commands\[[3456]\]/);
+});
+
 test("fresh-agent eval selects only the closed host Chromium sandbox policy", async () => {
   const source = await fs.readFile(path.join(HERE, ORCHESTRATOR_FILE), "utf8");
   assert.match(source, /environment\.KANDEV_HIGHLIGHT_CHROMIUM_SANDBOX\s*=\s*"auto"/);

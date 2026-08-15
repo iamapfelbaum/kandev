@@ -286,6 +286,7 @@ test("inner boundary validates host proof and mounted source before any eval com
         plan.request.mounts.find((mountRecord) => mountRecord.target === target).identity,
       runEvaluation: async (options) => {
         calls += 1;
+        assert.deepEqual(options.evaluation, plan.request.evaluation);
         assert.equal(options.sourceRoot, CONTAINER_SOURCE_ROOT);
         assert.equal(options.landingRoot, "/kandev/landing");
         assert.equal(options.evalParent, "/kandev/eval");
@@ -516,7 +517,6 @@ test("Docker create plan isolates one nonroot worker and exposes only declared m
     /mount path.*unsupported/i,
   );
 });
-
 test("daemon and running-container proof require default seccomp and AppArmor", () => {
   assert.deepEqual(
     validateDockerDaemonSecurity(["name=apparmor", "name=seccomp,profile=builtin"]),

@@ -24,14 +24,17 @@ import { removePrivateTree } from "./pipeline-eval-docker-cache.mjs";
 import { validateRuntimeNetworkGateEvidence } from "./pipeline-eval-docker-network-gate.mjs";
 import { discoverDockerToolchain } from "./pipeline-eval-docker-toolchain.mjs";
 import {
+  assertRepositoryPipelineEvaluation,
+  capturePipelineEvaluation,
+} from "./pipeline-eval-scenario.mjs";
+import {
   canonicalDirectory,
   DEFAULT_CAPTURE_DEADLINE_MS,
   isInside,
   runBoundedSubprocess,
 } from "./pipeline-eval-shared.mjs";
 
-export { prepareDockerInputRepositories } from "./pipeline-eval-docker-input.mjs";
-export { discoverDockerToolchain } from "./pipeline-eval-docker-toolchain.mjs";
+export { prepareDockerInputRepositories, discoverDockerToolchain };
 export { runInsideDockerBoundary } from "./pipeline-eval-docker-inner.mjs";
 
 const DEFAULT_SOURCE_ROOT = path.resolve(import.meta.dirname, "../../../..");
@@ -78,9 +81,7 @@ function authorizationFor(request, inspection) {
   };
 }
 
-async function defaultRunCommand(specification) {
-  return runBoundedSubprocess(specification);
-}
+const defaultRunCommand = runBoundedSubprocess;
 
 function dockerCommand(args, phase, deadlineMs) {
   return {
@@ -322,6 +323,7 @@ function boundaryReceipt(state) {
     contract: "kandev-highlight-docker-boundary-receipt-v1",
     status: state.failure ? "failed" : "passed",
     requestDigest: state.plan.request.requestDigest,
+    evaluation: state.plan.request.evaluation,
     image: state.plan.request.image,
     container: { id: state.containerId, removed: state.removed },
     argv: state.plan.args,
@@ -527,12 +529,13 @@ export async function runFreshAgentPipelineEvaluationInDocker({
   landingRoot = DEFAULT_LANDING_ROOT,
   evalParent = os.tmpdir(),
   captureDeadlineMs = DEFAULT_CAPTURE_DEADLINE_MS,
+  scenarioPath = null,
   inheritedEnv = process.env,
-  dependencies = {},
+  dependencies: { runCommand = defaultRunCommand } = {},
 } = {}) {
-  const runCommand = dependencies.runCommand ?? defaultRunCommand;
   const source = await canonicalDirectory(path.resolve(sourceRoot), "Docker eval source");
   const landing = await canonicalDirectory(path.resolve(landingRoot), "Docker eval landing");
+  const evaluation = await capturePipelineEvaluation({ sourceRoot: source, scenarioPath });
   const parent = path.resolve(evalParent);
   if (isInside(source, parent) || isInside(landing, parent)) {
     throw new Error("Docker eval parent must stay outside source and landing repositories");
@@ -562,6 +565,7 @@ export async function runFreshAgentPipelineEvaluationInDocker({
       inheritedEnv,
       runCommand,
     });
+    await assertRepositoryPipelineEvaluation({ sourceRoot: prepared.sourceRoot, evaluation });
     if (toolchain.cleanupRoot !== toolchainBootstrapRoot) {
       throw new Error(
         "Docker toolchain cleanup root did not bind the owned private bootstrap root",
@@ -574,6 +578,7 @@ export async function runFreshAgentPipelineEvaluationInDocker({
       proofRoot,
       sourceProof: prepared.sourceProof,
       landingProof: prepared.landingProof,
+      evaluation,
       writableProofs: {
         eval: await capturePathIdentity(evalRoot),
         proof: await capturePathIdentity(proofRoot),

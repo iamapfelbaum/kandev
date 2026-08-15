@@ -4,15 +4,22 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { collectRunEvidence, parseLastJsonDocument } from "./pipeline-eval-artifacts.mjs";
+import { buildPipelineCommandSequence, QUICK_START_ID } from "./pipeline-eval-commands.mjs";
 import { assertDeterministicRuns } from "./pipeline-eval-evidence.mjs";
 import {
   assertRepositoryStateUnchanged,
   captureRepositoryState,
   commitScenarioAsPrHead,
   installFrozenOfflineDependencies,
+  proveExistingPrHead,
   snapshotCommittedRepository,
   verifyFrozenOfflineDependencies,
 } from "./pipeline-eval-repository.mjs";
+import {
+  assertCommittedScenarioEvaluation,
+  quickStartEvaluation,
+  validatePipelineEvaluation,
+} from "./pipeline-eval-scenario.mjs";
 import {
   canonicalDirectory,
   DEFAULT_CAPTURE_DEADLINE_MS,
@@ -30,87 +37,15 @@ const DEFAULT_WEB_ROOT = path.resolve(HERE, "../..");
 export const DEFAULT_REPO_ROOT = path.resolve(DEFAULT_WEB_ROOT, "../..");
 export const DEFAULT_LANDING_ROOT = path.resolve(DEFAULT_REPO_ROOT, "..", "landing");
 export const MAX_QUICK_START_EVAL_DURATION_MS = 5_000;
-const QUICK_START_ID = "quick-start";
 const TRUSTED_SOURCE_KEY = "KANDEV_HIGHLIGHT_TRUSTED_SOURCE_SHA";
 const SYNTHETIC_EVAL_PR_NUMBER = 2_147_483_647;
-const GIT_OBJECT_PATTERN = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
+
+export { buildPipelineCommandSequence };
 
 export function clearInheritedTrustedSource(inheritedEnvironment) {
   const environment = { ...inheritedEnvironment };
   delete environment[TRUSTED_SOURCE_KEY];
   return environment;
-}
-
-export function buildPipelineCommandSequence({
-  cloneRoot,
-  scenarioPath,
-  artifactRoot,
-  landingRoot,
-  reviewPath,
-  prNumber,
-  prBaseSha,
-  nodeExecutable = process.execPath,
-} = {}) {
-  if (!Number.isInteger(prNumber) || prNumber < 1) {
-    throw new Error("pipeline eval prNumber must be a positive integer");
-  }
-  if (!GIT_OBJECT_PATTERN.test(prBaseSha ?? "")) {
-    throw new Error("pipeline eval prBaseSha must be an exact Git SHA");
-  }
-  const repository = requireAbsolute(cloneRoot, "cloneRoot");
-  const scenario = requireAbsolute(scenarioPath, "scenarioPath");
-  const artifacts = requireAbsolute(artifactRoot, "artifactRoot");
-  const landing = requireAbsolute(landingRoot, "landingRoot");
-  const review = requireAbsolute(reviewPath, "reviewPath");
-  const cli = path.join(repository, "scripts", "highlights.mjs");
-  const command = (phase, args) => ({
-    phase,
-    command: nodeExecutable,
-    args: [cli, ...args],
-    cwd: repository,
-  });
-  const run = (phase, runId) =>
-    command(phase, [
-      "run",
-      scenario,
-      "--artifact-root",
-      artifacts,
-      "--source",
-      "pr_head",
-      "--pr-number",
-      String(prNumber),
-      "--pr-base-sha",
-      prBaseSha,
-      "--landing-root",
-      landing,
-      "--runtime",
-      "kandev-isolated-e2e",
-      "--run-id",
-      runId,
-    ]);
-  return [
-    command("scaffold", ["scaffold", scenario, "--template", QUICK_START_ID]),
-    command("validate", ["validate", scenario]),
-    command("storyboard", ["storyboard", scenario, "--format", "json"]),
-    run("run-1", "fresh-agent-1"),
-    run("run-2", "fresh-agent-2"),
-    command("stage-recovery", [
-      "stage",
-      scenario,
-      "--artifact-root",
-      artifacts,
-      "--run-id",
-      "fresh-agent-1",
-      "--dry-run",
-    ]),
-    command("promote-dry-run", [
-      "promote",
-      review,
-      "--accept-reviewed-by",
-      "fresh-agent-eval",
-      "--dry-run",
-    ]),
-  ];
 }
 
 async function writeCaptureMarker(root, metadata) {
@@ -217,15 +152,19 @@ function commandResultSummary(result) {
   };
 }
 
-function evaluationPaths(evalRoot) {
+function evaluationPaths(evalRoot, evaluation) {
   const cloneRoot = path.join(evalRoot, "snapshot");
+  const relativeScenario =
+    evaluation.mode === "committed-scenario"
+      ? evaluation.scenario.path
+      : "eval/quick-start.scenario.json";
   return {
     evalRoot,
     cloneRoot,
     originRoot: path.join(evalRoot, "origin.git"),
     artifactRoot: path.join(evalRoot, "artifacts"),
     logRoot: path.join(evalRoot, "logs"),
-    scenarioPath: path.join(cloneRoot, "eval", "quick-start.scenario.json"),
+    scenarioPath: path.join(cloneRoot, ...relativeScenario.split("/")),
     placeholderReview: path.join(evalRoot, "review-pending.json"),
   };
 }
@@ -247,17 +186,23 @@ async function cleanRepositoryProofs(source, landing) {
 async function invokeInitialCommands(context, commands) {
   const commandEvidence = [];
   let storyboardTimeline;
-  for (const command of commands.slice(0, 3)) {
+  const initialCommands = commands.filter((command) =>
+    ["scaffold", "validate", "storyboard"].includes(command.phase),
+  );
+  for (const command of initialCommands) {
     const result = await invoke(command, context);
     commandEvidence.push(commandResultSummary(result));
     if (command.phase === "storyboard") {
       storyboardTimeline = parseLastJsonDocument(result.stdout, "storyboard");
     }
   }
+  if (!storyboardTimeline) {
+    throw new Error("pipeline evaluation did not produce a storyboard timeline");
+  }
   if (
-    !storyboardTimeline ||
-    storyboardTimeline.scenarioId !== QUICK_START_ID ||
-    storyboardTimeline.totalDurationMs > MAX_QUICK_START_EVAL_DURATION_MS
+    context.evaluation.mode === "quick-start" &&
+    (storyboardTimeline.scenarioId !== QUICK_START_ID ||
+      storyboardTimeline.totalDurationMs > MAX_QUICK_START_EVAL_DURATION_MS)
   ) {
     throw new Error(
       "fresh-agent scaffold storyboard is not the deterministic short quick-start story",
@@ -267,14 +212,24 @@ async function invokeInitialCommands(context, commands) {
 }
 
 async function setupEvaluation(input) {
-  const context = { ...input, ...evaluationPaths(input.evalRoot) };
+  const evaluation = validatePipelineEvaluation(input.evaluation ?? quickStartEvaluation());
+  const context = { ...input, evaluation, ...evaluationPaths(input.evalRoot, evaluation) };
   const clean = await cleanRepositoryProofs(input.source, input.landing);
   Object.assign(context, clean);
+  context.evaluation = validatePipelineEvaluation(evaluation, {
+    headSha: context.sourceBefore.head,
+  });
   context.snapshot = await snapshotCommittedRepository({
     sourceRoot: input.source,
     cloneRoot: context.cloneRoot,
     originRoot: context.originRoot,
   });
+  if (context.evaluation.mode === "committed-scenario") {
+    await assertCommittedScenarioEvaluation({
+      sourceRoot: context.cloneRoot,
+      evaluation: context.evaluation,
+    });
+  }
   context.environment = await configuredToolchainEnvironment(
     input.inheritedEnv,
     input.securityEnvironment,
@@ -293,18 +248,27 @@ async function setupEvaluation(input) {
     reviewPath: context.placeholderReview,
     prNumber: input.prNumber,
     prBaseSha: context.snapshot.originMainSha,
+    evaluation: context.evaluation,
   });
   const initial = await invokeInitialCommands(
-    { logRoot: context.logRoot, env: context.environment },
+    {
+      logRoot: context.logRoot,
+      env: context.environment,
+      evaluation: context.evaluation,
+    },
     context.commands,
   );
   Object.assign(context, initial);
-  context.prHead = await commitScenarioAsPrHead({
-    cloneRoot: context.cloneRoot,
-    scenarioPath: context.scenarioPath,
-  });
+  context.scenarioDocument = JSON.parse(await fs.readFile(context.scenarioPath, "utf8"));
+  context.prHead =
+    context.evaluation.mode === "quick-start"
+      ? await commitScenarioAsPrHead({
+          cloneRoot: context.cloneRoot,
+          scenarioPath: context.scenarioPath,
+        })
+      : await proveExistingPrHead({ cloneRoot: context.cloneRoot });
   if (context.prHead.prBaseSha !== context.snapshot.originMainSha) {
-    throw new Error("synthetic pr_head base changed while scaffolding eval scenario");
+    throw new Error("pr_head base changed while preparing the pipeline evaluation");
   }
   context.cloneBoundState = await captureRepositoryState(context.cloneRoot);
   await verifyProductionRepositories(context);
@@ -348,13 +312,25 @@ async function executeOneRun(context, command) {
 }
 
 async function executeCaptureRuns(context, markCaptureStarted) {
-  const firstCommand = context.commands[3];
+  const runCommands = context.commands.filter((command) => command.phase.startsWith("run-"));
+  const expectedRunCount = context.evaluation.mode === "quick-start" ? 2 : 1;
+  if (runCommands.length !== expectedRunCount) {
+    throw new Error(`pipeline evaluation expected exactly ${expectedRunCount} production run(s)`);
+  }
+  const firstCommand = runCommands[0];
   await markCaptureStarted({
     phase: firstCommand.phase,
     argv: [firstCommand.command, ...firstCommand.args],
   });
   context.first = await executeOneRun(context, firstCommand);
-  context.second = await executeOneRun(context, context.commands[4]);
+  context.runs = [context.first];
+  if (context.evaluation.mode === "committed-scenario") {
+    context.second = null;
+    context.deterministic = null;
+    return;
+  }
+  context.second = await executeOneRun(context, runCommands[1]);
+  context.runs.push(context.second);
   const semantic = assertDeterministicRuns(context.first.normalized, context.second.normalized);
   const visual = await compareRunVisuals({
     first: context.first,
@@ -399,7 +375,10 @@ async function runPromotionDryRun(context, command) {
   const before = await captureRepositoryState(context.cloneRoot);
   const result = await invoke(command, { logRoot: context.logRoot, env: context.environment });
   context.commandEvidence.push(commandResultSummary(result));
-  if (!/Dry run: review quick-start\/r1 accepted by fresh-agent-eval/.test(result.stdout)) {
+  const expected =
+    `Dry run: review ${context.storyboardTimeline.scenarioId}/` +
+    `${context.scenarioDocument.delivery.revision} accepted by fresh-agent-eval`;
+  if (!result.stdout.includes(expected)) {
     throw new Error("promotion dry-run did not verify explicit fresh-agent-eval acceptance");
   }
   await assertRepositoryStateUnchanged(
@@ -418,9 +397,15 @@ async function executeDryRuns(context) {
     reviewPath: context.first.reviewPath,
     prNumber: context.prNumber,
     prBaseSha: context.prHead.prBaseSha,
+    evaluation: context.evaluation,
   });
-  context.recoveryResult = await runRecoveryDryRun(context, commands[5]);
-  await runPromotionDryRun(context, commands[6]);
+  const recoveryCommand = commands.find((command) => command.phase === "stage-recovery");
+  const promotionCommand = commands.find((command) => command.phase === "promote-dry-run");
+  if (!recoveryCommand || !promotionCommand) {
+    throw new Error("pipeline evaluation dry-run commands are missing");
+  }
+  context.recoveryResult = await runRecoveryDryRun(context, recoveryCommand);
+  await runPromotionDryRun(context, promotionCommand);
   await verifyProductionRepositories(context);
   await assertRepositoryStateUnchanged(
     context.cloneBoundState,
@@ -469,12 +454,14 @@ async function writeEvaluationResult(context) {
     landing: { root: context.landing, head: context.landingBefore.head },
     scenario: {
       path: context.scenarioPath,
-      id: QUICK_START_ID,
+      id: context.storyboardTimeline.scenarioId,
+      evaluation: context.evaluation,
+      evaluationDigest: digestValue(context.evaluation),
       storyboardDurationMs: context.storyboardTimeline.totalDurationMs,
     },
     order: PIPELINE_ORDER,
     commands: context.commandEvidence,
-    runs: [context.first, context.second].map(summarizeRun),
+    runs: context.runs.map(summarizeRun),
     deterministic: context.deterministic,
     recovery: {
       contract: context.recoveryResult.contract,
@@ -521,6 +508,7 @@ export async function runFreshAgentPipelineEvaluation({
   prNumber = SYNTHETIC_EVAL_PR_NUMBER,
   securityBoundary = null,
   beforeCapture = null,
+  evaluation,
 } = {}) {
   if (beforeCapture !== null && typeof beforeCapture !== "function") {
     throw new Error("pipeline eval beforeCapture must be a function");
@@ -547,6 +535,7 @@ export async function runFreshAgentPipelineEvaluation({
           prNumber,
           securityBoundary,
           beforeCapture,
+          evaluation,
         },
         markCaptureStarted,
       ),
