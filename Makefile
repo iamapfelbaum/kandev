@@ -470,7 +470,7 @@ test-scripts:
 	@bash scripts/release-desktop.test.sh
 	@node --test apps/desktop/e2e/desktop-launch-smoke.test.mjs
 	@node --test scripts/validate-public-docs.test.mjs
-	@node --test scripts/highlights.test.mjs scripts/highlights-pr-gate.test.mjs scripts/highlights/scenario.test.mjs scripts/highlights/stage.test.mjs
+	@node --test scripts/highlights.test.mjs scripts/highlights-pr-gate.test.mjs scripts/highlights/scenario.test.mjs scripts/highlights/stage.test.mjs apps/web/e2e/highlights/pipeline-eval-scenario-boundary.test.mjs apps/web/e2e/highlights/pipeline-eval-orchestrator.test.mjs scripts/highlights/runtime-host-contracts.test.mjs scripts/highlights/sensitive-scan.test.mjs
 
 .PHONY: test-e2e
 test-e2e: build-backend build-web build-e2e-plugin-package
