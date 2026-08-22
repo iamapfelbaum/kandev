@@ -18,6 +18,7 @@
     "integrations",
     "automation-and-mcp",
     "authentication",
+    "team-access",
     "configuration",
     "---Install Kandev---",
     "cli",

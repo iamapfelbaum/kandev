@@ -37,6 +37,8 @@ func RegisterMemberRoutes(router *gin.Engine, svc *service.Service, log *logger.
 	api.PUT("/workspaces/:id/visibility", h.setVisibility)
 	api.GET("/users/directory", h.listDirectory)
 	api.GET("/authz/scopes", h.listScopes)
+	api.GET("/workspaces-default-visibility", h.getDefaultVisibility)
+	api.PUT("/workspaces-default-visibility", h.setDefaultVisibility)
 }
 
 type memberDTO struct {
@@ -140,6 +142,27 @@ func (h *MemberHandlers) listDirectory(c *gin.Context) {
 // rather than keeping its own copy of what each role can do.
 func (h *MemberHandlers) listScopes(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"scopes": authz.Registry()})
+}
+
+// getDefaultVisibility reports the visibility new workspaces start with.
+func (h *MemberHandlers) getDefaultVisibility(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"visibility": string(h.service.DefaultWorkspaceVisibility(c.Request.Context())),
+	})
+}
+
+func (h *MemberHandlers) setDefaultVisibility(c *gin.Context) {
+	var body setVisibilityRequest
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+		return
+	}
+	visibility, err := h.service.SetDefaultWorkspaceVisibility(c.Request.Context(), body.Visibility)
+	if err != nil {
+		h.respondError(c, err, "failed to change the default workspace visibility")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"visibility": string(visibility)})
 }
 
 func (h *MemberHandlers) displayNames(c *gin.Context) map[string]string {

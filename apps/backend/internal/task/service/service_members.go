@@ -220,6 +220,7 @@ func (s *Service) lookupUser(ctx context.Context, userID string) (string, string
 // OrgSettings supplies instance-wide defaults that membership depends on.
 type OrgSettings interface {
 	DefaultWorkspaceVisibility(ctx context.Context) authz.Visibility
+	SetDefaultWorkspaceVisibility(ctx context.Context, visibility authz.Visibility) error
 }
 
 // SetOrgSettings wires the org-level defaults provider.
@@ -312,4 +313,27 @@ func (s *Service) ProjectWorkspaceAccess(ctx context.Context, workspaces []*mode
 		})
 	}
 	return projection
+}
+
+// DefaultWorkspaceVisibility reports the visibility new workspaces start with.
+func (s *Service) DefaultWorkspaceVisibility(ctx context.Context) authz.Visibility {
+	return s.defaultWorkspaceVisibility(ctx)
+}
+
+// SetDefaultWorkspaceVisibility changes the install-wide default for new
+// workspaces. It never touches existing workspaces: turning the default on
+// must not retroactively publish work that was private a moment ago.
+func (s *Service) SetDefaultWorkspaceVisibility(ctx context.Context, visibility string) (authz.Visibility, error) {
+	if !authz.SubjectOrgScopes(callerSubject(ctx)).Has(authz.ScopeOrgSettingsManage) {
+		return "", ErrForbidden
+	}
+	if s.orgSettings == nil {
+		return authz.VisibilityPrivate, nil
+	}
+	want := authz.NormalizeVisibility(visibility)
+	if err := s.orgSettings.SetDefaultWorkspaceVisibility(ctx, want); err != nil {
+		return "", err
+	}
+	s.logger.Info("default workspace visibility changed", zap.String("visibility", string(want)))
+	return want, nil
 }

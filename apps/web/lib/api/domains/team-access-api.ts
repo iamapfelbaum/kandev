@@ -65,3 +65,20 @@ export async function setWorkspaceVisibility(
 export async function listDirectoryUsers(options?: ApiRequestOptions) {
   return fetchJson<ListDirectoryUsersResponse>("/api/v1/users/directory", options);
 }
+
+export async function getDefaultWorkspaceVisibility(options?: ApiRequestOptions) {
+  return fetchJson<{ visibility: WorkspaceVisibility }>(
+    "/api/v1/workspaces-default-visibility",
+    options,
+  );
+}
+
+export async function setDefaultWorkspaceVisibility(
+  visibility: WorkspaceVisibility,
+  options?: ApiRequestOptions,
+) {
+  return fetchJson<{ visibility: WorkspaceVisibility }>("/api/v1/workspaces-default-visibility", {
+    ...options,
+    init: { method: "PUT", body: JSON.stringify({ visibility }), ...(options?.init ?? {}) },
+  });
+}
