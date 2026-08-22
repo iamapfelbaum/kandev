@@ -10,6 +10,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${KANDEV_DEMO_PORT:-8231}"
 HOME_DIR="${KANDEV_DEMO_HOME:-/tmp/kandev-team-access-demo}"
+# Bind loopback plus any extra host (e.g. a Tailscale IP) so the instance is
+# reachable from another device on the tailnet. Seeding always talks to
+# loopback; BASE is only what the seeder and probes use.
+BIND_HOSTS="${KANDEV_DEMO_BIND:-127.0.0.1}"
 BASE="http://127.0.0.1:${PORT}"
 COOKIE_JAR="${HOME_DIR}/admin-cookies.txt"
 
@@ -42,6 +46,7 @@ start_backend() {
     PATH="${REPO_ROOT}/apps/backend/bin:/usr/local/bin:/usr/bin:/bin" \
     KANDEV_HOME_DIR="$HOME_DIR" \
     KANDEV_PORT="$PORT" \
+    KANDEV_SERVER_HOST="$BIND_HOSTS" \
     KANDEV_FEATURES_AUTH=true \
     KANDEV_WEB_DIST_DIR="${REPO_ROOT}/apps/web/dist" \
     "${REPO_ROOT}/apps/backend/bin/kandev" __backend \
