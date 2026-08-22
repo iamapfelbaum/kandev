@@ -70,7 +70,17 @@ A suspended user is told what actually happened rather than that their password 
 
 Deletion removes every workspace, task, session and account in the organization. It requires typing the organization's slug verbatim, and the last remaining organization cannot be deleted.
 
-**Deletion is not retroactive across backups.** It is irreversible on the live server, but a backup taken while the organization existed still contains it, secrets included, and restoring that backup brings it back. This is not a temporary gap that a later release closes: erasing an organization from backups already written needs key material kept outside the database snapshot, which is a separate decision with its own recovery tradeoffs. If you need a tenant's data gone from your backups, your retention policy is the lever, not this button.
+**Deletion is not retroactive across backups.** It is irreversible on the live server, but a backup taken while the organization existed still contains it, secrets included, and restoring that backup brings it back. This is not a temporary gap that a later release closes: erasing an organization from backups already written needs key material kept outside the database snapshot, which is a separate decision with its own recovery tradeoffs.
+
+If you need an organization's data gone from your backups, the lever is deleting the backup files, not waiting for them to age out. Snapshots do not all expire, and one class never does:
+
+| Snapshot | Where it comes from | Does it age out? |
+|---|---|---|
+| `kandev-*.db` | Written automatically before an upgrade migration | Only the newest two survive, and only pruned on a boot that changes version |
+| `manual-*.db` | `System > Backups` | **Never.** Delete it deliberately |
+| `kandev-pre-reset-*.db` | Factory Reset | Excluded from the Backups delete action on purpose, since it is the lifeline if a reset goes wrong |
+
+A manual snapshot is exactly what a careful operator takes right before a destructive deletion, and it will hold that organization indefinitely. Remove it from `System > Backups`, or from the `backups/` directory beside the database.
 
 ![A confirmation dialog titled "Delete Globex Industries" warning that this removes every workspace, task, session and account in the organization and cannot be undone, with a field to type the slug to confirm.](../screenshots/tenancy-delete-confirm.png)
 
