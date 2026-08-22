@@ -115,10 +115,13 @@ another customer.
     upgrade changes nothing operationally and no KMS is required.
   - A secret is sealed under its own org's DEK, so compromising one org's
     plaintext does not yield another's.
-  - **Deleting an org destroys its DEK**, which makes deletion a crypto-shred:
-    the org's ciphertext in every retained backup becomes undecryptable. This
-    is what makes the deletion guarantee below mean what a reader assumes it
-    means, given that backups stay instance-wide.
+  - Deleting an org destroys its DEK, so the org's secrets are unreadable **in
+    the live database**. This is deliberately NOT a crypto-shred against
+    backups: a backup is `VACUUM INTO` of the database, `org_keys` is a table,
+    so the wrapped DEK travels inside the same snapshot as the ciphertext it
+    protects, and `master.key` is untouched by restore. Restoring a
+    pre-deletion backup on the same host unwraps it again. See Out of scope
+    for the change that would make deletion a real shred and what it costs.
   - The tenancy migration re-wraps existing secrets under the default org's DEK
     in the same first-boot pass that assigns `org_id`.
 - **Background work runs per-org, never identity-free.** Today an absent
@@ -322,6 +325,11 @@ Deletion is the only destructive path and is never reached implicitly.
   that no longer decrypts it) — every secret read and write in that org fails
   with a named error. It does NOT fall back to the master key: a silent
   fallback would re-create exactly the shared-key property this removes.
+  The error names the recovery route, because a rule with no recovery story is
+  a rule the next person deletes under pressure: `org_keys` is an ordinary
+  table, so a lost row is restored from a database backup like any other row,
+  and secrets stay readable afterwards because the master key that unwraps it
+  is not part of the snapshot and did not change.
 - **A template edit would introduce a credential** — rejected at the API
   boundary; no partial write.
 - **An org is deleted while an execution is running** — executions are stopped
@@ -339,9 +347,12 @@ Deletion is the only destructive path and is never reached implicitly.
   `<home>/orgs/<org_id>/` for every org including the default. Both shapes are
   supported forever; the empty value is not a migration to finish later.
 - Backups remain instance-wide (one database), so a backup contains every org.
-  Per-org export is out of scope. A **deleted** org's secrets are unreadable in
-  those backups regardless, because deletion destroys its DEK and the DEK is
-  the only thing that decrypts them.
+  Per-org export is out of scope.
+- **Deleting an org does not erase it from backups already taken**, including
+  its secrets. The wrapped DEK lives in `org_keys`, which is inside the
+  snapshot, and the master key that unwraps it is not part of the snapshot and
+  survives restore. Deletion is irreversible on the live instance; it is not
+  retroactive across retained backups.
 - Suspending an org does not delete anything; deletion is the only data loss.
 - Turning `features.multiTenancy` off retains every `org_id`, exactly as
   disabling auth retains `owner_id`. Re-enabling restores the previous
@@ -419,9 +430,13 @@ Deletion is the only destructive path and is never reached implicitly.
 - **GIVEN** two orgs each holding a secret, **WHEN** org A's DEK is used to
   decrypt org B's ciphertext, **THEN** the decryption fails: the rows are not
   sealed under a shared key.
-- **GIVEN** a backup taken while org B existed, **WHEN** org B is deleted and
-  the backup is restored, **THEN** org B's secrets cannot be decrypted, because
-  its DEK was destroyed with it.
+- **GIVEN** org B deleted from the live instance, **WHEN** any of its secrets
+  is read, **THEN** the read fails: its DEK row is gone.
+- **GIVEN** a backup taken while org B existed, **WHEN** it is restored onto the
+  same host after B was deleted, **THEN** B's secrets ARE readable again. This
+  is the documented consequence of `org_keys` living inside the snapshot while
+  the key that unwraps it lives outside; a test asserts it so nobody mistakes
+  deletion for a backup-spanning shred.
 - **GIVEN** an org whose `org_keys` row is missing, **WHEN** any secret in it is
   read, **THEN** the read fails with a named error rather than falling back to
   the instance master key.
@@ -457,14 +472,27 @@ Deletion is the only destructive path and is never reached implicitly.
 - **Per-org data export or per-org backup/restore.** Backups stay instance-wide.
 - **Cross-org anything** — no shared workspaces, no transfer of a workspace or
   user between orgs, no cross-org search, no cross-org analytics.
-- **Protecting the root key itself.** Per-org DEKs reduce blast radius and make
-  deletion a crypto-shred; they do not move the key that wraps them.
-  `master.key` remains a mode-0600 file in the data directory beside
-  `kandev.db`, so anyone who can read that directory can still unwrap every
-  org's DEK. `MasterKeyProvider` is the seam a KMS, HSM or env-supplied root
-  key would plug into, and that is follow-on work rather than part of this
-  spec. Envelope encryption stops one org reaching another's plaintext; it does
-  not defend the instance against someone who already has its disk.
+- **Crypto-shredding an org out of existing backups.** Per-org DEKs buy two
+  things: a partial compromise (a leaked key, a bad export, memory disclosure
+  in one org's context) exposes that org rather than all of them, and the
+  envelope structure is the prerequisite for a real shred. They do not deliver
+  the shred, because the wrapping key is in the same snapshot boundary as the
+  ciphertext.
+
+  The change that would deliver it is specific: wrap each org's DEK with a key
+  that lives **outside** the database snapshot and dies with the org. The
+  per-org filesystem root is the natural home, since deletion already removes
+  it and backups already do not capture it. It is out of scope here because the
+  cost is not small and lands on every self-hosted operator: a database backup
+  alone stops being sufficient for recovery, and an org root lost to disk
+  failure or a partial restore takes that org's secrets with it, permanently.
+  That tradeoff deserves its own decision rather than riding in on this one.
+- **Protecting the root key itself.** `master.key` remains a mode-0600 file in
+  the data directory beside `kandev.db`, so anyone who can read that directory
+  can unwrap every org's DEK. `MasterKeyProvider` is the seam a KMS, HSM or
+  env-supplied root key plugs into. Envelope encryption stops one org reaching
+  another's plaintext; it does not defend the instance against someone who
+  already has its disk.
 - **Sandboxing an agent from the OS user it runs as.** Tenant pinning stops
   org A's agent from reading org B's tree; it does not stop an agent from
   escaping its own org's tree if the OS permits it. That remains the executor's

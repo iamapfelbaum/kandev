@@ -15,6 +15,11 @@ ciphertext. Today one master key seals every row on the instance, so at rest
 every tenant collapses to one key sitting beside the database. This is the one
 place the spec's "strong enough for untrusted co-tenants" claim does not hold.
 
+What this task buys is blast-radius reduction on a partial compromise, and the
+envelope structure that a real crypto-shred later requires. It does NOT make
+deletion shred an org out of existing backups; see the spec's Out of scope for
+why and for what would.
+
 ## Acceptance
 
 - `org_keys` stores one wrapped data encryption key per org, created with the
@@ -23,10 +28,12 @@ place the spec's "strong enough for untrusted co-tenants" claim does not hold.
   wraps DEKs instead of sealing rows, so a self-hosted upgrade changes nothing
   operationally and no KMS is introduced.
 - Secret writes seal under the owning org's DEK; reads unwrap that org's DEK.
-- **Deleting an org destroys its DEK**, and a test proves the org's ciphertext
-  from a pre-deletion backup no longer decrypts. This is the property that
-  makes deletion mean what the spec says it means while backups stay
-  instance-wide.
+- Deleting an org destroys its DEK, and a test proves its secrets are
+  unreadable **in the live database** afterwards.
+- A second test pins the limit rather than hiding it: restoring a pre-deletion
+  backup onto the same host makes that org's secrets readable again, because
+  `org_keys` is inside the snapshot and `master.key` is not. A test named for a
+  shred that the design does not deliver would be worse than no test at all.
 - A missing or unusable `org_keys` row fails every secret read and write in
   that org with a named error and **never** falls back to the master key. A
   fallback would silently restore the shared-key property this removes.
@@ -38,7 +45,7 @@ place the spec's "strong enough for untrusted co-tenants" claim does not hold.
 ## Verification
 
 - `go test ./internal/secrets/... ./internal/org/...` from `apps/backend`
-- `go test ./internal/secrets/... -run 'TestCrossOrgDecryptFails|TestDeleteDestroysDEK|TestNoMasterKeyFallback'`
+- `go test ./internal/secrets/... -run 'TestCrossOrgDecryptFails|TestDeleteDestroysDEK|TestNoMasterKeyFallback|TestRestoredBackupStillDecrypts'`
 - `KANDEV_TEST_POSTGRES_DSN=... go test ./internal/secrets/...`
 
 ## Files Likely Touched
@@ -54,6 +61,7 @@ place the spec's "strong enough for untrusted co-tenants" claim does not hold.
 
 ## Output Contract
 
-Report the cross-org decryption test, the crypto-shred proof against a restored
-backup, the no-fallback test, the migration's re-wrap counts, RED/GREEN
-commands, and set this task plus its plan checkbox to done.
+Report the cross-org decryption test, the live-database deletion test, the test
+that pins the restored-backup limit, the no-fallback test and its documented
+recovery route, the migration's re-wrap counts, RED/GREEN commands, and set
+this task plus its plan checkbox to done.

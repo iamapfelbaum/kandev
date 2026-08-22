@@ -70,6 +70,8 @@ A suspended user is told what actually happened rather than that their password 
 
 Deletion removes every workspace, task, session and account in the organization. It requires typing the organization's slug verbatim, and the last remaining organization cannot be deleted.
 
+**Deletion is not retroactive across backups.** It is irreversible on the live server, but a backup taken while the organization existed still contains it, secrets included, and restoring that backup brings it back. This is not a temporary gap that a later release closes: erasing an organization from backups already written needs key material kept outside the database snapshot, which is a separate decision with its own recovery tradeoffs. If you need a tenant's data gone from your backups, your retention policy is the lever, not this button.
+
 ![A confirmation dialog titled "Delete Globex Industries" warning that this removes every workspace, task, session and account in the organization and cannot be undone, with a field to type the slug to confirm.](../screenshots/tenancy-delete-confirm.png)
 
 ## What the boundary looks like in use
@@ -96,11 +98,9 @@ These are real and worth knowing before you put two untrusting groups on one ser
 
 - **Secrets are scoped per organization, but not encrypted per organization.**
   Reads are org-scoped, so one organization cannot fetch another's secret
-  through the API. At rest, however, every secret on the instance is sealed
-  under a single master key in the data directory next to the database. Two
-  consequences worth knowing: anyone who can read that directory can decrypt
-  every organization's secrets, and deleting an organization removes its rows
-  but does not make its secrets unreadable in backups you already took.
+  through the API. At rest, every secret on the instance is sealed under a
+  single master key in the data directory next to the database, so anyone who
+  can read that directory can decrypt every organization's secrets.
   Per-organization encryption keys are designed but not yet implemented.
 - **Filesystem and agent credentials are shared.** Worktrees and clones live under one `~/.kandev` tree owned by the OS user running Kandev, and agent CLI logins (`gh auth`, `claude login`, provider API keys) authenticate as that OS user. Organizations are an **application-layer** boundary over Kandev's data: they are not a sandbox. Two organizations that must not share agent credentials need separate Kandev instances or separate OS users today.
 - **Executors and agent profiles are still instance-wide.** They are shared configuration, and a shared agent profile means a shared provider credential.
