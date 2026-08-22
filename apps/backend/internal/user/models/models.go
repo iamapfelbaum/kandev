@@ -66,6 +66,9 @@ const (
 	RoleAdmin = "admin"
 	// RoleMember is a regular authenticated user.
 	RoleMember = "member"
+	// RoleGuest reaches only workspaces it is an explicit member of. It is
+	// never assigned by migration; an admin grants it deliberately.
+	RoleGuest = "guest"
 
 	// StatusActive marks a user that may log in.
 	StatusActive = "active"
@@ -73,6 +76,20 @@ const (
 	// API tokens are invalidated when this status is set.
 	StatusDisabled = "disabled"
 )
+
+// NormalizeRole returns the canonical org role. Admin and guest are accepted
+// as-is; anything else (including empty and unknown values) becomes member,
+// which is the role every pre-guest account already had.
+func NormalizeRole(value string) string {
+	switch value {
+	case RoleAdmin:
+		return RoleAdmin
+	case RoleGuest:
+		return RoleGuest
+	default:
+		return RoleMember
+	}
+}
 
 type User struct {
 	ID          string    `json:"id"`

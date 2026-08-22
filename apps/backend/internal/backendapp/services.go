@@ -154,6 +154,14 @@ func provideServices(cfg *config.Config, log *logger.Logger, repos *Repositories
 		},
 	)
 	taskSvc.SetPendingActionProjectionEpoch(pendingActionProjectionEpoch)
+	// Workspace membership needs to resolve colleague names and reject
+	// disabled or unknown accounts before writing a row.
+	taskSvc.SetUserDirectory(newUserDirectoryAdapter(repos.UserAccounts))
+	if orgSettingsStore, orgErr := systemsettings.NewStore(dbPool); orgErr != nil {
+		log.Warn("org settings unavailable; new workspaces default to private", zap.Error(orgErr))
+	} else {
+		taskSvc.SetOrgSettings(newOrgSettingsAdapter(orgSettingsStore))
+	}
 	taskSvc.SetSecretStore(userSecretStore)
 	if deleter, ok := userSecretStore.(taskservice.WorkspaceSecretDeleter); ok {
 		taskSvc.SetWorkspaceSecretDeleter(deleter)

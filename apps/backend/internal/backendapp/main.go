@@ -21,6 +21,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	authhttpmw "github.com/kandev/kandev/internal/auth/httpmw"
+	"github.com/kandev/kandev/internal/authz"
 	"github.com/kandev/kandev/internal/common/httpmw"
 	"github.com/kandev/kandev/internal/entityrefs"
 	"go.uber.org/zap"
@@ -536,6 +537,11 @@ func startAgentInfrastructure(
 	// port reverse proxies (bare lookup + cache) call CheckSessionAccess at
 	// the handler.
 	lifecycleMgr.SetSessionAccessChecker(services.Task.AuthorizeSessionAccess)
+	// Execution surfaces (terminal, shell, file writes, VS Code, port
+	// previews) require session.exec, which a viewer does not hold.
+	lifecycleMgr.SetSessionExecAccessChecker(func(ctx context.Context, sessionID string) error {
+		return services.Task.AuthorizeSessionScope(ctx, sessionID, authz.ScopeSessionExec)
+	})
 	lifecycleMgr.SetEnvironmentAccessChecker(services.Task.AuthorizeEnvironmentAccess)
 	log.Info("Workspace info provider configured for session recovery")
 
@@ -2048,8 +2054,11 @@ func buildHTTPServer(
 	// packages are importable: the task service's not-found sentinel becomes
 	// the secrets sentinel (404), while raw lookup/storage errors pass through
 	// unclassified (sanitized 500).
+	// Workspace secrets are a shared credential the workspace owner is
+	// accountable for, so they require secret.manage rather than mere reach:
+	// a collaborator contributes to the workspace, they do not hold its keys.
 	secretsSvc.SetWorkspaceAuthorizer(func(ctx context.Context, workspaceID string) error {
-		err := services.Task.AuthorizeWorkspaceAccess(ctx, workspaceID)
+		err := services.Task.AuthorizeWorkspaceScope(ctx, workspaceID, authz.ScopeSecretManage)
 		if errors.Is(err, repoerrors.ErrWorkspaceNotFound) {
 			return secrets.ErrWorkspaceAccessDenied
 		}

@@ -20,6 +20,9 @@ const (
 	RoleAdmin Role = "admin"
 	// RoleMember is a regular authenticated user.
 	RoleMember Role = "member"
+	// RoleGuest holds no org scopes and reaches only workspaces it is an
+	// explicit member of, including none of the org-visible ones.
+	RoleGuest Role = "guest"
 )
 
 // GinContextKey is the gin-context key holding the request Identity.

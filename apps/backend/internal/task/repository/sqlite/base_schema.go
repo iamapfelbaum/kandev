@@ -261,6 +261,7 @@ const infraSchemaDDL = `
 		name TEXT NOT NULL,
 		description TEXT DEFAULT '',
 		owner_id TEXT DEFAULT '',
+		visibility TEXT NOT NULL DEFAULT 'private',
 		default_executor_id TEXT DEFAULT '',
 		default_environment_id TEXT DEFAULT '',
 		default_agent_profile_id TEXT DEFAULT '',
@@ -268,6 +269,18 @@ const infraSchemaDDL = `
 		created_at TIMESTAMP NOT NULL,
 		updated_at TIMESTAMP NOT NULL
 	);
+
+	CREATE TABLE IF NOT EXISTS workspace_members (
+		workspace_id TEXT NOT NULL,
+		user_id TEXT NOT NULL,
+		role TEXT NOT NULL DEFAULT 'collaborator',
+		added_by TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMP NOT NULL,
+		PRIMARY KEY (workspace_id, user_id),
+		FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(user_id);
 
 	CREATE TABLE IF NOT EXISTS executors (
 		id TEXT PRIMARY KEY,

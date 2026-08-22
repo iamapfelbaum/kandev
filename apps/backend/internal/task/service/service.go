@@ -294,6 +294,8 @@ type Repos struct {
 // Service provides task business logic
 type Service struct {
 	workspaces                      repository.WorkspaceRepository
+	userDirectory                   UserDirectory
+	orgSettings                     OrgSettings
 	tasks                           repository.TaskRepository
 	taskRepos                       repository.TaskRepoRepository
 	workspaceFolders                repository.TaskWorkspaceFolderRepository

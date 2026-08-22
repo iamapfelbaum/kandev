@@ -21,9 +21,7 @@ func (s *Service) AdminCreateUser(ctx context.Context, email, password, displayN
 	if err := validateEmailPassword(email, password); err != nil {
 		return nil, err
 	}
-	if role != usermodels.RoleAdmin {
-		role = usermodels.RoleMember
-	}
+	role = usermodels.NormalizeRole(role)
 	if _, err := s.users.GetUserByEmail(ctx, email); err == nil {
 		return nil, ErrEmailTaken
 	}
@@ -66,9 +64,7 @@ func (s *Service) AdminSetRoleStatus(ctx context.Context, targetID, role, status
 	if status == "" {
 		status = target.Status
 	}
-	if role != usermodels.RoleAdmin {
-		role = usermodels.RoleMember
-	}
+	role = usermodels.NormalizeRole(role)
 	if status != usermodels.StatusDisabled {
 		status = usermodels.StatusActive
 	}

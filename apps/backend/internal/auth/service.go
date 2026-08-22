@@ -209,10 +209,7 @@ func validateEmailPassword(email, password string) error {
 }
 
 func roleOf(user *usermodels.User) authn.Role {
-	if user.Role == usermodels.RoleAdmin {
-		return authn.RoleAdmin
-	}
-	return authn.RoleMember
+	return authn.Role(usermodels.NormalizeRole(user.Role))
 }
 
 func truncateUserAgent(ua string) string {
