@@ -144,7 +144,7 @@ Three properties of that base define the shape of this work:
 | 1 | 01, 02 | Registry, flag, org table, identity carries the org |
 | 2 | 03, 04, 05, 06 | Scoping: background work, service layer, transports, self-authenticating credentials |
 | 3 | 07, 08 | Two-tier instance/org configuration |
-| 4 | 09, 10, 11 | Runtime isolation: filesystem, credentials, executors |
+| 4 | 09, 10, 11, 15 | Runtime isolation: filesystem, credentials, executors, secret keys |
 | 5 | 12, 13, 14 | Org lifecycle, frontend, E2E and docs |
 
 Task 03 is the critical path and the highest-risk item: it changes the meaning
@@ -165,6 +165,7 @@ wave-2 sibling and be reviewed as a security change.
 - [ ] [10 — Per-org agent credential home](task-10-per-org-agent-credentials.md)
 - [ ] [11 — Executor tenant pinning](task-11-executor-tenant-pinning.md)
 - [ ] [12 — Org lifecycle: create, suspend, delete](task-12-org-lifecycle.md)
+- [ ] [15 — Per-org secret encryption keys](task-15-per-org-secret-keys.md)
 - [ ] [13 — Frontend org and operator surfaces](task-13-frontend-surfaces.md)
 - [ ] [14 — E2E, docs, and ADR](task-14-e2e-docs-adr.md)
 

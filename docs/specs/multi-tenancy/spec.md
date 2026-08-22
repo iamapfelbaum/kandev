@@ -105,6 +105,22 @@ another customer.
     per-org OS user for the launching org, or an operator has set the
     `features.multiTenancyTrustedStandalone` escape hatch for a
     mutually-trusting self-hosted deployment.
+- **Secrets are sealed under a per-org key.** Row scoping decides who may
+  *read* a secret; it does nothing about the ciphertext. Today one AES-256
+  master key at `<data-dir>/master.key` seals every row on the instance, so at
+  rest every tenant collapses to one key that sits beside the database. Under
+  organizations each org gets its own data encryption key (DEK), wrapped by
+  that same master key:
+  - The master key and `MasterKeyProvider` are unchanged, so a self-hosted
+    upgrade changes nothing operationally and no KMS is required.
+  - A secret is sealed under its own org's DEK, so compromising one org's
+    plaintext does not yield another's.
+  - **Deleting an org destroys its DEK**, which makes deletion a crypto-shred:
+    the org's ciphertext in every retained backup becomes undecryptable. This
+    is what makes the deletion guarantee below mean what a reader assumes it
+    means, given that backups stay instance-wide.
+  - The tenancy migration re-wraps existing secrets under the default org's DEK
+    in the same first-boot pass that assigns `org_id`.
 - **Background work runs per-org, never identity-free.** Today an absent
   identity means "internal caller, unscoped". Under tenancy that is a
   cross-tenant read. Pollers, office schedulers, the orchestrator, watchers,
@@ -141,6 +157,17 @@ orgs
 ```
 
 ```
+org_keys                           -- per-org data encryption key, wrapped
+  org_id        string     PK, FK -> orgs.id (cascade delete)
+  wrapped_dek   bytes      the org's DEK sealed under the instance master key
+  nonce         bytes      AEAD nonce for the wrap
+  created_at    timestamp
+```
+
+Deleting the row destroys the only copy of the wrapped DEK. The plaintext DEK
+is never persisted and is held in memory only for the life of a request.
+
+```
 org_os_users                       -- optional per-org OS identity, operator-managed
   org_id        string     PK, FK -> orgs.id (cascade delete)
   os_user       string     POSIX user name that standalone executions run as
@@ -155,7 +182,7 @@ Changed existing tables:
 | `users` | `email` unique constraint becomes `UNIQUE (org_id, email)` | the same address may exist in two orgs |
 | `auth_invites` | `+ org_id TEXT NOT NULL DEFAULT ''` | an invite mints a member of one org |
 | `workspaces` | `+ org_id TEXT NOT NULL DEFAULT ''` | the tenant root for all workspace-descended data |
-| `secrets` | `+ org_id TEXT NOT NULL DEFAULT ''` | org-owned; no instance tier |
+| `secrets` | `+ org_id TEXT NOT NULL DEFAULT ''` | org-owned; no instance tier. Sealed under that org's DEK, not the instance master key |
 | `executors`, `executor_profiles`, `environments`, `agents`, `agent_profiles`, `editors`, `custom_prompts`, `notification_providers` | `+ org_id TEXT NOT NULL DEFAULT ''`, `+ template_id TEXT NOT NULL DEFAULT ''` | `org_id = ''` is an instance template; `template_id` names the template this org row shadows |
 | `executors_running` | `+ org_id TEXT NOT NULL DEFAULT ''` | recovery must not adopt another org's execution |
 | `task_message_attachments` | `+ org_id TEXT NOT NULL DEFAULT ''` | reached by `owner_id` without a workspace join |
@@ -291,6 +318,10 @@ Deletion is the only destructive path and is never reached implicitly.
   — migration aborts and the boot fails rather than leaving a row reachable by
   every tenant. The pre-migration backup taken by `persistence.Provide` is the
   recovery path.
+- **An org's DEK cannot be unwrapped** (missing `org_keys` row, or a master key
+  that no longer decrypts it) — every secret read and write in that org fails
+  with a named error. It does NOT fall back to the master key: a silent
+  fallback would re-create exactly the shared-key property this removes.
 - **A template edit would introduce a credential** — rejected at the API
   boundary; no partial write.
 - **An org is deleted while an execution is running** — executions are stopped
@@ -308,7 +339,9 @@ Deletion is the only destructive path and is never reached implicitly.
   `<home>/orgs/<org_id>/` for every org including the default. Both shapes are
   supported forever; the empty value is not a migration to finish later.
 - Backups remain instance-wide (one database), so a backup contains every org.
-  Per-org export is out of scope.
+  Per-org export is out of scope. A **deleted** org's secrets are unreadable in
+  those backups regardless, because deletion destroys its DEK and the DEK is
+  the only thing that decrypts them.
 - Suspending an org does not delete anything; deletion is the only data loss.
 - Turning `features.multiTenancy` off retains every `org_id`, exactly as
   disabling auth retains `owner_id`. Re-enabling restores the previous
@@ -383,6 +416,15 @@ Deletion is the only destructive path and is never reached implicitly.
   **THEN** the user's next request fails closed with `org_suspended`, running
   executions are stopped, and the browser shows the organization-unavailable
   page rather than the sign-in page.
+- **GIVEN** two orgs each holding a secret, **WHEN** org A's DEK is used to
+  decrypt org B's ciphertext, **THEN** the decryption fails: the rows are not
+  sealed under a shared key.
+- **GIVEN** a backup taken while org B existed, **WHEN** org B is deleted and
+  the backup is restored, **THEN** org B's secrets cannot be decrypted, because
+  its DEK was destroyed with it.
+- **GIVEN** an org whose `org_keys` row is missing, **WHEN** any secret in it is
+  read, **THEN** the read fails with a named error rather than falling back to
+  the instance master key.
 - **GIVEN** an org with a running execution, **WHEN** an operator confirms
   deletion by typing the slug, **THEN** executions are stopped first, all org
   rows are removed, the org storage root is removed, and every session and
@@ -415,6 +457,14 @@ Deletion is the only destructive path and is never reached implicitly.
 - **Per-org data export or per-org backup/restore.** Backups stay instance-wide.
 - **Cross-org anything** — no shared workspaces, no transfer of a workspace or
   user between orgs, no cross-org search, no cross-org analytics.
+- **Protecting the root key itself.** Per-org DEKs reduce blast radius and make
+  deletion a crypto-shred; they do not move the key that wraps them.
+  `master.key` remains a mode-0600 file in the data directory beside
+  `kandev.db`, so anyone who can read that directory can still unwrap every
+  org's DEK. `MasterKeyProvider` is the seam a KMS, HSM or env-supplied root
+  key would plug into, and that is follow-on work rather than part of this
+  spec. Envelope encryption stops one org reaching another's plaintext; it does
+  not defend the instance against someone who already has its disk.
 - **Sandboxing an agent from the OS user it runs as.** Tenant pinning stops
   org A's agent from reading org B's tree; it does not stop an agent from
   escaping its own org's tree if the OS permits it. That remains the executor's

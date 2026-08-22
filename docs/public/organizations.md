@@ -94,6 +94,14 @@ Gary is an administrator of Globex on the **same server**. He sees his own organ
 
 These are real and worth knowing before you put two untrusting groups on one server.
 
+- **Secrets are scoped per organization, but not encrypted per organization.**
+  Reads are org-scoped, so one organization cannot fetch another's secret
+  through the API. At rest, however, every secret on the instance is sealed
+  under a single master key in the data directory next to the database. Two
+  consequences worth knowing: anyone who can read that directory can decrypt
+  every organization's secrets, and deleting an organization removes its rows
+  but does not make its secrets unreadable in backups you already took.
+  Per-organization encryption keys are designed but not yet implemented.
 - **Filesystem and agent credentials are shared.** Worktrees and clones live under one `~/.kandev` tree owned by the OS user running Kandev, and agent CLI logins (`gh auth`, `claude login`, provider API keys) authenticate as that OS user. Organizations are an **application-layer** boundary over Kandev's data: they are not a sandbox. Two organizations that must not share agent credentials need separate Kandev instances or separate OS users today.
 - **Executors and agent profiles are still instance-wide.** They are shared configuration, and a shared agent profile means a shared provider credential.
 - **No per-organization billing, quotas or usage metering.** Suspension is the only lever.
