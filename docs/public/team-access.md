@@ -141,7 +141,7 @@ Every guarded action names a scope. These strings appear in the API and are what
 
 ## Current limits
 
-- **There are no separate organizations or tenants.** "Organization" here means *this Kandev instance*, of which there is exactly one, implicitly. You cannot create one, and one instance cannot host two teams that must not see each other. Multi-tenancy is designed but not built; see [the multi-tenancy spec](https://github.com/kdlbs/kandev/blob/main/docs/specs/multi-tenancy/spec.md).
+- **"Organization" means one tenant.** With the Organizations feature off there is exactly one, implicitly, and "Everyone in the organization" means everyone on the server. To run one server for several independent teams or customers, see [Organizations](organizations.md).
 - **The `guest` role has no UI yet.** `Settings > Users` is not ported to the SPA, so a guest is assigned through the API: `PATCH /api/v1/users/{id}` with `{"role": "guest"}`.
 - **Roles are fixed.** There is no custom-role builder; scopes are the extension point and adding one is a code change.
 - **Membership is per person.** There are no groups or teams to add at once.

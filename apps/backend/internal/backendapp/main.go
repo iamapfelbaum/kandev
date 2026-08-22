@@ -24,6 +24,7 @@ import (
 	"github.com/kandev/kandev/internal/authz"
 	"github.com/kandev/kandev/internal/common/httpmw"
 	"github.com/kandev/kandev/internal/entityrefs"
+	"github.com/kandev/kandev/internal/org"
 	"go.uber.org/zap"
 
 	// Common packages
@@ -313,6 +314,14 @@ func setBuildInfo(build BuildInfo) {
 
 // run initializes all services and runs the server. Returns false on fatal startup error.
 func run(cfg *config.Config, log *logger.Logger, cleanups *[]func() error, runCleanups func()) bool {
+	// Organizations without authentication is the one configuration that
+	// cannot work: a tenant boundary needs identities to belong to it. Refuse
+	// at startup rather than booting an instance whose boundary is decorative.
+	if err := org.ValidateStartup(cfg.Features.MultiTenancy, cfg.Features.Auth); err != nil {
+		log.Error("Invalid feature configuration", zap.Error(err))
+		return false
+	}
+
 	addCleanup := func(fn func() error) { *cleanups = append(*cleanups, fn) }
 
 	// 3. Create context with cancellation
@@ -407,6 +416,21 @@ func startServices( //nolint:cyclop
 		return false
 	}
 	warnIfExposedWithoutAuth(cfg, services.Auth, log)
+	taskservice.SetTenancyEnforced(cfg.Features.MultiTenancy)
+	if services.Org != nil && services.Org.Enabled() {
+		services.Auth.SetAdminCreatedHook(services.Org.ClaimSetupAdmin)
+		services.Org.SetFirstAdminCreator(services.Auth.CreateUserInOrg)
+	}
+	if services.Org != nil && services.Org.Enabled() {
+		// A suspended organization fails every session and token closed, which
+		// is what makes suspension a real lever rather than a label. An
+		// unreadable status fails closed too: an org we cannot verify does not
+		// get to keep serving requests.
+		services.Auth.SetOrgStatusChecker(func(ctx context.Context, orgID string) bool {
+			record, err := services.Org.Get(ctx, orgID)
+			return err == nil && record.Active()
+		})
+	}
 
 	if err := runInitialAgentSetup(ctx, services.User, agentSettingsController, log); err != nil {
 		// Agent registry seeding is a hard prerequisite for every

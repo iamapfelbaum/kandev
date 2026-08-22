@@ -187,3 +187,74 @@ func TestIsAssignableWorkspaceRole(t *testing.T) {
 		t.Error("collaborator and viewer must be assignable")
 	}
 }
+
+// The tenant boundary is absolute: it is checked before any role, so no role
+// can outrank it. These cases are the whole point of organizations.
+func TestCrossOrgIsAbsolute(t *testing.T) {
+	inOrgA := Subject{UserID: userBruno, OrgRole: OrgRoleAdmin, OrgID: "org-a"}
+	workspaceInB := WorkspaceRef{OwnerID: userAna, OrgID: "org-b", Visibility: VisibilityOrg}
+
+	if ResolveWorkspace(inOrgA, workspaceInB).CanRead() {
+		t.Error("an org-visible workspace in another org must not be readable")
+	}
+
+	// Even an explicit membership row cannot cross the boundary: the tenancy
+	// migration drops such rows, and a stale one must not grant access.
+	withRow := workspaceInB
+	withRow.MemberRole = WorkspaceRoleCollaborator
+	if ResolveWorkspace(inOrgA, withRow).CanRead() {
+		t.Error("a stale cross-org membership row must not grant access")
+	}
+
+	// Owning it does not help either: owner_id and org_id disagreeing is
+	// corrupt data, and the safe reading is no access.
+	owned := WorkspaceRef{OwnerID: userBruno, OrgID: "org-b", Visibility: VisibilityPrivate}
+	if ResolveWorkspace(inOrgA, owned).CanRead() {
+		t.Error("a workspace in another org must not be readable even by its owner_id")
+	}
+
+	// Same org resolves normally.
+	sameOrg := WorkspaceRef{OwnerID: userAna, OrgID: "org-a", Visibility: VisibilityOrg}
+	if !ResolveWorkspace(inOrgA, sameOrg).CanRead() {
+		t.Error("same-org org-visible workspace should be readable")
+	}
+}
+
+// With organizations off nothing carries an org, and behavior is unchanged.
+func TestSingleOrgInstanceUnaffectedByTenancyCheck(t *testing.T) {
+	subject := Subject{UserID: userBruno, OrgRole: OrgRoleMember}
+	ref := WorkspaceRef{OwnerID: userAna, Visibility: VisibilityOrg}
+	if !ResolveWorkspace(subject, ref).CanRead() {
+		t.Error("org-less instance must behave exactly as before")
+	}
+}
+
+// A workspace with no org (created before the migration) stays reachable by
+// its own org's users rather than becoming invisible to everyone.
+func TestWorkspaceWithoutOrgStaysReachable(t *testing.T) {
+	subject := Subject{UserID: userAna, OrgRole: OrgRoleMember, OrgID: "org-a"}
+	ref := WorkspaceRef{OwnerID: userAna, Visibility: VisibilityPrivate}
+	if !ResolveWorkspace(subject, ref).CanRead() {
+		t.Error("an unmigrated workspace must stay reachable by its owner")
+	}
+}
+
+// An account that escaped the migration must not become a key to every tenant:
+// with tenancy enforced, no org means no access.
+func TestOrglessSubjectDeniedWhenTenancyEnforced(t *testing.T) {
+	orgless := Subject{UserID: userBruno, OrgRole: OrgRoleAdmin, TenancyEnforced: true}
+	for _, ref := range []WorkspaceRef{
+		{OwnerID: userAna, OrgID: "org-a", Visibility: VisibilityOrg},
+		{OwnerID: userAna, Visibility: VisibilityOrg},
+		{OwnerID: userBruno, OrgID: "org-a"},
+	} {
+		if ResolveWorkspace(orgless, ref).CanRead() {
+			t.Errorf("org-less subject reached %+v under enforced tenancy", ref)
+		}
+	}
+	// Without tenancy enforced the same subject behaves as before.
+	legacy := Subject{UserID: userBruno, OrgRole: OrgRoleMember}
+	if !ResolveWorkspace(legacy, WorkspaceRef{OwnerID: userAna, Visibility: VisibilityOrg}).CanRead() {
+		t.Error("org-less subject must be unaffected when tenancy is off")
+	}
+}

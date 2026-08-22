@@ -219,6 +219,10 @@ func (h *Handlers) writeAuthError(c *gin.Context, err error) {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+	// 403, not 401: the credential was accepted, so the browser must not
+	// treat this as a session challenge and loop back to the sign-in form.
+	case errors.Is(err, auth.ErrOrgUnavailable):
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error(), "code": "org_suspended"})
 	case errors.Is(err, auth.ErrSetupNotAvailable):
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 	case errors.Is(err, auth.ErrInviteInvalid):

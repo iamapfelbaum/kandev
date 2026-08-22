@@ -15,6 +15,17 @@ func (r *Repository) ensureTeamAccessSchema() error {
 		"workspaces.visibility",
 		`ALTER TABLE workspaces ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'`,
 	)
+	// Organizations. Empty means "not yet assigned"; the tenancy migration puts
+	// every existing workspace into the default org on first boot with the
+	// feature on.
+	r.migrate.Apply(
+		"workspaces.org_id",
+		`ALTER TABLE workspaces ADD COLUMN org_id TEXT NOT NULL DEFAULT ''`,
+	)
+	r.migrate.Apply(
+		"workspaces.org_idx",
+		`CREATE INDEX IF NOT EXISTS idx_workspaces_org ON workspaces(org_id)`,
+	)
 	r.migrate.Apply(
 		"tasks.assignee_user_id",
 		`ALTER TABLE tasks ADD COLUMN assignee_user_id TEXT NOT NULL DEFAULT ''`,

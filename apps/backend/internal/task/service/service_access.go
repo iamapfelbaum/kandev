@@ -31,6 +31,25 @@ import (
 //   - synthetic identity  → auth disabled → unscoped (today's behavior)
 //   - real identity       → resolved through authz
 
+// tenancyEnforced mirrors features.multiTenancy. It is a package-level value
+// set once at startup rather than threaded through every call: it is a
+// process-wide configuration fact, and plumbing it through would touch every
+// authorize* signature for no gain.
+var tenancyEnforced bool
+
+// SetTenancyEnforced records whether organizations are on.
+func SetTenancyEnforced(enforced bool) { tenancyEnforced = enforced }
+
+// callerOrgID returns the requesting identity's organization, empty for
+// internal/synthetic callers and when organizations are off.
+func callerOrgID(ctx context.Context) string {
+	identity, ok := authn.IdentityFromContext(ctx)
+	if !ok || identity.Synthetic {
+		return ""
+	}
+	return identity.OrgID
+}
+
 // callerScope returns the scoping user ID; ok=false means unscoped.
 func callerScope(ctx context.Context) (string, bool) {
 	identity, ok := authn.IdentityFromContext(ctx)
@@ -47,8 +66,10 @@ func callerSubject(ctx context.Context) authz.Subject {
 		return authz.Subject{Unscoped: true}
 	}
 	return authz.Subject{
-		UserID:  identity.UserID,
-		OrgRole: authz.NormalizeOrgRole(string(identity.Role)),
+		UserID:          identity.UserID,
+		OrgID:           identity.OrgID,
+		OrgRole:         authz.NormalizeOrgRole(string(identity.Role)),
+		TenancyEnforced: tenancyEnforced,
 	}
 }
 
@@ -71,7 +92,14 @@ func (s *Service) workspaceDecision(ctx context.Context, workspace *models.Works
 
 	ref := authz.WorkspaceRef{
 		OwnerID:    workspace.OwnerID,
+		OrgID:      workspace.OrgID,
 		Visibility: authz.NormalizeVisibility(workspace.Visibility),
+	}
+	// The tenant boundary is absolute and is checked before owner or
+	// membership, so a foreign-org workspace is resolved without touching the
+	// member table at all.
+	if subject.OrgID != "" && workspace.OrgID != "" && subject.OrgID != workspace.OrgID {
+		return authz.Denied()
 	}
 	// Owner and unowned workspaces resolve without touching the member table.
 	if workspace.OwnerID == "" || workspace.OwnerID == subject.UserID {
@@ -308,6 +336,7 @@ func (s *Service) filterWorkspacesForCaller(ctx context.Context, workspaces []*m
 		}
 		ref := authz.WorkspaceRef{
 			OwnerID:    workspace.OwnerID,
+			OrgID:      workspace.OrgID,
 			Visibility: authz.NormalizeVisibility(workspace.Visibility),
 			MemberRole: authz.NormalizeWorkspaceRole(memberRoles[workspace.ID]),
 		}

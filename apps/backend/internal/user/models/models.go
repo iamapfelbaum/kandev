@@ -92,13 +92,20 @@ func NormalizeRole(value string) string {
 }
 
 type User struct {
-	ID          string    `json:"id"`
-	Email       string    `json:"email"`
-	DisplayName string    `json:"display_name"`
-	Role        string    `json:"role"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          string `json:"id"`
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name"`
+	Role        string `json:"role"`
+	Status      string `json:"status"`
+	// OrgID is the user's tenant. Empty means the account predates
+	// organizations or the tenancy migration has not run.
+	OrgID string `json:"org_id,omitempty"`
+	// IsOperator marks the instance operator tier: managing organizations,
+	// feature toggles and instance configuration. It grants NO access inside
+	// any organization, including the operator's own.
+	IsOperator bool      `json:"is_operator,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type UserSettings struct {

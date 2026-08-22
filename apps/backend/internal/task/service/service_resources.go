@@ -105,6 +105,10 @@ func (s *Service) CreateWorkspace(ctx context.Context, req *CreateWorkspaceReque
 		DefaultAgentProfileID:       normalizeOptionalID(req.DefaultAgentProfileID),
 		DefaultConfigAgentProfileID: normalizeOptionalID(req.DefaultConfigAgentProfileID),
 		Visibility:                  string(s.defaultWorkspaceVisibility(ctx)),
+		// The tenant comes from the creating identity and from nowhere else.
+		// There is no org field on the request on purpose: a caller must not
+		// be able to place a workspace in another tenant.
+		OrgID: callerOrgID(ctx),
 	}
 
 	var kanbanWorkflow *models.Workflow

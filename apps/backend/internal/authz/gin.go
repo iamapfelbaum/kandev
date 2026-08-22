@@ -19,6 +19,7 @@ func SubjectFromGin(c *gin.Context) Subject {
 	}
 	return Subject{
 		UserID:  identity.UserID,
+		OrgID:   identity.OrgID,
 		OrgRole: NormalizeOrgRole(string(identity.Role)),
 	}
 }

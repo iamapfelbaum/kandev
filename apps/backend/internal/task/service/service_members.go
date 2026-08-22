@@ -308,6 +308,7 @@ func (s *Service) ProjectWorkspaceAccess(ctx context.Context, workspaces []*mode
 		}
 		projection.Decisions[workspace.ID] = authz.ResolveWorkspace(subject, authz.WorkspaceRef{
 			OwnerID:    workspace.OwnerID,
+			OrgID:      workspace.OrgID,
 			Visibility: authz.NormalizeVisibility(workspace.Visibility),
 			MemberRole: authz.NormalizeWorkspaceRole(memberRoles[workspace.ID]),
 		})

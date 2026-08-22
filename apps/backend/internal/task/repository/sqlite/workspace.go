@@ -44,6 +44,7 @@ func (r *Repository) insertWorkspace(ctx context.Context, exec sqlx.ExtContext, 
 			name,
 			description,
 			owner_id,
+			org_id,
 			visibility,
 			default_executor_id,
 			default_environment_id,
@@ -55,8 +56,8 @@ func (r *Repository) insertWorkspace(ctx context.Context, exec sqlx.ExtContext, 
 			created_at,
 			updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`), workspace.ID, workspace.Name, workspace.Description, workspace.OwnerID, workspace.Visibility, workspace.DefaultExecutorID, workspace.DefaultEnvironmentID, workspace.DefaultAgentProfileID, workspace.DefaultConfigAgentProfileID, workspace.TaskPrefix, workspace.TaskSequence, workspace.OfficeWorkflowID, workspace.CreatedAt, workspace.UpdatedAt)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`), workspace.ID, workspace.Name, workspace.Description, workspace.OwnerID, workspace.OrgID, workspace.Visibility, workspace.DefaultExecutorID, workspace.DefaultEnvironmentID, workspace.DefaultAgentProfileID, workspace.DefaultConfigAgentProfileID, workspace.TaskPrefix, workspace.TaskSequence, workspace.OfficeWorkflowID, workspace.CreatedAt, workspace.UpdatedAt)
 
 	return err
 }
@@ -70,13 +71,14 @@ func (r *Repository) GetWorkspace(ctx context.Context, id string) (*models.Works
 	var defaultConfigAgentProfileID sql.NullString
 
 	err := r.ro.QueryRowContext(ctx, r.ro.Rebind(`
-		SELECT id, name, description, owner_id, visibility, default_executor_id, default_environment_id, default_agent_profile_id, default_config_agent_profile_id, task_prefix, task_sequence, office_workflow_id, created_at, updated_at
+		SELECT id, name, description, owner_id, org_id, visibility, default_executor_id, default_environment_id, default_agent_profile_id, default_config_agent_profile_id, task_prefix, task_sequence, office_workflow_id, created_at, updated_at
 		FROM workspaces WHERE id = ?
 	`), id).Scan(
 		&workspace.ID,
 		&workspace.Name,
 		&workspace.Description,
 		&workspace.OwnerID,
+		&workspace.OrgID,
 		&workspace.Visibility,
 		&defaultExecutorID,
 		&defaultEnvironmentID,
@@ -415,7 +417,7 @@ func (r *Repository) ClaimUnownedWorkspaces(ctx context.Context, ownerID string)
 
 func (r *Repository) ListWorkspaces(ctx context.Context) ([]*models.Workspace, error) {
 	rows, err := r.ro.QueryContext(ctx, `
-		SELECT id, name, description, owner_id, visibility, default_executor_id, default_environment_id, default_agent_profile_id, default_config_agent_profile_id, task_prefix, task_sequence, office_workflow_id, created_at, updated_at
+		SELECT id, name, description, owner_id, org_id, visibility, default_executor_id, default_environment_id, default_agent_profile_id, default_config_agent_profile_id, task_prefix, task_sequence, office_workflow_id, created_at, updated_at
 		FROM workspaces ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -435,6 +437,7 @@ func (r *Repository) ListWorkspaces(ctx context.Context) ([]*models.Workspace, e
 			&workspace.Name,
 			&workspace.Description,
 			&workspace.OwnerID,
+			&workspace.OrgID,
 			&workspace.Visibility,
 			&defaultExecutorID,
 			&defaultEnvironmentID,
