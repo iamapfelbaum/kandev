@@ -358,7 +358,7 @@ func (s *Service) updateTaskStateIfSessionState(
 
 // UpdateTaskMetadata updates only the metadata of a task (merges with existing)
 func (s *Service) UpdateTaskMetadata(ctx context.Context, id string, metadata map[string]interface{}) (*models.Task, error) {
-	if err := s.authorizeTaskID(ctx, id); err != nil {
+	if err := s.authorizeTaskScope(ctx, id, authz.ScopeTaskWrite); err != nil {
 		return nil, err
 	}
 	task, err := s.tasks.GetTask(ctx, id)
@@ -476,7 +476,7 @@ func (s *Service) MoveTaskWithOptions(
 	position int,
 	opts MoveTaskOptions,
 ) (*MoveTaskResult, error) {
-	if err := s.authorizeTaskID(ctx, id); err != nil {
+	if err := s.authorizeTaskScope(ctx, id, authz.ScopeTaskWrite); err != nil {
 		return nil, err
 	}
 	task, err := s.tasks.GetTask(ctx, id)

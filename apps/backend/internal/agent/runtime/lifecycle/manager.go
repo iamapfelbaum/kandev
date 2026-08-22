@@ -564,3 +564,15 @@ func (m *Manager) DockerClientProvider() func() *docker.Client {
 		return dockerExec.Client()
 	}
 }
+
+// execAccessCheck returns the check that execution-capable surfaces must pass.
+//
+// It prefers the session.exec checker and falls back to the plain access check
+// when no scoped checker is wired. The fallback is never weaker than the
+// behavior before session.exec existed; production always wires both.
+func (m *Manager) execAccessCheck() func(ctx context.Context, sessionID string) error {
+	if m.sessionExecCheck != nil {
+		return m.sessionExecCheck
+	}
+	return m.sessionAccessCheck
+}

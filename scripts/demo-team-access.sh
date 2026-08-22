@@ -13,7 +13,9 @@ HOME_DIR="${KANDEV_DEMO_HOME:-/tmp/kandev-team-access-demo}"
 # Bind loopback plus any extra host (e.g. a Tailscale IP) so the instance is
 # reachable from another device on the tailnet. Seeding always talks to
 # loopback; BASE is only what the seeder and probes use.
-BIND_HOSTS="${KANDEV_DEMO_BIND:-127.0.0.1}"
+# Loopback is always bound: the health probe and the seeder talk to BASE on
+# 127.0.0.1, so an extra host must be added to loopback rather than replace it.
+BIND_HOSTS="127.0.0.1${KANDEV_DEMO_BIND:+,${KANDEV_DEMO_BIND}}"
 BASE="http://127.0.0.1:${PORT}"
 COOKIE_JAR="${HOME_DIR}/admin-cookies.txt"
 

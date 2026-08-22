@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 
 	"github.com/kandev/kandev/internal/auth/authn"
 	"github.com/kandev/kandev/internal/authz"
@@ -187,9 +188,14 @@ func (s *Service) authorizeTaskScope(ctx context.Context, taskID string, scope a
 	}
 	workspace, err := s.workspaces.GetWorkspace(ctx, task.WorkspaceID)
 	if err != nil {
-		// A dangling workspace reference should not hide the task from the
-		// single user who can already see everything else about it.
-		return nil //nolint:nilerr // visibility fallback, not an operation failure
+		// A dangling workspace reference (the row is genuinely gone) should
+		// not hide the task from the single user who can already see
+		// everything else about it. Any OTHER lookup failure fails closed: a
+		// transient database error must not read as "granted".
+		if errors.Is(err, repoerrors.ErrWorkspaceNotFound) {
+			return nil
+		}
+		return err
 	}
 	decision := s.workspaceDecision(ctx, workspace)
 	if !decision.CanRead() {
@@ -215,7 +221,12 @@ func (s *Service) authorizeWorkflowID(ctx context.Context, workflowID string) er
 	}
 	workspace, err := s.workspaces.GetWorkspace(ctx, workflow.WorkspaceID)
 	if err != nil {
-		return nil //nolint:nilerr // visibility fallback, not an operation failure
+		// Same rule as tasks: a missing workspace row is a dangling
+		// reference, anything else fails closed.
+		if errors.Is(err, repoerrors.ErrWorkspaceNotFound) {
+			return nil
+		}
+		return err
 	}
 	if !s.workspaceDecision(ctx, workspace).CanRead() {
 		return repoerrors.ErrWorkspaceNotFound

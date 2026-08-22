@@ -180,6 +180,14 @@ func provideOrchestrator(
 	orchestratorSvc.SetSessionControlChecker(func(ctx context.Context, sessionID string) error {
 		return taskSvc.AuthorizeSessionScope(ctx, sessionID, authz.ScopeSessionControl)
 	})
+	// Starting, resuming, steering and dispatching a turn are writes, so they
+	// need session.prompt rather than mere reach.
+	orchestratorSvc.SetSessionPromptChecker(func(ctx context.Context, sessionID string) error {
+		return taskSvc.AuthorizeSessionScope(ctx, sessionID, authz.ScopeSessionPrompt)
+	})
+	orchestratorSvc.SetTaskPromptChecker(func(ctx context.Context, taskID string) error {
+		return taskSvc.AuthorizeTaskScope(ctx, taskID, authz.ScopeSessionPrompt)
+	})
 	orchestratorSvc.SetTaskAccessChecker(taskSvc.AuthorizeTaskAccess)
 
 	// Publish task.updated when the first session is marked primary so the

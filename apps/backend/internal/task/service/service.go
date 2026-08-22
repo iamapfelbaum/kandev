@@ -296,6 +296,7 @@ type Service struct {
 	workspaces                      repository.WorkspaceRepository
 	userDirectory                   UserDirectory
 	orgSettings                     OrgSettings
+	userOrgs                        func(ctx context.Context, userID string) (string, error)
 	tasks                           repository.TaskRepository
 	taskRepos                       repository.TaskRepoRepository
 	workspaceFolders                repository.TaskWorkspaceFolderRepository

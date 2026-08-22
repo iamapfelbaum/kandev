@@ -149,10 +149,15 @@ func (s *Service) SetWorkspaceVisibility(ctx context.Context, workspaceID, visib
 	// workspace marked org-visible would be published to an organization its
 	// own owner cannot see. Refuse rather than create that asymmetry.
 	if want == authz.VisibilityOrg && workspace.OwnerID != "" {
-		if _, role, ok, lookupErr := s.lookupUser(ctx, workspace.OwnerID); lookupErr == nil && ok {
-			if authz.NormalizeOrgRole(role) == authz.OrgRoleGuest {
-				return nil, ErrVisibilityOwnerIsGuest
-			}
+		_, role, ok, lookupErr := s.lookupUser(ctx, workspace.OwnerID)
+		// Fail closed: publishing a workspace to the organization on the
+		// strength of an account lookup that did not succeed is exactly the
+		// wrong direction to guess in.
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if !ok || authz.NormalizeOrgRole(role) == authz.OrgRoleGuest {
+			return nil, ErrVisibilityOwnerIsGuest
 		}
 	}
 	workspace.Visibility = string(want)
@@ -241,9 +246,9 @@ func (s *Service) defaultWorkspaceVisibility(ctx context.Context) authz.Visibili
 // table so the two never disagree. Failure is logged rather than fatal: the
 // owner still reaches the workspace through owner_id, and the backfill
 // migration repairs a missing row on the next boot.
-func (s *Service) seedWorkspaceOwnerMember(ctx context.Context, workspace *models.Workspace) {
+func (s *Service) seedWorkspaceOwnerMember(ctx context.Context, workspace *models.Workspace) error {
 	if workspace == nil || workspace.OwnerID == "" {
-		return
+		return nil
 	}
 	member := &models.WorkspaceMember{
 		WorkspaceID: workspace.ID,
@@ -252,9 +257,14 @@ func (s *Service) seedWorkspaceOwnerMember(ctx context.Context, workspace *model
 		CreatedAt:   time.Now().UTC(),
 	}
 	if err := s.workspaces.UpsertWorkspaceMember(ctx, member); err != nil {
-		s.logger.Warn("failed to seed workspace owner membership",
+		// The owner row is not decoration: membership, counts and ownership
+		// transfer all read it, so a workspace without one is inconsistent.
+		// Report the failure rather than publishing a created event for it.
+		s.logger.Error("failed to seed workspace owner membership",
 			zap.String("workspace_id", workspace.ID), zap.Error(err))
+		return err
 	}
+	return nil
 }
 
 // WorkspaceAccessProjection carries the resolved access for a set of
@@ -337,4 +347,94 @@ func (s *Service) SetDefaultWorkspaceVisibility(ctx context.Context, visibility 
 	}
 	s.logger.Info("default workspace visibility changed", zap.String("visibility", string(want)))
 	return want, nil
+}
+
+// WorkspaceReaderIDs returns every user that may currently read a workspace:
+// its owner, everyone holding a membership row, and, when the workspace is
+// visible to the organization, that organization's non-guest users.
+//
+// It backs WebSocket fan-out. Returning an empty slice means "nobody" and is a
+// real answer: the gateway must not turn it into a global broadcast.
+func (s *Service) WorkspaceReaderIDs(ctx context.Context, workspaceID string) ([]string, error) {
+	workspace, err := s.workspaces.GetWorkspace(ctx, workspaceID)
+	if err != nil || workspace == nil {
+		return nil, err
+	}
+	// A pre-auth workspace has no owner and stays visible to everyone, so it
+	// keeps the previous global routing rather than resolving to nobody.
+	if workspace.OwnerID == "" {
+		return nil, errUnscopedWorkspace
+	}
+
+	seen := map[string]struct{}{workspace.OwnerID: {}}
+	members, err := s.workspaces.ListWorkspaceMembers(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	for _, member := range members {
+		if authz.NormalizeWorkspaceRole(member.Role) != authz.WorkspaceRoleNone {
+			seen[member.UserID] = struct{}{}
+		}
+	}
+	if authz.NormalizeVisibility(workspace.Visibility) == authz.VisibilityOrg {
+		if err := s.addOrgReaders(ctx, workspace.OrgID, seen); err != nil {
+			return nil, err
+		}
+	}
+
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	return out, nil
+}
+
+// addOrgReaders adds the organization's non-guest, active users to the set.
+// Guests reach only workspaces they hold an explicit row on, which the caller
+// has already collected.
+func (s *Service) addOrgReaders(ctx context.Context, orgID string, seen map[string]struct{}) error {
+	if s.userDirectory == nil {
+		return nil
+	}
+	users, err := s.userDirectory.ListDirectory(ctx)
+	if err != nil {
+		return err
+	}
+	for _, user := range users {
+		if s.orgReaderEligible(ctx, orgID, user.ID) {
+			seen[user.ID] = struct{}{}
+		}
+	}
+	return nil
+}
+
+func (s *Service) orgReaderEligible(ctx context.Context, orgID, userID string) bool {
+	status, role, ok, err := s.userDirectory.LookupStatus(ctx, userID)
+	if err != nil || !ok || status == "disabled" {
+		return false
+	}
+	if authz.NormalizeOrgRole(role) == authz.OrgRoleGuest {
+		return false
+	}
+	return s.sameOrg(ctx, orgID, userID)
+}
+
+// errUnscopedWorkspace tells the gateway to fall back to its previous routing
+// for a workspace that predates ownership.
+var errUnscopedWorkspace = errors.New("workspace has no owner")
+
+// sameOrg reports whether a user belongs to the workspace's organization.
+// With organizations off both sides are empty and every user matches.
+func (s *Service) sameOrg(ctx context.Context, workspaceOrgID, userID string) bool {
+	if workspaceOrgID == "" || s.userOrgs == nil {
+		return true
+	}
+	orgID, err := s.userOrgs(ctx, userID)
+	return err == nil && orgID == workspaceOrgID
+}
+
+// SetUserOrgResolver wires the account-to-organization lookup used by
+// workspace fan-out.
+func (s *Service) SetUserOrgResolver(resolve func(ctx context.Context, userID string) (string, error)) {
+	s.userOrgs = resolve
 }

@@ -258,3 +258,17 @@ func TestOrglessSubjectDeniedWhenTenancyEnforced(t *testing.T) {
 		t.Error("org-less subject must be unaffected when tenancy is off")
 	}
 }
+
+// An unrecognized stored role must resolve to the LEAST privileged role, not
+// to member. Identity construction carries the stored value through unchanged
+// precisely so this normalization is the one that decides.
+func TestUnknownStoredRoleResolvesToGuest(t *testing.T) {
+	unknown := Subject{UserID: userBruno, OrgRole: NormalizeOrgRole("superuser")}
+	orgVisible := WorkspaceRef{OwnerID: userAna, Visibility: VisibilityOrg}
+	if ResolveWorkspace(unknown, orgVisible).CanRead() {
+		t.Error("an unknown stored role must not reach an org-visible workspace")
+	}
+	if got := NormalizeOrgRole("superuser"); got != OrgRoleGuest {
+		t.Errorf("NormalizeOrgRole(unknown) = %q, want guest", got)
+	}
+}

@@ -420,6 +420,15 @@ func startServices( //nolint:cyclop
 	if services.Org != nil && services.Org.Enabled() {
 		services.Auth.SetAdminCreatedHook(services.Org.ClaimSetupAdmin)
 		services.Org.SetFirstAdminCreator(services.Auth.CreateUserInOrg)
+		// Workspace fan-out needs to know which organization a user belongs
+		// to, so an org-visible workspace reaches its own org only.
+		services.Task.SetUserOrgResolver(func(ctx context.Context, userID string) (string, error) {
+			user, err := repos.UserAccounts.GetUser(ctx, userID)
+			if err != nil || user == nil {
+				return "", err
+			}
+			return user.OrgID, nil
+		})
 	}
 	if services.Org != nil && services.Org.Enabled() {
 		// A suspended organization fails every session and token closed, which
@@ -566,7 +575,11 @@ func startAgentInfrastructure(
 	lifecycleMgr.SetSessionExecAccessChecker(func(ctx context.Context, sessionID string) error {
 		return services.Task.AuthorizeSessionScope(ctx, sessionID, authz.ScopeSessionExec)
 	})
-	lifecycleMgr.SetEnvironmentAccessChecker(services.Task.AuthorizeEnvironmentAccess)
+	// The environment-keyed terminal route reaches an execution the same way
+	// the session-keyed ones do, so it needs the same scope.
+	lifecycleMgr.SetEnvironmentAccessChecker(func(ctx context.Context, environmentID string) error {
+		return services.Task.AuthorizeEnvironmentScope(ctx, environmentID, authz.ScopeSessionExec)
+	})
 	log.Info("Workspace info provider configured for session recovery")
 
 	// TODO(task-model-unification Phase 2, ADR 0004): wire agentruntime.New(lifecycleMgr)

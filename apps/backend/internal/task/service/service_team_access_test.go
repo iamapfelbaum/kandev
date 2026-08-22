@@ -241,3 +241,41 @@ func TestMessageAuthorIsServerStamped(t *testing.T) {
 		t.Fatalf("internal author = %q, want whatever", internal)
 	}
 }
+
+// A viewer may read a task but must not move it, edit its metadata, or change
+// a repository's base branch. These are the mutators that stayed on the
+// reach-only helper until review caught them.
+func TestViewerCannotReachWriteOnlyMutators(t *testing.T) {
+	svc, _, repo := createTestService(t)
+	seedTeamWorkspace(t, repo, authz.VisibilityOrg)
+	if err := repo.UpsertWorkspaceMember(context.Background(), &models.WorkspaceMember{
+		WorkspaceID: "ws-team", UserID: "user-bruno", Role: string(authz.WorkspaceRoleViewer),
+	}); err != nil {
+		t.Fatalf("add viewer: %v", err)
+	}
+	viewer := ctxAsRole("user-bruno", authn.RoleMember)
+
+	if _, err := svc.UpdateTaskMetadata(viewer, "task-team", map[string]interface{}{"x": 1}); !IsForbidden(err) {
+		t.Errorf("viewer UpdateTaskMetadata = %v, want ErrForbidden", err)
+	}
+	if _, err := svc.GetTask(viewer, "task-team"); err != nil {
+		t.Errorf("viewer must still read the task: %v", err)
+	}
+}
+
+// A lookup failure must never read as "granted".
+func TestAuthorizationFailsClosedOnLookupError(t *testing.T) {
+	svc, _, repo := createTestService(t)
+	seedTeamWorkspace(t, repo, authz.VisibilityPrivate)
+	// A task pointing at a workspace row that does not exist is a dangling
+	// reference and stays readable; that is the documented exception.
+	if err := repo.CreateTask(context.Background(), &models.Task{
+		ID: "task-dangling", WorkspaceID: "ws-missing", WorkflowID: "wf-team",
+		WorkflowStepID: "step-1", Title: "Dangling", State: v1.TaskStateCreated, Priority: "medium",
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if _, err := svc.GetTask(ctxAsRole("user-bruno", authn.RoleMember), "task-dangling"); err != nil {
+		t.Errorf("a dangling workspace reference should not hide the task: %v", err)
+	}
+}

@@ -110,7 +110,9 @@ func goSourcesOutsideAuthz(t *testing.T, root string) []string {
 			}
 			return nil
 		}
-		if strings.HasSuffix(path, ".go") {
+		// Production call sites only. A scope referenced solely from a test
+		// would otherwise look enforced while guarding nothing.
+		if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
 			files = append(files, path)
 		}
 		return nil

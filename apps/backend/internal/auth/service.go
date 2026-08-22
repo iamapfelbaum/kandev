@@ -268,8 +268,13 @@ func identityOf(user *usermodels.User, sessionID, tokenID string) authn.Identity
 	}
 }
 
+// roleOf carries the STORED role through unchanged. It deliberately does not
+// normalize: authz.NormalizeOrgRole maps an unrecognized role to guest, the
+// least privileged one, whereas usermodels.NormalizeRole defaults to member
+// for write paths. Normalizing here would turn an unknown stored value into a
+// collaborator on every org-visible workspace.
 func roleOf(user *usermodels.User) authn.Role {
-	return authn.Role(usermodels.NormalizeRole(user.Role))
+	return authn.Role(user.Role)
 }
 
 func truncateUserAgent(ua string) string {

@@ -135,7 +135,9 @@ func (s *Service) CreateWorkspace(ctx context.Context, req *CreateWorkspaceReque
 		}
 	}
 
-	s.seedWorkspaceOwnerMember(ctx, workspace)
+	if err := s.seedWorkspaceOwnerMember(ctx, workspace); err != nil {
+		return nil, err
+	}
 
 	s.publishWorkspaceEvent(ctx, events.WorkspaceCreated, workspace)
 	s.logger.Info("workspace created", zap.String("workspace_id", workspace.ID), zap.String("name", workspace.Name))
@@ -1065,7 +1067,7 @@ func (s *Service) UpdateRepository(ctx context.Context, id string, req *UpdateRe
 		return nil, err
 	}
 	if repository != nil {
-		if err := s.authorizeWorkspaceID(ctx, repository.WorkspaceID); err != nil {
+		if err := s.AuthorizeWorkspaceScope(ctx, repository.WorkspaceID, authz.ScopeRepositoryManage); err != nil {
 			return nil, repoerrors.ErrRepositoryNotFound
 		}
 	}

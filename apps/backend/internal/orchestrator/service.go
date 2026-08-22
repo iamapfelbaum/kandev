@@ -506,6 +506,8 @@ type Service struct {
 	// session-keyed WS actions. Nil = unscoped. See SetSessionAccessChecker.
 	sessionAccessCheck  func(ctx context.Context, sessionID string) error
 	sessionControlCheck func(ctx context.Context, sessionID string) error
+	sessionPromptCheck  func(ctx context.Context, sessionID string) error
+	taskPromptCheck     func(ctx context.Context, taskID string) error
 
 	// taskAccessCheck is the task-keyed sibling of sessionAccessCheck, for
 	// entry points that name a task rather than a session (session.launch,
@@ -1407,20 +1409,6 @@ func (s *Service) authorizeSession(ctx context.Context, sessionID string) error 
 		return nil
 	}
 	return s.sessionAccessCheck(ctx, sessionID)
-}
-
-// authorizeSessionControl guards stopping or cancelling a running agent.
-// Interrupting someone else's turn is a write, not a read, so it needs
-// session.control rather than mere reach. Falls back to the reach check when
-// no scoped checker is wired, so an unwired build is never more permissive.
-func (s *Service) authorizeSessionControl(ctx context.Context, sessionID string) error {
-	if s.sessionControlCheck == nil {
-		return s.authorizeSession(ctx, sessionID)
-	}
-	if sessionID == "" {
-		return nil
-	}
-	return s.sessionControlCheck(ctx, sessionID)
 }
 
 // SetSessionControlChecker installs the session.control boundary.

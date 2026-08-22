@@ -279,6 +279,12 @@ const infraSchemaDDL = `
 		created_at TIMESTAMP NOT NULL,
 		PRIMARY KEY (workspace_id, user_id),
 		FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+		-- No foreign key to users: that table belongs to internal/user/store,
+		-- which initializes independently of this repository, so a reference
+		-- here fails schema init whenever the task repository is created
+		-- first. Account removal clears membership through
+		-- DeleteWorkspaceMembersByUser instead, matching how this codebase
+		-- handles every other cross-store side table.
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(user_id);

@@ -11,6 +11,10 @@ import (
 	"github.com/kandev/kandev/internal/task/models"
 )
 
+// ErrOwnershipChanged reports that the workspace owner changed between
+// authorization and the write, so the transfer was not applied.
+var ErrOwnershipChanged = errors.New("workspace ownership changed; retry the transfer")
+
 const workspaceMemberColumns = `workspace_id, user_id, role, added_by, created_at`
 
 // ListWorkspaceMembers returns every membership row for a workspace, owner
@@ -147,10 +151,22 @@ func (r *Repository) TransferWorkspaceOwnership(ctx context.Context, workspaceID
 	defer func() { _ = tx.Rollback() }()
 
 	now := time.Now().UTC()
-	if _, err := tx.ExecContext(ctx, r.db.Rebind(`
-		UPDATE workspaces SET owner_id = ?, updated_at = ? WHERE id = ?
-	`), toUserID, now, workspaceID); err != nil {
+	// Conditional on the owner we were authorized against. Two transfers
+	// authorized while A owned the workspace can arrive sequentially; without
+	// this the second would move ownership off B while demoting the stale A,
+	// leaving B holding an owner row that owner_id no longer names.
+	result, err := tx.ExecContext(ctx, r.db.Rebind(`
+		UPDATE workspaces SET owner_id = ?, updated_at = ? WHERE id = ? AND owner_id = ?
+	`), toUserID, now, workspaceID, fromUserID)
+	if err != nil {
 		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrOwnershipChanged
 	}
 	// Both rows are upserted rather than updated. An UPDATE silently affects
 	// nothing when the row is absent, which would leave owner_id naming a user
@@ -180,5 +196,21 @@ func upsertMemberTx(
 		VALUES (?, ?, ?, '', ?)
 		ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role
 	`), workspaceID, userID, role, now)
+	return err
+}
+
+// DeleteWorkspaceMembersByUser removes every membership an account holds.
+//
+// This is the cross-store cleanup that stands in for a foreign key: the users
+// table is owned by internal/user/store and initializes independently of this
+// repository, so a real FK here would break schema init depending on which
+// store runs first.
+func (r *Repository) DeleteWorkspaceMembersByUser(ctx context.Context, userID string) error {
+	if userID == "" {
+		return nil
+	}
+	_, err := r.db.ExecContext(ctx, r.db.Rebind(`
+		DELETE FROM workspace_members WHERE user_id = ?
+	`), userID)
 	return err
 }
