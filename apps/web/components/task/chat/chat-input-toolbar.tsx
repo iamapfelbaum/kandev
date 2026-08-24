@@ -10,7 +10,7 @@ import { shouldUseCompactTaskChrome } from "@/hooks/use-compact-task-chrome";
 import { useResponsiveBreakpoint } from "@/hooks/use-responsive-breakpoint";
 import type { ContextFile } from "@/lib/state/context-files-store";
 import type { MCPAttachmentHistory } from "@/lib/state/slices/session-runtime/types";
-import type { PluginComposerCapability } from "@/lib/plugins/types";
+import type { PluginComposerCapability, PluginPresentation } from "@/lib/plugins/types";
 
 export type ChatInputToolbarProps = {
   planModeEnabled: boolean;
@@ -71,6 +71,9 @@ function MinimalToolbar({
   onCancel,
   onSubmit,
   submitKey = "cmd_enter",
+  taskId,
+  taskTitle,
+  presentation,
 }: Pick<
   ChatInputToolbarProps,
   | "isAgentBusy"
@@ -83,7 +86,9 @@ function MinimalToolbar({
   | "onCancel"
   | "onSubmit"
   | "submitKey"
->) {
+  | "taskId"
+  | "taskTitle"
+> & { presentation: PluginPresentation }) {
   const submitShortcut = submitKey === "enter" ? SHORTCUTS.SUBMIT_ENTER : SHORTCUTS.SUBMIT;
   return (
     <div className="flex items-center justify-end gap-1 px-1 pt-0 pb-0.5 border-t border-border">
@@ -91,6 +96,9 @@ function MinimalToolbar({
         isAgentBusy={isAgentBusy}
         canCancelAgent={canCancelAgent}
         sessionId={sessionId}
+        taskId={taskId}
+        taskTitle={taskTitle}
+        presentation={presentation}
         hasContent={hasContent ?? false}
         isDisabled={isDisabled}
         submitDisabledReason={submitDisabledReason}
@@ -137,6 +145,9 @@ export const ChatInputToolbar = memo(function ChatInputToolbar(rawProps: ChatInp
         onCancel={props.onCancel}
         onSubmit={props.onSubmit}
         submitKey={props.submitKey}
+        taskId={props.taskId}
+        taskTitle={props.taskTitle}
+        presentation={responsiveBreakpoint.isMobile ? "mobile" : "desktop"}
       />
     );
   }

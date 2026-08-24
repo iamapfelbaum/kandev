@@ -695,7 +695,8 @@ interface PluginRegistry {
 
   // Named slot injection. Host renders all components registered for a slot via
   // <PluginSlot name="..." slotProps={...}/>. Initial slots: "task-sidebar",
-  // "settings-nav", "chat-input-actions", "task-create-input-actions",
+  // "settings-nav", "chat-input-actions", "chat-submit-decoration",
+  // "task-create-input-actions",
   // "new-session-input-actions", "chat-top-bar",
   // "main-top-bar", "app-status-bar-left", "app-status-bar-right",
   // "plugin-settings", "task-card-indicators", "task-card-tags",
@@ -719,6 +720,22 @@ interface PluginRegistry {
   // "new-session-input-actions" render composer actions for task/Quick Chat,
   // task creation, and new-session creation. Each forwards the typed
   // `PluginComposerSlotProps`, including native insert/focus/submit capabilities.
+  // "chat-submit-decoration" renders *over* the chat composer's send button
+  // rather than beside it — for adornments that belong on the send affordance
+  // itself (a progress ring, a state dot), which a sibling slot cannot draw.
+  // The host owns the geometry: the layer is absolutely positioned to the send
+  // button's 28px circular box, so a decoration sizes itself against `inset-0`
+  // without measuring the DOM, and draws *around* the button with a negative
+  // inset (`-inset-1`) — the layer does not clip. The layer is
+  // `pointer-events-none` so a decoration can never swallow a click meant for
+  // send; a child that genuinely needs interaction (a popover trigger) opts
+  // back in with `pointer-events-auto` on that child alone. It forwards
+  // `ChatSubmitDecorationSlotProps`: `{ taskId, taskTitle, activeSessionId,
+  // sessionIds, presentation, isSending, isAgentBusy, disabled,
+  // planModeEnabled }`, so a decoration can react to the button's live state.
+  // The slot renders only while the send button does: when the agent is
+  // mid-turn with an empty composer the button is replaced by Cancel, and the
+  // decoration goes with it.
   // "chat-top-bar" renders status in the session top bar (beside the
   // document/editor/debug controls) and forwards
   // `{ taskId, taskTitle, workspaceId, activeSessionId, sessionIds }`. Both

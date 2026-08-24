@@ -228,6 +228,9 @@ export function MobileChatInputToolbar(props: MobileToolbarProps) {
             isAgentBusy={props.isAgentBusy}
             canCancelAgent={props.canCancelAgent}
             sessionId={props.sessionId}
+            taskId={props.taskId}
+            taskTitle={props.taskTitle}
+            presentation="mobile"
             hasContent={props.hasContent}
             isDisabled={props.isDisabled}
             submitDisabledReason={props.submitDisabledReason}

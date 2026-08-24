@@ -114,7 +114,10 @@ export interface IntegrationSettingsRegistration {
  * "task-sidebar", "settings-nav", "chat-input-actions"
  * (icon buttons in the chat composer toolbar, beside the model picker / mic /
  * send — receives `{ taskId, taskTitle, activeSessionId, sessionIds }` as
- * `slotProps`), "chat-top-bar" (status in the session top bar, beside the
+ * `slotProps`), "chat-submit-decoration" (a layer *over* the send button's own
+ * box, for adornments that belong on the send affordance rather than beside it
+ * — receives `ChatSubmitDecorationSlotProps`; the host positions the layer and
+ * makes it `pointer-events-none`, see chat-submit-plugin-decoration.tsx), "chat-top-bar" (status in the session top bar, beside the
  * CPU/DB metrics — receives `{ taskId, taskTitle, workspaceId, activeSessionId,
  * sessionIds }`), "main-top-bar" (status/actions in the default app top bar on
  * the Home / Kanban / Tasks views, beside the CPU/DB metrics and the
