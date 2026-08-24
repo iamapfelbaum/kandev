@@ -289,6 +289,7 @@ type Repos struct {
 	StatusSummaries   repository.TaskStatusSummaryRepository
 	TaskActivity      repository.TaskActivityRepository
 	SubagentContexts  repository.SubagentContextRepository
+	Usage             repository.UsageRepository
 }
 
 // Service provides task business logic
@@ -317,6 +318,7 @@ type Service struct {
 	statusSummaries                 repository.TaskStatusSummaryRepository
 	taskActivity                    repository.TaskActivityRepository
 	subagentContexts                repository.SubagentContextRepository
+	usage                           repository.UsageRepository
 	attachmentSvc                   *AttachmentService
 	statusSummaryPRs                TaskStatusSummaryPRReader
 	statusSummaryProjector          TaskStatusSummaryEventProjector
@@ -460,6 +462,7 @@ func NewService(repos Repos, eventBus bus.EventBus, log *logger.Logger, discover
 		statusSummaries:       repos.StatusSummaries,
 		taskActivity:          repos.TaskActivity,
 		subagentContexts:      repos.SubagentContexts,
+		usage:                 repos.Usage,
 		eventBus:              eventBus,
 		logger:                log,
 		discoveryConfig:       discoveryConfig,
