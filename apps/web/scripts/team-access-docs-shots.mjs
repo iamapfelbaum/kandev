@@ -22,6 +22,12 @@ async function signIn(context, email) {
     page.getByRole("button", { name: /sign in|log in/i }).click(),
   ]);
   await page.waitForLoadState("networkidle");
+  // Fail loudly. Without this a wrong password or a seed that uses different
+  // emails leaves the browser sitting on /login, and every screenshot below
+  // silently captures the sign-in card over a good committed one.
+  if (new URL(page.url()).pathname.startsWith("/login")) {
+    throw new Error(`sign in as ${email} did not leave /login: wrong seed or password?`);
+  }
   for (let i = 0; i < 6; i += 1) {
     const skip = page.getByRole("button", { name: /^skip$/i });
     if (!(await skip.count())) break;

@@ -70,7 +70,7 @@ export type SettingsMenuItem = {
    * the page that owns them.
    */
   activePrefixes?: string[];
-  requires?: "account" | "users";
+  requires?: "account" | "users" | "organizations";
   /** Rows whose page owns a list show its size as a trailing badge. */
   countKey?: MenuCountKey;
 };
@@ -174,6 +174,17 @@ export const SETTINGS_MENU_SECTIONS: SettingsMenuSection[] = [
         icon: IconUsers,
         requires: "users",
       },
+      // An organization is a tenant boundary above users, so it belongs with
+      // the other who-can-reach-what settings rather than under System, which
+      // is instance operation. The href keeps its /settings/system/ prefix,
+      // like the Users row above it: these sections group by subject, not by
+      // URL.
+      {
+        href: "/settings/system/organizations",
+        labelKey: "orgs:navOrganizations",
+        icon: IconBuilding,
+        requires: "organizations",
+      },
       {
         href: ACCOUNT_SECURITY_SETTINGS_HREF,
         labelKey: "sidebar:profileAndPassword",
@@ -202,11 +213,6 @@ export const SETTINGS_MENU_SECTIONS: SettingsMenuSection[] = [
         href: "/settings/system/feature-toggles",
         labelKey: "system:navFeatureToggles",
         icon: IconFlask,
-      },
-      {
-        href: "/settings/system/organizations",
-        labelKey: "orgs:navOrganizations",
-        icon: IconBuilding,
       },
       { href: "/settings/system/updates", labelKey: "system:navUpdates", icon: IconRefresh },
       { href: SYSTEM_ABOUT_SETTINGS_HREF, labelKey: "system:navAbout", icon: IconInfoCircle },

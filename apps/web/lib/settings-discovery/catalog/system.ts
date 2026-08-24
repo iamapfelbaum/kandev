@@ -146,14 +146,6 @@ export const SYSTEM_DISCOVERY_DEFINITIONS: SettingsDiscoveryDefinition[] = [
     order: 630,
   },
   {
-    id: "system-organizations",
-    kind: "page",
-    labelKey: "orgs:navOrganizations",
-    groupId: "system",
-    href: "/settings/system/organizations",
-    order: 631,
-  },
-  {
     id: "system-updates",
     kind: "page",
     labelKey: "system:navUpdates",
@@ -187,5 +179,16 @@ export const SYSTEM_DISCOVERY_DEFINITIONS: SettingsDiscoveryDefinition[] = [
     href: "/settings/system/users",
     order: 660,
     requires: "users",
+  },
+  // Grouped with access control, not system: an organization is a boundary
+  // above users, and System is for operating the instance.
+  {
+    id: "system-organizations",
+    kind: "page",
+    labelKey: "orgs:navOrganizations",
+    groupId: "access",
+    href: "/settings/system/organizations",
+    order: 661,
+    requires: "organizations",
   },
 ];

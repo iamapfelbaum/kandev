@@ -6,6 +6,9 @@ import { mkdirSync } from "node:fs";
 const BASE = process.env.KANDEV_DEMO_URL ?? "http://127.0.0.1:8232";
 const OUT = process.env.SHOT_DIR ?? "../../docs/screenshots";
 const PASSWORD = "kandev-demo-pw-1";
+// The operator's email differs by seed: the tenancy seed uses acme.test, the
+// team-access seed used for the Organizations shot uses example.com.
+const OPERATOR = process.env.KANDEV_DEMO_ADMIN ?? "ana@acme.test";
 mkdirSync(OUT, { recursive: true });
 
 async function signIn(context, email) {
@@ -20,6 +23,12 @@ async function signIn(context, email) {
     page.getByRole("button", { name: /sign in|log in/i }).click(),
   ]);
   await page.waitForLoadState("networkidle");
+  // Fail loudly. Without this a wrong password or a seed that uses different
+  // emails leaves the browser sitting on /login, and every screenshot below
+  // silently captures the sign-in card over a good committed one.
+  if (new URL(page.url()).pathname.startsWith("/login")) {
+    throw new Error(`sign in as ${email} did not leave /login: wrong seed or password?`);
+  }
   for (let i = 0; i < 6; i += 1) {
     const skip = page.getByRole("button", { name: /^skip$/i });
     if (!(await skip.count())) break;
@@ -42,7 +51,7 @@ const desktop = { width: 1440, height: 1100 };
 const browser = await chromium.launch();
 try {
   // Operator: the organization list.
-  const ana = await signIn(await browser.newContext({ viewport: desktop }), "ana@acme.test");
+  const ana = await signIn(await browser.newContext({ viewport: desktop }), OPERATOR);
   await ana.goto(`${BASE}/settings/system/organizations`, { waitUntil: "networkidle" });
   await shot(ana, "tenancy-organizations");
 

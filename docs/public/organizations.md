@@ -16,7 +16,7 @@ Use organizations when one server serves groups that must stay separate: two tea
 1. Enable **Authentication & users** and complete the setup wizard.
 2. Enable **Organizations** in `Settings > System > Feature Toggles` and restart.
 3. Everything you already had lands in one default organization; the first admin becomes the instance operator.
-4. Create further organizations in `Settings > System > Organizations` and give each one its first administrator.
+4. Create further organizations in `Settings > Access Control > Organizations` and give each one its first administrator.
 5. From then on, each organization administers itself.
 
 ## Enabling
@@ -48,7 +48,7 @@ The operator tier is an *administration* tier, not a visibility one. An operator
 
 ## Managing organizations
 
-`Settings > System > Organizations` is visible only to the instance operator. A non-operator gets a not-found response from those routes, so the page does not appear for them.
+`Settings > Access Control > Organizations` is visible only to the instance operator. A non-operator gets a not-found response from those routes, so the page does not appear for them. The entry sits with the other access settings rather than under System, because an organization is a boundary above users; System is for operating the instance. It is hidden entirely until the feature is enabled.
 
 ![The Organizations settings page listing Acme Corp with a Default badge and Active status, Globex Industries as Active, and Initech as Suspended. Each row has Add administrator, Suspend or Resume, and a delete action. Above the list is a New organization form and a card explaining what an organization separates.](../screenshots/tenancy-organizations.png)
 
@@ -56,7 +56,7 @@ The operator tier is an *administration* tier, not a visibility one. An operator
 
 Create the organization, then give it a first administrator. That second step is not optional bookkeeping: an ordinary admin can only create accounts inside their own tenant, so a brand-new organization has no way to get its first user. This operator-only path is what breaks that circularity, and after it the organization is self-sufficient.
 
-![A dialog titled "First administrator for Globex Industries" with display name, email and password fields, explaining that an administrator can only create accounts in their own organization so a new organization needs its first one created here.](../screenshots/tenancy-first-admin.png)
+![A dialog titled "First administrator for Acme Corp" with display name, email and password fields, explaining that an administrator can only create accounts in their own organization so a new organization needs its first one created here.](../screenshots/tenancy-first-admin.png)
 
 ### Suspending
 
