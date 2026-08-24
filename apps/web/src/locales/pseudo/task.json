@@ -1849,5 +1849,6 @@
   "unassigned": "Ũńàśśĩĝńēď",
   "assignToMe": "Àśśĩĝń ţō ḿē",
   "searchPeople": "Śēàŕćĥ ƥēōƥĺē",
-  "noPeopleFound": "Ńō ƥēōƥĺē ƒōũńď"
+  "noPeopleFound": "Ńō ƥēōƥĺē ƒōũńď",
+  "assignedToName": "Àśśĩĝńēď ţō {{name}}"
 }

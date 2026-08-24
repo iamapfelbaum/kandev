@@ -117,6 +117,8 @@ export type KanbanState = {
     primaryExecutorType?: string | null;
     primaryExecutorName?: string | null;
     isRemoteExecutor?: boolean;
+    /** Human assignee (user id). Independent of any agent assignment. */
+    assigneeUserId?: string;
     parentTaskId?: string | null;
     workspaceMode?: "inherit_parent" | "new_workspace" | "shared_group";
     updatedAt?: string;

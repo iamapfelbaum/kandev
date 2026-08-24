@@ -1849,5 +1849,6 @@
   "unassigned": "Sem atribuição",
   "assignToMe": "Atribuir a mim",
   "searchPeople": "Procurar pessoas",
-  "noPeopleFound": "Nenhuma pessoa encontrada"
+  "noPeopleFound": "Nenhuma pessoa encontrada",
+  "assignedToName": "Atribuído a {{name}}"
 }

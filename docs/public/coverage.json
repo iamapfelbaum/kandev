@@ -578,13 +578,19 @@
         "apps/backend/internal/authz/resolve.go",
         "apps/backend/internal/task/service/service_access.go",
         "apps/backend/internal/task/service/service_members.go",
-        "apps/web/components/settings/workspaces/workspace-team-access-card.tsx"
+        "apps/web/components/settings/workspaces/workspace-team-access-card.tsx",
+        "apps/web/components/task/task-assignee-control.tsx",
+        "apps/web/components/kanban-card-assignee-badge.tsx",
+        "apps/web/hooks/domains/users/use-assignable-people.ts"
       ],
       "tests": [
         "apps/backend/internal/authz/resolve_test.go",
         "apps/backend/internal/authz/registry_test.go",
         "apps/backend/internal/task/service/service_team_access_test.go",
-        "apps/web/lib/types/team-access.test.ts"
+        "apps/web/lib/types/team-access.test.ts",
+        "apps/backend/internal/task/service/service_events_assignee_test.go",
+        "apps/web/components/task/task-assignee-control.test.tsx",
+        "apps/web/lib/ws/handlers/tasks-assignee.test.ts"
       ]
     },
     {

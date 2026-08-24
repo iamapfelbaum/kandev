@@ -1849,5 +1849,6 @@
   "unassigned": "未指派",
   "assignToMe": "指派給我",
   "searchPeople": "搜尋成員",
-  "noPeopleFound": "找不到成員"
+  "noPeopleFound": "找不到成員",
+  "assignedToName": "指派給 {{name}}"
 }

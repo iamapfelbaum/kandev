@@ -1849,5 +1849,6 @@
   "unassigned": "Unassigned",
   "assignToMe": "Assign to me",
   "searchPeople": "Search people",
-  "noPeopleFound": "No people found"
+  "noPeopleFound": "No people found",
+  "assignedToName": "Assigned to {{name}}"
 }

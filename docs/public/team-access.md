@@ -65,7 +65,17 @@ Every human action is recorded against the person who took it, which is what a s
 
 A task carries two independent assignees: the **agent** that runs it, and the **person** who owns it. Setting one never changes the other, and a task can have both.
 
-Open a task and use **Assigned to** in the properties panel to pick a colleague, or press **Assign to me** to take it.
+It works the same on both boards.
+
+On a **kanban** task, the assignee sits in the task's top bar. Open the control to pick a colleague, or choose **Assign to me** to take the task over.
+
+![The kanban task top bar showing the workflow stepper and, on the right, an assignee control reading Bruno Costa.](../screenshots/team-access-kanban-assignee-topbar.png)
+
+Cards on the board carry the same name, so you can see who is on what without opening anything.
+
+![A kanban card titled Upgrade the Postgres driver with an avatar and the name Bruno Costa under the title.](../screenshots/team-access-kanban-assignee-card.png)
+
+In **office**, it is the **Assigned to** row in the task properties panel, next to the agent **Assignee** row.
 
 ![The task properties panel showing an Assignee row set to No assignee above an Assigned to row with an Assign to me button and the human assignee Bruno Costa.](../screenshots/team-access-task-assignee.png)
 
@@ -73,7 +83,7 @@ The list offers everyone in the user directory, because who can reach a workspac
 
 Assignment is advisory. It records who owns the work and gates nothing: anybody with `task.write` can reassign anything, including to themselves, and doing so takes no lock and interrupts no running session. That is the whole of takeover, and it is why the button needs no confirmation.
 
-The row is hidden when authentication is disabled, because then every visitor is the same anonymous user and there is nobody to assign to.
+The control is hidden when authentication is disabled, because then every visitor is the same anonymous user and there is nobody to assign to.
 
 ## Roles
 

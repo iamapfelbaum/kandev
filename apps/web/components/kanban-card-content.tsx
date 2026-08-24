@@ -14,6 +14,7 @@ import {
   IconUsersGroup,
 } from "@tabler/icons-react";
 import { Badge } from "@kandev/ui/badge";
+import { AssigneeBadge } from "@/components/kanban-card-assignee-badge";
 import { Card, CardContent } from "@kandev/ui/card";
 import { Checkbox } from "@kandev/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@kandev/ui/dropdown-menu";
@@ -209,6 +210,7 @@ function KanbanCardBadges({ task }: { task: Task }) {
   return (
     <div className="flex flex-wrap items-center justify-end gap-2 mt-1 min-w-0">
       {task.blocked && <BlockedBadge task={task} />}
+      {task.assigneeUserId && <AssigneeBadge userId={task.assigneeUserId} />}
       {task.queuedForStepId && (
         <Badge
           variant="secondary"
@@ -292,6 +294,7 @@ function hasCardBadges(task: Task): boolean {
     task.reviewStatus === "changes_requested" ||
     task.reviewStatus === "pending" ||
     task.queuedForStepId ||
+    task.assigneeUserId ||
     task.blocked,
   );
 }

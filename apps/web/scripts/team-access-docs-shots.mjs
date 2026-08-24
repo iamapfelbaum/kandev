@@ -69,6 +69,36 @@ try {
   await bruno.goto(`${BASE}/`, { waitUntil: "networkidle" });
   await shot(bruno, "team-access-shared-board");
 
+  // The human assignee, on both boards. Ana assigns Bruno through the API so
+  // the shots show a task somebody else owns, which is what the "Assign to me"
+  // affordance is for.
+  const tasks = await (await ana.request.get(`${BASE}/api/v1/workspaces/${team.id}/tasks`)).json();
+  const task = (tasks.tasks ?? tasks)[0];
+  const { users } = await (await ana.request.get(`${BASE}/api/v1/users/directory`)).json();
+  const brunoId = users.find((u) => u.display_name.includes("Bruno"))?.id;
+  if (task && brunoId) {
+    await ana.request.patch(`${BASE}/api/v1/tasks/${task.id}`, {
+      data: { assignee_user_id: brunoId },
+    });
+    await ana.goto(`${BASE}/t/${task.id}`, { waitUntil: "networkidle" });
+    await ana.getByTestId("task-assignee-control").waitFor({ state: "visible", timeout: 25000 });
+    await ana.waitForTimeout(800);
+    await ana.screenshot({
+      path: `${OUT}/team-access-kanban-assignee-topbar.png`,
+      clip: { x: 540, y: 0, width: 900, height: 56 },
+    });
+    console.log("captured team-access-kanban-assignee-topbar.png");
+
+    await ana.goto(`${BASE}/`, { waitUntil: "networkidle" });
+    const badge = ana.getByTestId("kanban-card-assignee").first();
+    await badge.waitFor({ state: "visible", timeout: 25000 });
+    const card = badge.locator("xpath=ancestor::*[@data-testid][1]");
+    await ((await card.count()) ? card : badge).screenshot({
+      path: `${OUT}/team-access-kanban-assignee-card.png`,
+    });
+    console.log("captured team-access-kanban-assignee-card.png");
+  }
+
   const carla = await signIn(await browser.newContext({ viewport: desktop }), "carla@example.com");
   await carla.goto(`${BASE}/settings/workspace/${team.id}`, { waitUntil: "networkidle" });
   await shot(carla, "team-access-viewer-card", CARD_BOTTOM);

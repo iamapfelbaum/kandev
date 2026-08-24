@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Button } from "@kandev/ui/button";
 import { Combobox, type ComboboxOption } from "@/components/combobox";
 import { useAppStore } from "@/components/state-provider";
 import { updateTask } from "@/lib/api/domains/office-extended-api";
-import { listDirectoryUsers, listWorkspaceMembers } from "@/lib/api/domains/team-access-api";
-import type { DirectoryUser, WorkspaceMember } from "@/lib/types/team-access";
+import { useAssignablePeople } from "@/hooks/domains/users/use-assignable-people";
 import { useOptimisticTaskMutation } from "@/hooks/use-optimistic-task-mutation";
 import type { Task } from "@/app/office/tasks/[id]/types";
 import { useTranslation } from "react-i18next";
@@ -34,40 +33,7 @@ export function HumanAssigneePicker({ task }: HumanAssigneePickerProps) {
   const workspaceId = useAppStore((s) => s.workspaces.activeId);
   const currentUser = useAppStore((s) => s.auth.user);
   const mutate = useOptimisticTaskMutation();
-  const [people, setPeople] = useState<Array<{ id: string; name: string }>>([]);
-
-  // Two sources, because neither alone is the set of people who can be
-  // assigned. The member list misses everyone who reaches an org-visible
-  // workspace without a member row, which is the common case and would leave
-  // their name showing as a raw user id. The directory covers those, but a
-  // private workspace can hold a member the directory omits.
-  useEffect(() => {
-    let cancelled = false;
-    // The directory is not workspace-scoped, so it is fetched even when no
-    // active workspace is set: the office task route does not always populate
-    // one, and gating both calls on it left every name showing as a raw id.
-    Promise.allSettled([
-      listDirectoryUsers(),
-      workspaceId ? listWorkspaceMembers(workspaceId) : Promise.resolve({ members: [], total: 0 }),
-    ]).then(([directory, members]) => {
-      if (cancelled) return;
-      const byId = new Map<string, string>();
-      if (directory.status === "fulfilled") {
-        for (const u of (directory.value.users ?? []) as DirectoryUser[]) {
-          byId.set(u.id, u.display_name || u.id);
-        }
-      }
-      if (members.status === "fulfilled") {
-        for (const m of (members.value.members ?? []) as WorkspaceMember[]) {
-          if (!byId.has(m.user_id)) byId.set(m.user_id, m.display_name || m.user_id);
-        }
-      }
-      setPeople(Array.from(byId, ([id, name]) => ({ id, name })));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceId]);
+  const { people } = useAssignablePeople(workspaceId);
 
   const assignee = task.assigneeUserId ?? "";
 

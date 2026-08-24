@@ -391,6 +391,12 @@ func (s *Service) publishTaskEventNow(ctx context.Context, eventType string, tas
 		// omitted key here would make clearTaskAutoStartFailedMarker's publish
 		// as invisible as the set it is meant to undo.
 		"auto_start_failed": task.Metadata[models.MetaKeyAutoStartFailed] != nil,
+		// The human assignee, always sent, never omitted when empty, for the
+		// same reason as auto_start_failed above: the frontend pins the
+		// previous value when the key is absent, so omitting it would make
+		// unassigning invisible to every open client, and a takeover would
+		// leave the previous owner's name on their screens.
+		"assignee_user_id": task.AssigneeUserID,
 	}
 	data["queued_for_step_id"] = task.QueuedForStepID
 	if task.QueuedAt != nil {

@@ -99,6 +99,22 @@ caught and no unit test would have.
 
 ![task properties panel with the Assigned to row](../../screenshots/team-access-task-assignee.png)
 
+Both boards carry it. Kanban was not a second implementation: the office
+picker and the kanban control share `useAssignablePeople`, and the field
+travels the one existing kanban mapper (`toKanbanTask`) plus the SSR snapshot
+mapper. Each of those three hops has its own test, because a dropped hop shows
+every task as unassigned with no error anywhere.
+
+![kanban task top bar with the assignee control](../../screenshots/team-access-kanban-assignee-topbar.png)
+
+Driving the live instance found two defects the unit tests had not: the
+`task.updated` payload is hand-built and never carried `assignee_user_id`, so a
+takeover left the previous owner's name on every open client until a reload;
+and the frontend merge treats an absent key as "unchanged", so once the field
+did arrive it needed the same preserve guard `parent_id` has, or an unrelated
+lightweight update blanked it. Both now have regression tests on the exact
+symptom.
+
 Not done: the sidebar **filter dimension** for the human assignee. The filter
 UI is built around agent assignees (`use-tasks-tree.ts` filters on
 `assigneeIds`), and adding a second people-shaped dimension is a filter-model
