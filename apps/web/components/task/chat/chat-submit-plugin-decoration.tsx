@@ -47,7 +47,16 @@ export function ChatSubmitPluginDecoration(props: {
   isDisabled: boolean;
   planModeEnabled: boolean;
 }) {
-  const { sessionId, taskId, taskTitle } = props;
+  const {
+    sessionId,
+    taskId,
+    taskTitle,
+    presentation,
+    isSending,
+    isAgentBusy,
+    isDisabled,
+    planModeEnabled,
+  } = props;
   // Gate the positioned layer on there being something to draw: an empty
   // absolute span over the send button is dead weight in every composer, and
   // the surrounding markup must stay identical to today when no plugin
@@ -75,13 +84,26 @@ export function ChatSubmitPluginDecoration(props: {
       taskTitle,
       activeSessionId: sessionId,
       sessionIds,
-      presentation: props.presentation,
-      isSending: props.isSending,
-      isAgentBusy: props.isAgentBusy,
-      disabled: props.isDisabled,
-      planModeEnabled: props.planModeEnabled,
+      presentation,
+      isSending,
+      isAgentBusy,
+      disabled: isDisabled,
+      planModeEnabled,
     };
-  }, [taskSessions, sessionId, taskId, taskTitle, props]);
+    // Every dependency is a primitive pulled out of props: listing `props`
+    // itself would defeat the memo, since the parent hands us a fresh object
+    // on every toolbar render.
+  }, [
+    taskSessions,
+    sessionId,
+    taskId,
+    taskTitle,
+    presentation,
+    isSending,
+    isAgentBusy,
+    isDisabled,
+    planModeEnabled,
+  ]);
 
   if (!hasDecoration) return null;
 
