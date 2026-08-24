@@ -143,6 +143,28 @@ function renderToolbar(onCancel: () => void | Promise<void>) {
   );
 }
 
+function renderMinimalToolbar(overrides: Partial<ChatInputToolbarProps> = {}) {
+  return render(
+    <StateProvider>
+      <ChatInputToolbar
+        planModeEnabled={false}
+        onPlanModeChange={() => {}}
+        sessionId="s1"
+        taskId="t1"
+        taskDescription=""
+        isAgentBusy
+        hasContent
+        isDisabled={false}
+        isSending={false}
+        onCancel={() => {}}
+        onSubmit={() => {}}
+        minimalToolbar
+        {...overrides}
+      />
+    </StateProvider>,
+  );
+}
+
 function renderFullToolbar(overrides: Partial<ChatInputToolbarProps> = {}) {
   return render(
     <StateProvider>
@@ -482,6 +504,22 @@ describe("ChatInputToolbar chat-submit-decoration slot", () => {
     expect(probe.getAttribute("data-plan")).toBe("true");
   });
 
+  // A coarse-pointer tablet renders the compact toolbar, so the minimal
+  // composer must not disagree with it about which presentation is in play.
+  it.each(["mobile", "tablet"] as const)(
+    "reports the compact presentation on %s for the minimal toolbar too",
+    (breakpoint) => {
+      responsiveMock.breakpoint = breakpoint;
+      registerProbe();
+
+      renderMinimalToolbar();
+
+      expect(screen.getByTestId(DECORATION_PROBE_TEST_ID).getAttribute("data-presentation")).toBe(
+        "mobile",
+      );
+    },
+  );
+
   it("reaches the slot through the mobile toolbar", () => {
     responsiveMock.breakpoint = "mobile";
     registerProbe();
@@ -496,24 +534,7 @@ describe("ChatInputToolbar chat-submit-decoration slot", () => {
   it("reaches the slot through the minimal toolbar, which renders only the submit button", () => {
     registerProbe();
 
-    render(
-      <StateProvider>
-        <ChatInputToolbar
-          planModeEnabled={false}
-          onPlanModeChange={() => {}}
-          sessionId="s1"
-          taskId="t1"
-          taskDescription=""
-          isAgentBusy
-          hasContent
-          isDisabled={false}
-          isSending={false}
-          onCancel={() => {}}
-          onSubmit={() => {}}
-          minimalToolbar
-        />
-      </StateProvider>,
-    );
+    renderMinimalToolbar();
 
     const probe = screen.getByTestId(DECORATION_PROBE_TEST_ID);
     expect(probe.getAttribute("data-task")).toBe("t1");

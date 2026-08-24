@@ -449,6 +449,7 @@ to strings, but an unmounted name renders nowhere.
 | chat-input-actions        | Task or Quick Chat composer toolbar                       | PluginComposerSlotProps                                          |
 | task-create-input-actions | Task creation composer toolbar                            | PluginComposerSlotProps                                          |
 | new-session-input-actions | New-session composer toolbar                              | PluginComposerSlotProps                                          |
+| chat-submit-decoration    | Layer over the composer's send button                     | ChatSubmitDecorationSlotProps                                    |
 | chat-top-bar              | Session top bar                                           | { taskId, taskTitle?, workspaceId, activeSessionId, sessionIds } |
 | main-top-bar              | Home/Kanban/Tasks top bar                                 | { workspaceId, workspaceLabel?, currentPage }                    |
 | app-status-bar-left       | Left side of desktop status bar or mobile status drawer   | AppStatusBarSlotProps                                            |
@@ -1040,7 +1041,8 @@ interface PluginRegistry {
     registration: IntegrationSettingsRegistration,
   ): void;
   // Named slot injection. Initial slots: "task-sidebar", "settings-nav",
-  // "main-nav-footer", "chat-input-actions", "chat-top-bar", "main-top-bar",
+  // "main-nav-footer", "chat-input-actions", "chat-submit-decoration",
+  // "chat-top-bar", "main-top-bar",
   // "app-status-bar-left", "app-status-bar-right", and "plugin-settings"
   // (see "Named slots" below).
   registerComponent(
@@ -1401,6 +1403,7 @@ plugins at once. Available slots:
 | `chat-input-actions`        | Task or Quick Chat composer toolbar                                                                    | `PluginComposerSlotProps`                                         |
 | `task-create-input-actions` | Task creation composer toolbar                                                                         | `PluginComposerSlotProps`                                         |
 | `new-session-input-actions` | New-session composer toolbar                                                                           | `PluginComposerSlotProps`                                         |
+| `chat-submit-decoration`    | Layer over the chat composer's send button, for adornments that belong on the send affordance itself   | `ChatSubmitDecorationSlotProps`                                   |
 | `chat-top-bar`              | Session top bar, beside the CPU/DB metrics and the document/editor/debug controls                      | `{ taskId, taskTitle, workspaceId, activeSessionId, sessionIds }` |
 | `main-top-bar`              | Default app top bar (Home / Kanban / Tasks), beside the CPU/DB metrics and the view/display controls   | `{ workspaceId, workspaceLabel, currentPage }`                    |
 | `app-status-bar-left`       | Default-left item in the global status surface                                                         | `AppStatusBarSlotProps`                                           |
@@ -1532,6 +1535,51 @@ metric chips.
 ```js
 // inside initialize(registry, host):
 registry.registerComponent("chat-top-bar", makeTopBarStatus(host));
+```
+
+### Decorating the send button
+
+`chat-input-actions` contributes a *sibling* icon button. When the adornment
+belongs on the send affordance itself -- a progress ring, a state dot -- register
+a `chat-submit-decoration` component instead. The host layers it over the send
+button's own box:
+
+```ts
+import type { ChatSubmitDecorationSlotProps } from "@kandev/plugin-sdk";
+```
+
+```ts
+type ChatSubmitDecorationSlotProps = {
+  taskId: string | null; // null for task-less quick chat
+  taskTitle?: string;
+  activeSessionId: string | null;
+  sessionIds: string[]; // every kandev session id on the task
+  presentation: "desktop" | "mobile";
+  isSending: boolean; // the composer is dispatching this message
+  isAgentBusy: boolean; // agent mid-turn; the next send queues
+  disabled: boolean; // the send button is disabled
+  planModeEnabled: boolean; // the button sends a plan request
+};
+```
+
+Two rules the host enforces for you:
+
+- **The layer is `pointer-events-none`**, so a decoration can never swallow a
+  click meant for send. A child that needs interaction (a popover trigger) opts
+  back in with `pointer-events-auto` on that child alone.
+- **The layer is positioned to the button's box**, so size against `inset-0`
+  rather than measuring the DOM. Stay inside that box: the desktop toolbar takes
+  `overflow-x-auto` when it collapses at narrow widths, which makes CSS compute
+  the vertical axis to `auto` as well, so anything drawn on a negative inset is
+  clipped there. Put a ring on the button's rim, not around it.
+
+The decoration renders only while the send button does. Mid-turn with an empty
+composer the button is replaced by Cancel, and the decoration goes with it.
+Use `isSending` to stand down while the host's own spinner owns the button.
+
+```js
+// inside initialize(registry, host):
+registry.registerComponent("chat-submit-decoration", makeCacheRing(host));
 ```
 
 ### Default app top bar

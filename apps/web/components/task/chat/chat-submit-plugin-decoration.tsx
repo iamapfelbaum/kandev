@@ -6,44 +6,16 @@ import { PluginSlot } from "@/components/plugins/plugin-slot";
 import { usePluginRegistry } from "@/lib/plugins/registry";
 import type { AppState } from "@/lib/state/store";
 import type { TaskSession } from "@/lib/types/http";
-import type { PluginPresentation } from "@/lib/plugins/types";
+import type { ChatSubmitDecorationSlotProps, PluginPresentation } from "@/lib/plugins/types";
 
 const SLOT = "chat-submit-decoration";
 
 /**
- * Props forwarded to every plugin component registered for the
- * `chat-submit-decoration` slot (`registry.registerComponent(
- * "chat-submit-decoration", Component)`).
- *
- * Unlike `chat-input-actions`, which contributes a sibling icon button, this
- * slot renders *over* the send button's own box — for adornments that belong
- * on the send affordance itself rather than beside it (a progress ring, a
- * state dot). The host positions the layer; the plugin draws inside or around
- * it.
- *
- * These are kandev session ids. Resolving them to an agent/ACP transcript id
- * is the plugin's job — do it server-side in the plugin backend through the
- * Host data API, not here. See PLUGIN-API.md.
+ * Re-exported for co-located consumers; the canonical declaration lives in
+ * `lib/plugins/types.ts` next to the other slot contracts, and is pinned to
+ * the `@kandev/plugin-sdk` export of the same name by `sdk-contract.test.ts`.
  */
-export type ChatSubmitDecorationSlotProps = {
-  /** Task the composer belongs to, or null for task-less quick chat. */
-  taskId: string | null;
-  /** Display title of the task, when known. */
-  taskTitle?: string;
-  /** Session the composer is currently bound to, or null before one exists. */
-  activeSessionId: string | null;
-  /** Every kandev session id on the task (includes `activeSessionId`). */
-  sessionIds: string[];
-  presentation: PluginPresentation;
-  /** True while the composer is dispatching the current message. */
-  isSending: boolean;
-  /** True when the agent is mid-turn, so the next send queues behind it. */
-  isAgentBusy: boolean;
-  /** True when the send button itself is disabled. */
-  disabled: boolean;
-  /** True when plan mode is on (the button sends a plan request). */
-  planModeEnabled: boolean;
-};
+export type { ChatSubmitDecorationSlotProps };
 
 const EMPTY_SESSIONS: TaskSession[] = [];
 
@@ -52,9 +24,14 @@ const EMPTY_SESSIONS: TaskSession[] = [];
  *
  * The host owns the geometry: the layer is absolutely positioned to the send
  * button's box (a 28px circle) so a decoration can size itself against
- * `inset-0` without measuring anything. Drawing *around* the button is a
- * negative inset (`-inset-1`) on the plugin's own element — the layer does not
- * clip.
+ * `inset-0` without measuring anything.
+ *
+ * Stay within that box. The layer itself does not clip, but the desktop
+ * toolbar takes `overflow-x-auto` when it collapses at narrow widths, and CSS
+ * computes the other axis to `auto` alongside it — so a decoration drawn on a
+ * negative inset is clipped vertically exactly there, where the toolbar has
+ * only `pb-0.5` of slack. A ring belongs on the button's rim (`inset-0`), not
+ * around it.
  *
  * The layer is `pointer-events-none` so a decoration can never swallow a click
  * meant for send. A decoration that genuinely needs interaction (a popover

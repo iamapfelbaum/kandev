@@ -147,7 +147,10 @@ export const ChatInputToolbar = memo(function ChatInputToolbar(rawProps: ChatInp
         submitKey={props.submitKey}
         taskId={props.taskId}
         taskTitle={props.taskTitle}
-        presentation={responsiveBreakpoint.isMobile ? "mobile" : "desktop"}
+        // Same discriminator the non-minimal path uses to pick the mobile
+        // toolbar, so a coarse-pointer tablet does not get the compact
+        // toolbar in one composer and a "desktop" decoration in the other.
+        presentation={usesCompactTaskChrome ? "mobile" : "desktop"}
       />
     );
   }

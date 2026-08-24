@@ -35,6 +35,33 @@ export interface MainTopBarSlotProps {
   presentation: "desktop" | "mobile";
 }
 
+/**
+ * Context passed to components registered for the `chat-submit-decoration`
+ * slot, which renders *over* the chat composer's send button rather than
+ * beside it. The host positions the layer against the button's box and makes
+ * it `pointer-events-none`; a child that needs interaction opts back in with
+ * `pointer-events-auto`.
+ */
+export interface ChatSubmitDecorationSlotProps {
+  /** Task the composer belongs to, or null for task-less quick chat. */
+  taskId: string | null;
+  /** Display title of the task, when known. */
+  taskTitle?: string;
+  /** Session the composer is currently bound to, or null before one exists. */
+  activeSessionId: string | null;
+  /** Every kandev session id on the task (includes `activeSessionId`). */
+  sessionIds: string[];
+  presentation: "desktop" | "mobile";
+  /** True while the composer is dispatching the current message. */
+  isSending: boolean;
+  /** True when the agent is mid-turn, so the next send queues behind it. */
+  isAgentBusy: boolean;
+  /** True when the send button itself is disabled. */
+  disabled: boolean;
+  /** True when plan mode is on (the button sends a plan request). */
+  planModeEnabled: boolean;
+}
+
 export type StateUpdater<Value> = Value | ((previous: Value) => Value);
 export type StateSetter<Value> = (value: StateUpdater<Value>) => void;
 
