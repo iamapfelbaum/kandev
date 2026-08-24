@@ -9,6 +9,7 @@ accounts and workspaces instead of failing on "email is already in use".
 from __future__ import annotations
 
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -148,7 +149,11 @@ Sign in (password for all: {PASSWORD}):
   dana@example.com   guest   sees ONLY the private workspace she was added to
 """
     print(summary)
-    with open("/tmp/kandev-team-access-demo/demo-info.txt", "w", encoding="utf-8") as handle:
+    # Honour KANDEV_DEMO_HOME: hardcoding the default made a second instance on
+    # another port write into (or fail against) the first one's directory.
+    home = os.environ.get("KANDEV_DEMO_HOME", "/tmp/kandev-team-access-demo")
+    os.makedirs(home, exist_ok=True)
+    with open(os.path.join(home, "demo-info.txt"), "w", encoding="utf-8") as handle:
         handle.write(summary)
 
 

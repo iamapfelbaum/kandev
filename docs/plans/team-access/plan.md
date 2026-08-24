@@ -147,7 +147,7 @@ roster retyped.
 - [ ] [03 — Reach predicate and scope resolution](task-03-reach-and-scope-resolution.md)
 - [ ] [04 — Management API, roles, and user directory](task-04-management-api.md)
 - [ ] [05 — WebSocket fan-out and revocation](task-05-ws-fanout-and-revocation.md)
-- [ ] [06 — Human assignee and takeover](task-06-human-assignee-takeover.md)
+- [x] [06 — Human assignee and takeover](task-06-human-assignee-takeover.md)
 - [ ] [07 — Actor attribution and audit](task-07-actor-attribution.md)
 - [ ] [08 — Frontend team-access surfaces](task-08-frontend-surfaces.md)
 - [ ] [09 — E2E, docs, and ADR](task-09-e2e-docs-adr.md)

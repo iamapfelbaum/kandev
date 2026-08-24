@@ -38,7 +38,8 @@ func newReactivityTestRepo(t *testing.T) *officesqlite.Repository {
 		CREATE TABLE IF NOT EXISTS tasks (
 			id TEXT PRIMARY KEY,
 			workspace_id TEXT DEFAULT '',
-			workflow_step_id TEXT DEFAULT ''
+			workflow_step_id TEXT DEFAULT '',
+			assignee_user_id TEXT NOT NULL DEFAULT ''
 		)
 	`); err != nil {
 		t.Fatalf("create tasks table: %v", err)

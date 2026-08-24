@@ -50,6 +50,7 @@ start_backend() {
     KANDEV_PORT="$PORT" \
     KANDEV_SERVER_HOST="$BIND_HOSTS" \
     KANDEV_FEATURES_AUTH=true \
+    KANDEV_FEATURES_OFFICE="${KANDEV_DEMO_OFFICE:-false}" \
     KANDEV_WEB_DIST_DIR="${REPO_ROOT}/apps/web/dist" \
     "${REPO_ROOT}/apps/backend/bin/kandev" __backend \
     >"${HOME_DIR}/backend.log" 2>&1 &

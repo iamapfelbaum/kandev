@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/kandev/kandev/internal/authz"
@@ -14,13 +15,14 @@ import (
 // Workspace membership errors. Each failure mode gets its own sentinel so the
 // UI can say what actually went wrong instead of "bad request".
 var (
-	ErrMemberUserNotFound      = errors.New("user not found")
-	ErrMemberUserDisabled      = errors.New("user account is disabled")
-	ErrMemberIsOwner           = errors.New("the workspace owner cannot be removed; transfer ownership first")
-	ErrMemberRoleInvalid       = errors.New("role must be collaborator or viewer")
-	ErrMemberSelf              = errors.New("you already own this workspace")
-	ErrTransferTargetNotMember = errors.New("add the user as a member before transferring ownership")
-	ErrVisibilityOwnerIsGuest  = errors.New("a guest-owned workspace cannot be shared with the organization")
+	ErrMemberUserNotFound           = errors.New("user not found")
+	ErrMemberUserDisabled           = errors.New("user account is disabled")
+	ErrMemberIsOwner                = errors.New("the workspace owner cannot be removed; transfer ownership first")
+	ErrMemberRoleInvalid            = errors.New("role must be collaborator or viewer")
+	ErrMemberSelf                   = errors.New("you already own this workspace")
+	ErrTransferTargetNotMember      = errors.New("add the user as a member before transferring ownership")
+	ErrVisibilityOwnerIsGuest       = errors.New("a guest-owned workspace cannot be shared with the organization")
+	ErrAssigneeCannotReachWorkspace = errors.New("that person cannot see this workspace")
 )
 
 // DirectoryUser is the reduced user record exposed to a member picker: an ID
@@ -437,4 +439,77 @@ func (s *Service) sameOrg(ctx context.Context, workspaceOrgID, userID string) bo
 // workspace fan-out.
 func (s *Service) SetUserOrgResolver(resolve func(ctx context.Context, userID string) (string, error)) {
 	s.userOrgs = resolve
+}
+
+// SetHumanAssignee applies a human assignee to a task on behalf of the caller
+// in ctx, so surfaces outside this package (today: the office PATCH handler)
+// get the same authorization and validation as the task API instead of
+// reimplementing either. Empty unassigns.
+//
+// It deliberately goes through UpdateTask rather than writing the column: the
+// office route carries no `:wsId`, so it is not covered by the office
+// workspace-scope middleware, and a direct write there would let any signed-in
+// user assign a task in a workspace they cannot reach.
+func (s *Service) SetHumanAssignee(ctx context.Context, taskID, userID string) error {
+	_, err := s.UpdateTask(ctx, taskID, &UpdateTaskRequest{AssigneeUserID: &userID})
+	return err
+}
+
+// resolveTaskAssignee validates a human assignee for a task.
+//
+// Assignment is advisory: it gates nothing, and any caller holding task.write
+// may assign to anyone, including themselves. The one rule is that the
+// assignee has to be able to reach the workspace, so a task cannot be parked
+// on somebody who will never see it. An empty value unassigns.
+func (s *Service) resolveTaskAssignee(ctx context.Context, task *models.Task, userID string) (string, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return "", nil
+	}
+	if err := s.requireAssignableUser(ctx, userID); err != nil {
+		return "", err
+	}
+	workspace, err := s.workspaces.GetWorkspace(ctx, task.WorkspaceID)
+	if err != nil || workspace == nil {
+		// A dangling workspace reference should not block assignment on a task
+		// the caller can already edit.
+		return userID, nil //nolint:nilerr // visibility fallback, not a failure
+	}
+	if !s.userReachesWorkspace(ctx, workspace, userID) {
+		return "", ErrAssigneeCannotReachWorkspace
+	}
+	return userID, nil
+}
+
+// userReachesWorkspace answers the reach question for a user who is NOT the
+// caller, so it resolves their membership and org role rather than reading the
+// request identity.
+func (s *Service) userReachesWorkspace(ctx context.Context, workspace *models.Workspace, userID string) bool {
+	if workspace.OwnerID == "" || workspace.OwnerID == userID {
+		return true
+	}
+	member, err := s.workspaces.GetWorkspaceMember(ctx, workspace.ID, userID)
+	if err != nil {
+		return false
+	}
+	ref := authz.WorkspaceRef{
+		OwnerID:    workspace.OwnerID,
+		OrgID:      workspace.OrgID,
+		Visibility: authz.NormalizeVisibility(workspace.Visibility),
+	}
+	if member != nil {
+		ref.MemberRole = authz.NormalizeWorkspaceRole(member.Role)
+	}
+	subject := authz.Subject{UserID: userID, TenancyEnforced: tenancyEnforced}
+	if s.userDirectory != nil {
+		if _, role, ok, lookupErr := s.userDirectory.LookupStatus(ctx, userID); lookupErr == nil && ok {
+			subject.OrgRole = authz.NormalizeOrgRole(role)
+		}
+	}
+	if s.userOrgs != nil {
+		if orgID, orgErr := s.userOrgs(ctx, userID); orgErr == nil {
+			subject.OrgID = orgID
+		}
+	}
+	return authz.ResolveWorkspace(subject, ref).CanRead()
 }

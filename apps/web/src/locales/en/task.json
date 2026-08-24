@@ -1844,5 +1844,10 @@
   "baseBranchNotSet": "Base branch not set",
   "launchRecoveryFailed": "Recovery could not start",
   "tryRecoveryAgain": "Try the recovery action again.",
-  "launchFailedSeeDetails": "The task launch failed. Open the task details for recovery actions."
+  "launchFailedSeeDetails": "The task launch failed. Open the task details for recovery actions.",
+  "assignedTo": "Assigned to",
+  "unassigned": "Unassigned",
+  "assignToMe": "Assign to me",
+  "searchPeople": "Search people",
+  "noPeopleFound": "No people found"
 }

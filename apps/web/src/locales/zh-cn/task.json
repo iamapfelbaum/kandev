@@ -1844,5 +1844,10 @@
   "baseBranchNotSet": "未设置基础分支",
   "launchRecoveryFailed": "无法开始恢复",
   "tryRecoveryAgain": "请再次尝试恢复操作。",
-  "launchFailedSeeDetails": "任务启动失败。打开任务详情以查看恢复操作。"
+  "launchFailedSeeDetails": "任务启动失败。打开任务详情以查看恢复操作。",
+  "assignedTo": "指派给",
+  "unassigned": "未指派",
+  "assignToMe": "指派给我",
+  "searchPeople": "搜索成员",
+  "noPeopleFound": "未找到成员"
 }

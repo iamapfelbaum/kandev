@@ -240,10 +240,12 @@ type TaskDTO struct {
 
 	// Office extensions
 	AssigneeAgentProfileID string `json:"assignee_agent_profile_id,omitempty"`
-	Origin                 string `json:"origin,omitempty"`
-	ProjectID              string `json:"project_id,omitempty"`
-	Labels                 string `json:"labels,omitempty"`
-	Identifier             string `json:"identifier,omitempty"`
+	// AssigneeUserID is the human assignee, independent of the agent one.
+	AssigneeUserID string `json:"assignee_user_id,omitempty"`
+	Origin         string `json:"origin,omitempty"`
+	ProjectID      string `json:"project_id,omitempty"`
+	Labels         string `json:"labels,omitempty"`
+	Identifier     string `json:"identifier,omitempty"`
 	// ExternalID is a caller-supplied identity used for task create-
 	// idempotency (docs/specs/tasks/requirements/external-id-idempotency.md). Omitted
 	// when the task holds none.
@@ -873,6 +875,7 @@ func FromTaskWithSessionInfo(
 		// projection from workflow_step_participants (ADR 0005 Wave F);
 		// the repo's task SELECTs hydrate it via a correlated subquery.
 		AssigneeAgentProfileID: task.AssigneeAgentProfileID,
+		AssigneeUserID:         task.AssigneeUserID,
 		Origin:                 task.Origin,
 		ProjectID:              task.ProjectID,
 		Labels:                 task.Labels,

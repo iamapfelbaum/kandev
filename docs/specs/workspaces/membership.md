@@ -118,6 +118,7 @@ POST   /api/v1/workspaces/{id}/transfer-ownership -> {user_id} (member.manage)
 
 PATCH  /api/v1/orgs/current/settings              -> accepts default_workspace_visibility
 PATCH  /api/v1/tasks/{id}                         -> accepts assignee_user_id (task.write)
+PATCH  /api/v1/office/tasks/{id}                  -> accepts assignee_user_id (office properties panel)
 GET    /api/v1/users/directory                    -> id + display name of active users
 ```
 
@@ -129,7 +130,13 @@ display name, never email, role, or status. Full user records stay behind
 
 - Workspace DTOs gain `visibility`, `member_count`, `viewer_role`, and
   `scopes` (see [roles and scopes](../auth/roles-and-scopes.md)).
-- Task DTOs gain `assignee_user_id`.
+- Task DTOs gain `assignee_user_id` (`assigneeUserId` on the office DTO).
+  The office endpoint delegates the whole write to the task service, which
+  owns both the caller authorization and the reach rule. That matters
+  specifically here: `PATCH /office/tasks/{id}` carries no `wsId`, so the
+  office workspace-scope middleware does not gate it, and writing the column
+  directly would let any signed-in user assign a task in a workspace they
+  cannot reach. With no writer wired the office route refuses the mutation.
 - Session message DTOs gain `author_user_id` and its resolved display name.
 - WS: workspace-scoped events reach everyone who can reach the workspace, which
   for an `org`-visible workspace is the whole org minus guests.

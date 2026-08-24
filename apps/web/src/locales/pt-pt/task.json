@@ -1844,5 +1844,10 @@
   "baseBranchNotSet": "Branch base não definido",
   "launchRecoveryFailed": "Não foi possível iniciar a recuperação",
   "tryRecoveryAgain": "Tente novamente a ação de recuperação.",
-  "launchFailedSeeDetails": "O início da tarefa falhou. Abra os detalhes da tarefa para ver as ações de recuperação."
+  "launchFailedSeeDetails": "O início da tarefa falhou. Abra os detalhes da tarefa para ver as ações de recuperação.",
+  "assignedTo": "Atribuído a",
+  "unassigned": "Sem atribuição",
+  "assignToMe": "Atribuir a mim",
+  "searchPeople": "Procurar pessoas",
+  "noPeopleFound": "Nenhuma pessoa encontrada"
 }

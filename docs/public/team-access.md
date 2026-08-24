@@ -61,6 +61,20 @@ They can open a colleague's task, read the agent conversation, test the preview,
 
 Every human action is recorded against the person who took it, which is what a shared login cannot give you: message attribution comes from the authenticated session, not from the browser, so nobody can post as somebody else.
 
+## Assigning a task to a person
+
+A task carries two independent assignees: the **agent** that runs it, and the **person** who owns it. Setting one never changes the other, and a task can have both.
+
+Open a task and use **Assigned to** in the properties panel to pick a colleague, or press **Assign to me** to take it.
+
+![The task properties panel showing an Assignee row set to No assignee above an Assigned to row with an Assign to me button and the human assignee Bruno Costa.](../screenshots/team-access-task-assignee.png)
+
+The list offers everyone in the user directory, because who can reach a workspace is not something the browser can work out on its own. The server is the authority: assigning someone who cannot see the workspace is refused with "that person cannot see this workspace", so a task is never parked on somebody who will never find it.
+
+Assignment is advisory. It records who owns the work and gates nothing: anybody with `task.write` can reassign anything, including to themselves, and doing so takes no lock and interrupts no running session. That is the whole of takeover, and it is why the button needs no confirmation.
+
+The row is hidden when authentication is disabled, because then every visitor is the same anonymous user and there is nobody to assign to.
+
 ## Roles
 
 Two role tiers combine. Your **org role** is on your account; your **workspace role** applies to one workspace.

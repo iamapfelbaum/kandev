@@ -26,6 +26,11 @@ func (r *Repository) ensureTeamAccessSchema() error {
 		"workspaces.org_idx",
 		`CREATE INDEX IF NOT EXISTS idx_workspaces_org ON workspaces(org_id)`,
 	)
+	// The human assignee (docs/specs/workspaces/membership.md). Note that
+	// internal/office's priority-to-TEXT migration recreates the tasks table
+	// from a hardcoded column list on every database this repository creates,
+	// so this column is ALSO listed there; adding it here alone leaves it
+	// dropped by the time any task is written.
 	r.migrate.Apply(
 		"tasks.assignee_user_id",
 		`ALTER TABLE tasks ADD COLUMN assignee_user_id TEXT NOT NULL DEFAULT ''`,
