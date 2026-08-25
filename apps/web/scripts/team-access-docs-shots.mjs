@@ -45,20 +45,31 @@ async function signIn(context, email) {
   return page;
 }
 
+// shot captures `focus` when given, and the whole page otherwise.
+//
+// It used to scroll the focused element into view and then screenshot the
+// page, which meant every "card" shot was really a full page: two shots of the
+// same route came out byte-identical, and the subject was a small part of a
+// tall image. Clipping to the element is the whole point of naming one.
 async function shot(page, name, focus) {
   await page.waitForTimeout(1200);
   if (focus) {
-    const t = page.locator(focus).first();
-    if (await t.count()) {
-      await t.scrollIntoViewIfNeeded();
+    const target = page.locator(focus).first();
+    if (await target.count()) {
+      await target.scrollIntoViewIfNeeded();
       await page.waitForTimeout(400);
+      await target.screenshot({ path: `${OUT}/${name}.png` });
+      console.log(`captured ${name}.png (clipped to ${focus})`);
+      return;
     }
+    throw new Error(`shot "${name}": focus selector ${focus} matched nothing`);
   }
   await page.screenshot({ path: `${OUT}/${name}.png` });
   console.log(`captured ${name}.png`);
 }
 
-const CARD_BOTTOM = '#add-member-user, [data-testid="workspace-member-row"]:last-of-type';
+// The card itself, not a bottom anchor: shots clip to what they name.
+const TEAM_ACCESS_CARD = '[data-testid="workspace-team-access-card"]';
 const browser = await chromium.launch();
 try {
   const desktop = { width: 1440, height: 1250 };
@@ -77,7 +88,7 @@ try {
   await platformRow.getByTestId("unit-members").click();
   await ana.getByTestId("unit-members-dialog").waitFor({ state: "visible", timeout: 20000 });
   await ana.waitForTimeout(600);
-  await shot(ana, "team-access-unit-members");
+  await shot(ana, "team-access-unit-members", '[data-testid="unit-members-dialog"]');
   await ana.keyboard.press("Escape");
 
   // Creating a unit, and the placement control that decides who reaches a
@@ -94,7 +105,7 @@ try {
   await shot(ana, "team-access-workspace-placement", '[data-testid="workspace-placement-card"]');
 
   await ana.goto(`${BASE}/settings/workspace/${team.id}`, { waitUntil: "networkidle" });
-  await shot(ana, "team-access-owner-card", CARD_BOTTOM);
+  await shot(ana, "team-access-owner-card", TEAM_ACCESS_CARD);
 
   await ana.goto(`${BASE}/settings/users`, { waitUntil: "networkidle" });
   await shot(ana, "team-access-user-roles");
@@ -143,7 +154,7 @@ try {
 
   const carla = await signIn(await browser.newContext({ viewport: desktop }), "carla@example.com");
   await carla.goto(`${BASE}/settings/workspace/${team.id}`, { waitUntil: "networkidle" });
-  await shot(carla, "team-access-viewer-card", CARD_BOTTOM);
+  await shot(carla, "team-access-viewer-card", TEAM_ACCESS_CARD);
 
   const mobile = await signIn(
     await browser.newContext({
@@ -155,7 +166,7 @@ try {
     "ana@example.com",
   );
   await mobile.goto(`${BASE}/settings/workspace/${team.id}`, { waitUntil: "networkidle" });
-  await shot(mobile, "team-access-mobile", CARD_BOTTOM);
+  await shot(mobile, "team-access-mobile", TEAM_ACCESS_CARD);
 
   console.log(`\nwritten to ${OUT}`);
 } finally {

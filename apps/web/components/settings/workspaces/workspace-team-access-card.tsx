@@ -190,7 +190,7 @@ export function WorkspaceTeamAccessCard(props: WorkspaceTeamAccessCardProps) {
   const access = useWorkspaceTeamAccess(props);
 
   return (
-    <SettingsCard>
+    <SettingsCard data-testid="workspace-team-access-card">
       <CardHeader>
         <CardTitle>{t("workspaces:teamAccess.title")}</CardTitle>
         <CardDescription>{t("workspaces:teamAccess.description")}</CardDescription>
