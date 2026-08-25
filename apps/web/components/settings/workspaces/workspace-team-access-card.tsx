@@ -15,13 +15,11 @@ import {
   type AssignableWorkspaceRole,
   type DirectoryUser,
   type WorkspaceMember,
-  type WorkspaceVisibility,
 } from "@/lib/types/team-access";
 
 type WorkspaceTeamAccessCardProps = {
   workspaceId: string;
   ownerId: string;
-  visibility: WorkspaceVisibility;
   /** Scopes the *requesting* user holds here, from the workspace payload. */
   scopes: readonly string[] | undefined;
 };
@@ -44,39 +42,6 @@ function RoleOptions() {
         </SelectItem>
       ))}
     </>
-  );
-}
-
-type VisibilitySectionProps = {
-  value: WorkspaceVisibility;
-  disabled: boolean;
-  onChange: (next: WorkspaceVisibility) => void;
-};
-
-function VisibilitySection({ value, disabled, onChange }: VisibilitySectionProps) {
-  const { t } = useTranslation();
-  return (
-    <div className="space-y-2">
-      <Label htmlFor="workspace-visibility">{t("workspaces:teamAccess.visibilityLabel")}</Label>
-      <Select
-        value={value}
-        onValueChange={(next) => onChange(next as WorkspaceVisibility)}
-        disabled={disabled}
-      >
-        <SelectTrigger id="workspace-visibility" className="max-w-sm cursor-pointer">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="private">{t("workspaces:teamAccess.visibilityPrivate")}</SelectItem>
-          <SelectItem value="org">{t("workspaces:teamAccess.visibilityOrg")}</SelectItem>
-        </SelectContent>
-      </Select>
-      <p className="text-muted-foreground text-sm">
-        {value === "org"
-          ? t("workspaces:teamAccess.visibilityOrgHint")
-          : t("workspaces:teamAccess.visibilityPrivateHint")}
-      </p>
-    </div>
   );
 }
 
@@ -213,9 +178,10 @@ function AddMemberRow({ users, busy, onAdd }: AddMemberRowProps) {
 }
 
 /**
- * Workspace visibility and membership.
+ * Workspace membership.
  *
- * Visibility is the primary mechanism: a team sets it once and never invites
+ * Membership here is the exception path. Reach normally follows the
+ * organization unit the workspace sits in, so a team sets that once and never
  * anyone. Membership below is the exception path, for private workspaces,
  * guests, and narrowing a colleague to a viewer.
  */
@@ -230,12 +196,6 @@ export function WorkspaceTeamAccessCard(props: WorkspaceTeamAccessCardProps) {
         <CardDescription>{t("workspaces:teamAccess.description")}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        <VisibilitySection
-          value={access.currentVisibility}
-          disabled={!access.canManageWorkspace || access.busy}
-          onChange={access.changeVisibility}
-        />
-
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <IconUsers className="text-muted-foreground size-4" aria-hidden />

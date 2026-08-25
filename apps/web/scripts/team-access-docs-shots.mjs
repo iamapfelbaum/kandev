@@ -12,6 +12,11 @@ mkdirSync(OUT, { recursive: true });
 
 async function signIn(context, email) {
   const page = await context.newPage();
+  // The hermetic demo has no agent CLIs installed, so the board route would
+  // otherwise open the onboarding dialog over every shot.
+  await page.addInitScript(() =>
+    window.localStorage.setItem("kandev.onboarding.completed", "true"),
+  );
   await page.goto(`${BASE}/login`, { waitUntil: "domcontentloaded" });
   await page.getByLabel(/email/i).fill(email);
   await page.getByLabel(/password/i).fill(PASSWORD);
@@ -62,8 +67,18 @@ try {
   const { workspaces } = await (await ana.request.get(`${BASE}/api/v1/workspaces`)).json();
   const team = workspaces.find((w) => w.name === "Platform Team");
 
-  await ana.goto(`${BASE}/settings/workspaces`, { waitUntil: "networkidle" });
-  await shot(ana, "team-access-default-visibility", "#default-workspace-visibility");
+  // The tree replaced per-workspace visibility, so the first two shots are the
+  // structure and who is in it.
+  await ana.goto(`${BASE}/settings/units`, { waitUntil: "networkidle" });
+  await ana.getByTestId("unit-row").first().waitFor({ state: "visible", timeout: 20000 });
+  await shot(ana, "team-access-units-tree");
+
+  const platformRow = ana.getByTestId("unit-row").filter({ hasText: "Platform" }).first();
+  await platformRow.getByTestId("unit-members").click();
+  await ana.getByTestId("unit-members-dialog").waitFor({ state: "visible", timeout: 20000 });
+  await ana.waitForTimeout(600);
+  await shot(ana, "team-access-unit-members");
+  await ana.keyboard.press("Escape");
 
   await ana.goto(`${BASE}/settings/workspace/${team.id}`, { waitUntil: "networkidle" });
   await shot(ana, "team-access-owner-card", CARD_BOTTOM);
@@ -72,6 +87,9 @@ try {
   await shot(ana, "team-access-user-roles");
 
   const bruno = await signIn(await browser.newContext({ viewport: desktop }), "bruno@example.com");
+  await bruno
+    .context()
+    .addCookies([{ name: "kandev-active-workspace", value: team.id, url: BASE }]);
   await bruno.goto(`${BASE}/`, { waitUntil: "networkidle" });
   await shot(bruno, "team-access-shared-board");
 
@@ -95,6 +113,11 @@ try {
     });
     console.log("captured team-access-kanban-assignee-topbar.png");
 
+    // The board shot needs the shared workspace selected; the root route
+    // otherwise opens whichever workspace the cookie last named.
+    await ana
+      .context()
+      .addCookies([{ name: "kandev-active-workspace", value: team.id, url: BASE }]);
     await ana.goto(`${BASE}/`, { waitUntil: "networkidle" });
     const badge = ana.getByTestId("kanban-card-assignee").first();
     await badge.waitFor({ state: "visible", timeout: 25000 });

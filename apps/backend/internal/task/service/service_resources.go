@@ -104,7 +104,6 @@ func (s *Service) CreateWorkspace(ctx context.Context, req *CreateWorkspaceReque
 		DefaultEnvironmentID:        normalizeOptionalID(req.DefaultEnvironmentID),
 		DefaultAgentProfileID:       normalizeOptionalID(req.DefaultAgentProfileID),
 		DefaultConfigAgentProfileID: normalizeOptionalID(req.DefaultConfigAgentProfileID),
-		Visibility:                  string(s.defaultWorkspaceVisibility(ctx)),
 		// The tenant comes from the creating identity and from nowhere else.
 		// There is no org field on the request on purpose: a caller must not
 		// be able to place a workspace in another tenant.
@@ -193,9 +192,6 @@ func (s *Service) UpdateWorkspace(ctx context.Context, id string, req *UpdateWor
 	}
 	if req.DefaultConfigAgentProfileID != nil {
 		workspace.DefaultConfigAgentProfileID = normalizeOptionalID(req.DefaultConfigAgentProfileID)
-	}
-	if req.Visibility != nil {
-		workspace.Visibility = string(authz.NormalizeVisibility(*req.Visibility))
 	}
 	workspace.UpdatedAt = time.Now().UTC()
 

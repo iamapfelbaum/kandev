@@ -1,7 +1,7 @@
 ---
 id: "06-e2e-and-docs"
 title: "End-to-end coverage and public documentation"
-status: todo
+status: done
 wave: 5
 depends_on: ["05-remove-visibility"]
 plan: "plan.md"
@@ -67,4 +67,15 @@ cd .. && python3 scripts/lint-spec-files.py --all
 
 ## Results
 
-Pending.
+Done. `e2e/tests/auth/org-units.spec.ts` runs in the `auth` project and covers
+the outcome the tree exists for: a member of a department reaches a board in a
+team beneath it with no invitation, moving that board into a personal unit
+withdraws the reach, a member cannot rearrange the organization but can read
+it, and the tree renders in settings.
+
+`docs/public/team-access.md` is rewritten around units, with screenshots
+captured from a seeded instance through `scripts/team-access-docs-shots.mjs`.
+The demo seed builds a Platform department with a Runtime team rather than
+flipping a visibility switch.
+
+GREEN: `pnpm e2e:raw --project=auth -g "organization units"` reports 5 passed.

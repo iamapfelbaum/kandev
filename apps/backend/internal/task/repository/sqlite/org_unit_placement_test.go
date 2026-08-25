@@ -72,3 +72,35 @@ func TestCountWorkspacesInUnit(t *testing.T) {
 		}
 	}
 }
+
+// A move that returns the new unit but writes nothing looks like it worked and
+// changes who reaches the workspace not at all. The update statement is
+// hand-written, so a column added to the model is not automatically persisted.
+func TestUpdateWorkspacePersistsUnitPlacement(t *testing.T) {
+	ctx := context.Background()
+	repo, sqlxDB := newPlacementRepo(t)
+
+	if _, err := sqlxDB.Exec(
+		`INSERT INTO workspaces (id, name, owner_id, unit_id, created_at, updated_at)
+		 VALUES ('ws-move', 'Board', 'ada', 'unit-personal', datetime('now'), datetime('now'))`,
+	); err != nil {
+		t.Fatalf("seed workspace: %v", err)
+	}
+
+	workspace, err := repo.GetWorkspace(ctx, "ws-move")
+	if err != nil {
+		t.Fatalf("get workspace: %v", err)
+	}
+	workspace.UnitID = "unit-team"
+	if err := repo.UpdateWorkspace(ctx, workspace); err != nil {
+		t.Fatalf("update workspace: %v", err)
+	}
+
+	reloaded, err := repo.GetWorkspace(ctx, "ws-move")
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.UnitID != "unit-team" {
+		t.Fatalf("unit after move = %q, want unit-team: the move did not persist", reloaded.UnitID)
+	}
+}

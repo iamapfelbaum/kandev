@@ -7,7 +7,6 @@ import {
   listDirectoryUsers,
   listWorkspaceMembers,
   removeWorkspaceMember,
-  setWorkspaceVisibility,
   transferWorkspaceOwnership,
   upsertWorkspaceMember,
 } from "@/lib/api/domains/team-access-api";
@@ -17,18 +16,16 @@ import {
   type AssignableWorkspaceRole,
   type DirectoryUser,
   type WorkspaceMember,
-  type WorkspaceVisibility,
 } from "@/lib/types/team-access";
 
 type UseWorkspaceTeamAccessArgs = {
   workspaceId: string;
   ownerId: string;
-  visibility: WorkspaceVisibility;
   scopes: readonly string[] | undefined;
 };
 
 /**
- * Membership and visibility state for one workspace.
+ * Membership state for one workspace.
  *
  * Capability flags come from the server-issued scopes rather than from
  * comparing the current user to the owner: the backend is authoritative, and a
@@ -38,18 +35,13 @@ type UseWorkspaceTeamAccessArgs = {
 export function useWorkspaceTeamAccess({
   workspaceId,
   ownerId,
-  visibility,
   scopes,
 }: UseWorkspaceTeamAccessArgs) {
   const { t } = useTranslation();
   const { toast } = useToast();
-
-  const [currentVisibility, setCurrentVisibility] = useState<WorkspaceVisibility>(visibility);
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [directory, setDirectory] = useState<DirectoryUser[]>([]);
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => setCurrentVisibility(visibility), [visibility]);
 
   const refresh = useCallback(async () => {
     try {
@@ -93,8 +85,6 @@ export function useWorkspaceTeamAccess({
     run,
     members,
     directory,
-    currentVisibility,
-    setCurrentVisibility,
   });
 
   const memberIds = useMemo(() => new Set(members.map((member) => member.user_id)), [members]);
@@ -107,7 +97,6 @@ export function useWorkspaceTeamAccess({
     busy,
     members,
     addableUsers,
-    currentVisibility,
     canManageWorkspace: hasScope(scopes, SCOPE.workspaceManage),
     canManageMembers: hasScope(scopes, SCOPE.memberManage),
     ...actions,
@@ -119,19 +108,10 @@ type TeamAccessActionsArgs = {
   run: (action: () => Promise<unknown>, successMessage: string) => Promise<void>;
   members: WorkspaceMember[];
   directory: DirectoryUser[];
-  currentVisibility: WorkspaceVisibility;
-  setCurrentVisibility: (next: WorkspaceVisibility) => void;
 };
 
 /** The mutation half of team access, split out to keep each hook readable. */
-function useTeamAccessActions({
-  workspaceId,
-  run,
-  members,
-  directory,
-  currentVisibility,
-  setCurrentVisibility,
-}: TeamAccessActionsArgs) {
+function useTeamAccessActions({ workspaceId, run, members, directory }: TeamAccessActionsArgs) {
   const { t } = useTranslation();
 
   const nameFor = useCallback(
@@ -140,24 +120,6 @@ function useTeamAccessActions({
       directory.find((user) => user.id === userId)?.display_name ??
       userId,
     [members, directory],
-  );
-
-  const changeVisibility = useCallback(
-    (next: WorkspaceVisibility) => {
-      const previous = currentVisibility;
-      setCurrentVisibility(next);
-      void run(
-        () =>
-          setWorkspaceVisibility(workspaceId, next).catch((error) => {
-            setCurrentVisibility(previous);
-            throw error;
-          }),
-        next === "org"
-          ? t("workspaces:teamAccess.nowOrgVisible")
-          : t("workspaces:teamAccess.nowPrivate"),
-      );
-    },
-    [currentVisibility, run, setCurrentVisibility, t, workspaceId],
   );
 
   const changeRole = useCallback(
@@ -196,5 +158,5 @@ function useTeamAccessActions({
     [nameFor, run, t, workspaceId],
   );
 
-  return { changeVisibility, changeRole, addMember, removeMember, makeOwner };
+  return { changeRole, addMember, removeMember, makeOwner };
 }

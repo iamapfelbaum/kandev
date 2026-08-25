@@ -6,8 +6,8 @@ export type WorkspaceState = {
     name: string;
     description?: string | null;
     owner_id: string;
-    /** "private" or "org"; decides who beyond owner and members can reach it. */
-    visibility?: string;
+    /** The unit this workspace sits in; reach follows the tree. */
+    unit_id?: string;
     /** The requesting user's role here. */
     viewer_role?: string;
     /** Scopes the requesting user holds here; gates every owner-only control. */

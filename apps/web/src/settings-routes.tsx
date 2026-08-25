@@ -45,6 +45,7 @@ import { DataStorageSettings } from "@/components/settings/system/data-storage-s
 import { DiskUsageCard } from "@/components/settings/system/disk-usage-card";
 import { FeatureTogglesRoute } from "@/components/settings/system/feature-toggles-route";
 import { OrganizationsPage } from "@/components/settings/system/organizations/organizations-page";
+import { UnitsPage } from "@/components/settings/units/units-page";
 import { HealthIssuesCard } from "@/components/settings/system/health-issues-card";
 import { SystemPageShell } from "@/components/settings/system/system-page-shell";
 import { SystemRouteShell } from "@/components/settings/system/system-route-shell";
@@ -206,6 +207,11 @@ const SETTINGS_ROUTES: Record<string, RouteRenderer> = {
   ),
   "/settings/system/backups": () => <SettingsRedirect to={SYSTEM_DATA_STORAGE_SETTINGS_HREF} />,
   "/settings/system/database": () => <SettingsRedirect to={SYSTEM_DATA_STORAGE_SETTINGS_HREF} />,
+  "/settings/units": () => (
+    <SystemRouteShell titleKey="settings:unitsTitle" descriptionKey="settings:unitsDescription">
+      <UnitsPage />
+    </SystemRouteShell>
+  ),
   "/settings/system/organizations": () => (
     <SystemRouteShell titleKey="orgs:navOrganizations" descriptionKey="orgs:description">
       <OrganizationsPage />

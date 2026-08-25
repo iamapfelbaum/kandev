@@ -242,7 +242,8 @@ export type Workspace = {
   description?: string | null;
   owner_id: string;
   /** "private" (owner + explicit members) or "org" (every non-guest user). */
-  visibility?: string;
+  /** The organization unit this workspace sits in; reach follows the tree. */
+  unit_id?: string;
   /** The requesting user's role here; drives owner-only controls. */
   viewer_role?: string;
   /** Scopes the requesting user holds here. The server is authoritative. */

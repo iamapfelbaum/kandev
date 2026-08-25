@@ -21,7 +21,6 @@ var (
 	ErrMemberRoleInvalid            = errors.New("role must be collaborator or viewer")
 	ErrMemberSelf                   = errors.New("you already own this workspace")
 	ErrTransferTargetNotMember      = errors.New("add the user as a member before transferring ownership")
-	ErrVisibilityOwnerIsGuest       = errors.New("a guest-owned workspace cannot be shared with the organization")
 	ErrAssigneeCannotReachWorkspace = errors.New("that person cannot see this workspace")
 )
 
@@ -137,42 +136,6 @@ func (s *Service) TransferWorkspaceOwnership(ctx context.Context, workspaceID, t
 	return nil
 }
 
-// SetWorkspaceVisibility switches a workspace between private and org-visible.
-func (s *Service) SetWorkspaceVisibility(ctx context.Context, workspaceID, visibility string) (*models.Workspace, error) {
-	workspace, err := s.workspaces.GetWorkspace(ctx, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.requireWorkspaceManage(ctx, workspace); err != nil {
-		return nil, err
-	}
-	want := authz.NormalizeVisibility(visibility)
-	// A guest reaches only workspaces they hold a row on, so a guest-owned
-	// workspace marked org-visible would be published to an organization its
-	// own owner cannot see. Refuse rather than create that asymmetry.
-	if want == authz.VisibilityOrg && workspace.OwnerID != "" {
-		_, role, ok, lookupErr := s.lookupUser(ctx, workspace.OwnerID)
-		// Fail closed: publishing a workspace to the organization on the
-		// strength of an account lookup that did not succeed is exactly the
-		// wrong direction to guess in.
-		if lookupErr != nil {
-			return nil, lookupErr
-		}
-		if !ok || authz.NormalizeOrgRole(role) == authz.OrgRoleGuest {
-			return nil, ErrVisibilityOwnerIsGuest
-		}
-	}
-	workspace.Visibility = string(want)
-	workspace.UpdatedAt = time.Now().UTC()
-	if err := s.workspaces.UpdateWorkspace(ctx, workspace); err != nil {
-		return nil, err
-	}
-	s.publishWorkspaceAccessChanged(ctx, workspace)
-	s.logger.Info("workspace visibility changed",
-		zap.String("workspace_id", workspaceID), zap.String("visibility", string(want)))
-	return workspace, nil
-}
-
 // ListDirectoryUsers returns the reduced user list for a member picker.
 func (s *Service) ListDirectoryUsers(ctx context.Context) ([]DirectoryUser, error) {
 	if s.userDirectory == nil {
@@ -222,26 +185,6 @@ func (s *Service) lookupUser(ctx context.Context, userID string) (string, string
 		return "active", string(authz.OrgRoleMember), true, nil
 	}
 	return s.userDirectory.LookupStatus(ctx, userID)
-}
-
-// OrgSettings supplies instance-wide defaults that membership depends on.
-type OrgSettings interface {
-	DefaultWorkspaceVisibility(ctx context.Context) authz.Visibility
-	SetDefaultWorkspaceVisibility(ctx context.Context, visibility authz.Visibility) error
-}
-
-// SetOrgSettings wires the org-level defaults provider.
-func (s *Service) SetOrgSettings(settings OrgSettings) { s.orgSettings = settings }
-
-// defaultWorkspaceVisibility resolves the visibility a new workspace starts
-// with. A team install sets this to org once and never invites anyone; an
-// install that is several individuals sharing a box leaves it private and
-// behaves exactly as it does today. Unwired means private.
-func (s *Service) defaultWorkspaceVisibility(ctx context.Context) authz.Visibility {
-	if s.orgSettings == nil {
-		return authz.VisibilityPrivate
-	}
-	return s.orgSettings.DefaultWorkspaceVisibility(ctx)
 }
 
 // seedWorkspaceOwnerMember mirrors workspaces.owner_id into the membership
@@ -338,29 +281,6 @@ func (s *Service) ProjectWorkspaceAccess(ctx context.Context, workspaces []*mode
 	return projection
 }
 
-// DefaultWorkspaceVisibility reports the visibility new workspaces start with.
-func (s *Service) DefaultWorkspaceVisibility(ctx context.Context) authz.Visibility {
-	return s.defaultWorkspaceVisibility(ctx)
-}
-
-// SetDefaultWorkspaceVisibility changes the install-wide default for new
-// workspaces. It never touches existing workspaces: turning the default on
-// must not retroactively publish work that was private a moment ago.
-func (s *Service) SetDefaultWorkspaceVisibility(ctx context.Context, visibility string) (authz.Visibility, error) {
-	if !authz.SubjectOrgScopes(callerSubject(ctx)).Has(authz.ScopeOrgSettingsManage) {
-		return "", ErrForbidden
-	}
-	if s.orgSettings == nil {
-		return authz.VisibilityPrivate, nil
-	}
-	want := authz.NormalizeVisibility(visibility)
-	if err := s.orgSettings.SetDefaultWorkspaceVisibility(ctx, want); err != nil {
-		return "", err
-	}
-	s.logger.Info("default workspace visibility changed", zap.String("visibility", string(want)))
-	return want, nil
-}
-
 // WorkspaceReaderIDs returns every user that may currently read a workspace:
 // its owner, everyone holding a membership row, and, when the workspace is
 // visible to the organization, that organization's non-guest users.
@@ -388,9 +308,16 @@ func (s *Service) WorkspaceReaderIDs(ctx context.Context, workspaceID string) ([
 			seen[member.UserID] = struct{}{}
 		}
 	}
-	if authz.NormalizeVisibility(workspace.Visibility) == authz.VisibilityOrg {
-		if err := s.addOrgReaders(ctx, workspace.OrgID, seen); err != nil {
+	// Everyone the placement reaches, which is every member of the workspace's
+	// unit and of its ancestors. A workspace shared with the whole
+	// organization is one placed in a unit the whole organization is in.
+	if s.unitReach != nil && workspace.UnitID != "" {
+		readers, err := s.unitReach.UnitReaders(ctx, workspace.UnitID)
+		if err != nil {
 			return nil, err
+		}
+		for _, id := range readers {
+			seen[id] = struct{}{}
 		}
 	}
 
@@ -401,49 +328,9 @@ func (s *Service) WorkspaceReaderIDs(ctx context.Context, workspaceID string) ([
 	return out, nil
 }
 
-// addOrgReaders adds the organization's non-guest, active users to the set.
-// Guests reach only workspaces they hold an explicit row on, which the caller
-// has already collected.
-func (s *Service) addOrgReaders(ctx context.Context, orgID string, seen map[string]struct{}) error {
-	if s.userDirectory == nil {
-		return nil
-	}
-	users, err := s.userDirectory.ListDirectory(ctx)
-	if err != nil {
-		return err
-	}
-	for _, user := range users {
-		if s.orgReaderEligible(ctx, orgID, user.ID) {
-			seen[user.ID] = struct{}{}
-		}
-	}
-	return nil
-}
-
-func (s *Service) orgReaderEligible(ctx context.Context, orgID, userID string) bool {
-	status, role, ok, err := s.userDirectory.LookupStatus(ctx, userID)
-	if err != nil || !ok || status == "disabled" {
-		return false
-	}
-	if authz.NormalizeOrgRole(role) == authz.OrgRoleGuest {
-		return false
-	}
-	return s.sameOrg(ctx, orgID, userID)
-}
-
 // errUnscopedWorkspace tells the gateway to fall back to its previous routing
 // for a workspace that predates ownership.
 var errUnscopedWorkspace = errors.New("workspace has no owner")
-
-// sameOrg reports whether a user belongs to the workspace's organization.
-// With organizations off both sides are empty and every user matches.
-func (s *Service) sameOrg(ctx context.Context, workspaceOrgID, userID string) bool {
-	if workspaceOrgID == "" || s.userOrgs == nil {
-		return true
-	}
-	orgID, err := s.userOrgs(ctx, userID)
-	return err == nil && orgID == workspaceOrgID
-}
 
 // SetUserOrgResolver wires the account-to-organization lookup used by
 // workspace fan-out.
@@ -508,6 +395,15 @@ func (s *Service) userReachesWorkspace(ctx context.Context, workspace *models.Wo
 	}
 	if member != nil {
 		ref.MemberRole = authz.NormalizeWorkspaceRole(member.Role)
+	}
+	// Reach comes from the tree first: most people reach a workspace because
+	// they are in a unit above it, not because they hold a row on it. Asking
+	// only about the row is how this check came to refuse a colleague who can
+	// plainly see the board.
+	if inherited, ok := s.inheritedRole(ctx, userID, workspace); ok {
+		ref.InheritedRole = inherited
+	} else {
+		return false
 	}
 	subject := authz.Subject{UserID: userID, TenancyEnforced: tenancyEnforced}
 	if s.userDirectory != nil {

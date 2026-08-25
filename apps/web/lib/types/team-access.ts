@@ -6,9 +6,6 @@
  * registry emits, so they must never be translated or reformatted.
  */
 
-/** Who, beyond the owner and explicit members, can reach a workspace. */
-export type WorkspaceVisibility = "private" | "org";
-
 /** The caller's role in one workspace. Empty means unreachable. */
 export type WorkspaceRole = "owner" | "collaborator" | "viewer" | "";
 

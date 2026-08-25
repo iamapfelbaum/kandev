@@ -781,7 +781,6 @@ func (s *Service) publishWorkspaceEvent(ctx context.Context, eventType string, w
 		"name":                            workspace.Name,
 		"description":                     workspace.Description,
 		"owner_id":                        workspace.OwnerID,
-		"visibility":                      workspace.Visibility,
 		"default_executor_id":             workspace.DefaultExecutorID,
 		"default_environment_id":          workspace.DefaultEnvironmentID,
 		"default_agent_profile_id":        workspace.DefaultAgentProfileID,

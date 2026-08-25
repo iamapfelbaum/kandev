@@ -1009,10 +1009,6 @@ type Workspace struct {
 	// OrgID is the owning tenant. Empty means organizations are off or the
 	// tenancy migration has not run.
 	OrgID string `json:"org_id,omitempty"`
-	// Visibility is "private" (owner plus explicit members) or "org" (every
-	// non-guest user). Values are authz.Visibility; the field is a plain
-	// string so models stays free of an authz import.
-	Visibility string `json:"visibility"`
 	// UnitID places the workspace in the organization unit tree. Reach is
 	// resolved from this placement, so a workspace without one is reachable by
 	// nobody.

@@ -362,3 +362,32 @@ func (s *Store) PathsByID(ctx context.Context, unitIDs []string) (map[string]str
 	}
 	return out, rows.Err()
 }
+
+// AncestorMemberIDs returns every user holding a membership on a unit or any
+// of its ancestors. It answers "who reaches a workspace here", which is what
+// decides who a workspace-scoped event fans out to.
+func (s *Store) AncestorMemberIDs(ctx context.Context, path string) ([]string, error) {
+	ids := AncestorIDs(path)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	query, args, err := sqlx.In(
+		`SELECT DISTINCT user_id FROM unit_members WHERE unit_id IN (?)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.ro.QueryxContext(ctx, s.ro.Rebind(query), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}

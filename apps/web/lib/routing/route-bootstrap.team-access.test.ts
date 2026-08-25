@@ -15,7 +15,7 @@ function apiWorkspace(overrides: Partial<Workspace> = {}): Workspace {
     id: "ws-1",
     name: "Platform Team",
     owner_id: "user-ana",
-    visibility: "org",
+    unit_id: "unit-1",
     viewer_role: "owner",
     scopes: ["workspace.read", "workspace.manage", "member.manage"],
     member_count: 3,
@@ -26,9 +26,9 @@ function apiWorkspace(overrides: Partial<Workspace> = {}): Workspace {
 }
 
 describe("mapWorkspaceItem", () => {
-  it("carries visibility, viewer role, scopes and member count into the store", () => {
+  it("carries placement, viewer role, scopes and member count into the store", () => {
     const item = mapWorkspaceItem(apiWorkspace());
-    expect(item.visibility).toBe("org");
+    expect(item.unit_id).toBe("unit-1");
     expect(item.viewer_role).toBe("owner");
     expect(item.scopes).toEqual(["workspace.read", "workspace.manage", "member.manage"]);
     expect(item.member_count).toBe(3);
@@ -37,13 +37,13 @@ describe("mapWorkspaceItem", () => {
   it("leaves team-access fields undefined when the API omits them", () => {
     const item = mapWorkspaceItem(
       apiWorkspace({
-        visibility: undefined,
+        unit_id: undefined,
         viewer_role: undefined,
         scopes: undefined,
         member_count: undefined,
       }),
     );
-    expect(item.visibility).toBeUndefined();
+    expect(item.unit_id).toBeUndefined();
     expect(item.scopes).toBeUndefined();
   });
 

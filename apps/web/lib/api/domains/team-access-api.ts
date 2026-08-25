@@ -4,7 +4,6 @@ import type {
   ListDirectoryUsersResponse,
   ListWorkspaceMembersResponse,
   WorkspaceMember,
-  WorkspaceVisibility,
 } from "@/lib/types/team-access";
 
 export async function listWorkspaceMembers(workspaceId: string, options?: ApiRequestOptions) {
@@ -48,37 +47,6 @@ export async function transferWorkspaceOwnership(
   });
 }
 
-export async function setWorkspaceVisibility(
-  workspaceId: string,
-  visibility: WorkspaceVisibility,
-  options?: ApiRequestOptions,
-) {
-  return fetchJson<{ id: string; visibility: WorkspaceVisibility }>(
-    `/api/v1/workspaces/${workspaceId}/visibility`,
-    {
-      ...options,
-      init: { method: "PUT", body: JSON.stringify({ visibility }), ...(options?.init ?? {}) },
-    },
-  );
-}
-
 export async function listDirectoryUsers(options?: ApiRequestOptions) {
   return fetchJson<ListDirectoryUsersResponse>("/api/v1/users/directory", options);
-}
-
-export async function getDefaultWorkspaceVisibility(options?: ApiRequestOptions) {
-  return fetchJson<{ visibility: WorkspaceVisibility }>(
-    "/api/v1/workspaces-default-visibility",
-    options,
-  );
-}
-
-export async function setDefaultWorkspaceVisibility(
-  visibility: WorkspaceVisibility,
-  options?: ApiRequestOptions,
-) {
-  return fetchJson<{ visibility: WorkspaceVisibility }>("/api/v1/workspaces-default-visibility", {
-    ...options,
-    init: { method: "PUT", body: JSON.stringify({ visibility }), ...(options?.init ?? {}) },
-  });
 }

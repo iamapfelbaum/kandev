@@ -113,11 +113,19 @@ def main() -> None:
     team = ensure_workspace(client, "Platform Team")
     private = ensure_workspace(client, "Ana - security spike")
 
-    client.call("PUT", f"/api/v1/workspaces/{team}/visibility", {"visibility": "org"})
-    print("Platform Team is now visible to the whole organization")
+    # Build the shape a company actually has: a department with a team under
+    # it, and the shared board placed in the team. Reach follows that tree, so
+    # nobody is invited to the board itself.
+    units = client.call("GET", "/api/v1/units")["units"] or []
+    root = next(u["id"] for u in units if u["kind"] == "root")
+    dept = client.call("POST", "/api/v1/units", {"parent_id": root, "name": "Platform"})
+    squad = client.call("POST", "/api/v1/units", {"parent_id": dept["id"], "name": "Runtime"})
+    client.call("PATCH", f"/api/v1/workspaces/{team}", {"unit_id": squad["id"]})
+    client.call("PUT", f"/api/v1/units/{dept['id']}/members/{bruno}", {"role": "collaborator"})
+    print("Platform > Runtime holds the shared board; Bruno reaches it through the department")
 
-    client.call("PUT", f"/api/v1/workspaces/{team}/members/{carla}", {"role": "viewer"})
-    print("Carla narrowed to viewer on Platform Team")
+    client.call("PUT", f"/api/v1/units/{squad['id']}/members/{carla}", {"role": "viewer"})
+    print("Carla is a viewer on the Runtime team")
 
     client.call("PUT", f"/api/v1/workspaces/{private}/members/{dana}", {"role": "collaborator"})
     print("Dana (guest) admitted to the private workspace only")

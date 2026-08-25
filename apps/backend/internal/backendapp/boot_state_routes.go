@@ -626,7 +626,7 @@ func mapWorkspaceItemState(workspace taskdto.WorkspaceDTO) map[string]any {
 		"name":                            workspace.Name,
 		"description":                     workspace.Description,
 		"owner_id":                        workspace.OwnerID,
-		"visibility":                      workspace.Visibility,
+		"unit_id":                         workspace.UnitID,
 		"viewer_role":                     workspace.ViewerRole,
 		"scopes":                          workspace.Scopes,
 		"member_count":                    workspace.MemberCount,

@@ -299,7 +299,6 @@ type Service struct {
 	userDirectory                   UserDirectory
 	unitPlacer                      UnitPlacer
 	unitReach                       UnitReachResolver
-	orgSettings                     OrgSettings
 	userOrgs                        func(ctx context.Context, userID string) (string, error)
 	tasks                           repository.TaskRepository
 	taskRepos                       repository.TaskRepoRepository

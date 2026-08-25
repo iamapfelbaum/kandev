@@ -12,7 +12,6 @@ import { Label } from "@kandev/ui/label";
 import { cn } from "@kandev/ui/lib/utils";
 import Link from "@/components/routing/app-link";
 import { mapWorkspaceItem } from "@/lib/routing/route-bootstrap";
-import { DefaultVisibilityCard } from "@/components/settings/workspaces/default-visibility-card";
 import { createWorkspaceAction } from "@/app/actions/workspaces";
 import { useRequest } from "@/lib/http/use-request";
 import { useToast } from "@/components/toast-provider";
@@ -175,8 +174,6 @@ export function WorkspacesPageClient() {
       </div>
 
       <Separator />
-
-      <DefaultVisibilityCard />
 
       <Separator />
 

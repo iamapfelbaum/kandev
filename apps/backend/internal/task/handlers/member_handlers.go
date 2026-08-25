@@ -12,7 +12,7 @@ import (
 	"github.com/kandev/kandev/internal/task/service"
 )
 
-// MemberHandlers serves workspace membership, workspace visibility, and the
+// MemberHandlers serves workspace membership and the
 // reduced user directory that backs the member picker.
 type MemberHandlers struct {
 	service *service.Service
@@ -34,11 +34,8 @@ func RegisterMemberRoutes(router *gin.Engine, svc *service.Service, log *logger.
 	api.PUT("/workspaces/:id/members/:userId", h.putMember)
 	api.DELETE("/workspaces/:id/members/:userId", h.deleteMember)
 	api.POST("/workspaces/:id/transfer-ownership", h.transferOwnership)
-	api.PUT("/workspaces/:id/visibility", h.setVisibility)
 	api.GET("/users/directory", h.listDirectory)
 	api.GET("/authz/scopes", h.listScopes)
-	api.GET("/workspaces-default-visibility", h.getDefaultVisibility)
-	api.PUT("/workspaces-default-visibility", h.setDefaultVisibility)
 }
 
 type memberDTO struct {
@@ -111,24 +108,6 @@ func (h *MemberHandlers) transferOwnership(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
-type setVisibilityRequest struct {
-	Visibility string `json:"visibility"`
-}
-
-func (h *MemberHandlers) setVisibility(c *gin.Context) {
-	var body setVisibilityRequest
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
-		return
-	}
-	workspace, err := h.service.SetWorkspaceVisibility(c.Request.Context(), c.Param("id"), body.Visibility)
-	if err != nil {
-		h.respondError(c, err, "failed to change workspace visibility")
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"id": workspace.ID, "visibility": workspace.Visibility})
-}
-
 func (h *MemberHandlers) listDirectory(c *gin.Context) {
 	users, err := h.service.ListDirectoryUsers(c.Request.Context())
 	if err != nil {
@@ -142,27 +121,6 @@ func (h *MemberHandlers) listDirectory(c *gin.Context) {
 // rather than keeping its own copy of what each role can do.
 func (h *MemberHandlers) listScopes(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"scopes": authz.Registry()})
-}
-
-// getDefaultVisibility reports the visibility new workspaces start with.
-func (h *MemberHandlers) getDefaultVisibility(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"visibility": string(h.service.DefaultWorkspaceVisibility(c.Request.Context())),
-	})
-}
-
-func (h *MemberHandlers) setDefaultVisibility(c *gin.Context) {
-	var body setVisibilityRequest
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
-		return
-	}
-	visibility, err := h.service.SetDefaultWorkspaceVisibility(c.Request.Context(), body.Visibility)
-	if err != nil {
-		h.respondError(c, err, "failed to change the default workspace visibility")
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"visibility": string(visibility)})
 }
 
 func (h *MemberHandlers) displayNames(c *gin.Context) map[string]string {
@@ -202,7 +160,6 @@ func isMemberValidationError(err error) bool {
 		service.ErrMemberRoleInvalid,
 		service.ErrMemberSelf,
 		service.ErrTransferTargetNotMember,
-		service.ErrVisibilityOwnerIsGuest,
 	} {
 		if errors.Is(err, sentinel) {
 			return true

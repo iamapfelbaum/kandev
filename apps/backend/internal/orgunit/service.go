@@ -302,3 +302,16 @@ func (s *Service) UnitOrgID(ctx context.Context, unitID string) (string, error) 
 	}
 	return unit.OrgID, nil
 }
+
+// UnitReaders returns everyone who reaches a workspace placed in this unit,
+// which is every member of the unit and of all its ancestors.
+func (s *Service) UnitReaders(ctx context.Context, unitID string) ([]string, error) {
+	unit, err := s.store.Get(ctx, unitID)
+	if err != nil {
+		if err == ErrUnitNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return s.store.AncestorMemberIDs(ctx, unit.Path)
+}

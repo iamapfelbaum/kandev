@@ -32,6 +32,12 @@ func handleNotFound(c *gin.Context, log *logger.Logger, err error, fallback stri
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
 	}
+	// A rejected assignee is the caller naming someone who cannot reach the
+	// workspace, not a server fault. Its message is written to be shown.
+	if errors.Is(err, service.ErrAssigneeCannotReachWorkspace) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	if errors.Is(err, service.ErrWIPLimitExceeded) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return

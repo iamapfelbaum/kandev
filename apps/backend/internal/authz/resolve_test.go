@@ -171,12 +171,6 @@ func TestNormalizersFailClosed(t *testing.T) {
 	if got := NormalizeWorkspaceRole("superuser"); got != WorkspaceRoleNone {
 		t.Errorf("NormalizeWorkspaceRole(unknown) = %q, want none", got)
 	}
-	if got := NormalizeVisibility("public"); got != VisibilityPrivate {
-		t.Errorf("NormalizeVisibility(unknown) = %q, want private", got)
-	}
-	if got := NormalizeVisibility(""); got != VisibilityPrivate {
-		t.Errorf("NormalizeVisibility(empty) = %q, want private", got)
-	}
 }
 
 func TestIsAssignableWorkspaceRole(t *testing.T) {

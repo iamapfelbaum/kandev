@@ -17,6 +17,9 @@ type UnitReachResolver interface {
 	// InheritedRolesByUnit answers the same question for many units at once,
 	// so filtering a workspace list stays two queries rather than one per row.
 	InheritedRolesByUnit(ctx context.Context, userID string, unitIDs []string) (map[string]string, error)
+	// UnitReaders returns everyone who reaches a workspace placed in a unit,
+	// which is who a workspace-scoped event fans out to.
+	UnitReaders(ctx context.Context, unitID string) ([]string, error)
 }
 
 // SetUnitReach wires the inherited-role seam.

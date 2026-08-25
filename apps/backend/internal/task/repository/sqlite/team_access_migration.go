@@ -11,10 +11,6 @@ func (r *Repository) ensureTeamAccessSchema() error {
 	// New columns on existing tables arrive only through idempotent ADD COLUMN
 	// (ADR 0027): CREATE TABLE IF NOT EXISTS is a no-op on an existing DB, so
 	// listing them in the DDL alone would never reach an upgraded install.
-	r.migrate.Apply(
-		"workspaces.visibility",
-		`ALTER TABLE workspaces ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'`,
-	)
 	// Organizations. Empty means "not yet assigned"; the tenancy migration puts
 	// every existing workspace into the default org on first boot with the
 	// feature on.
