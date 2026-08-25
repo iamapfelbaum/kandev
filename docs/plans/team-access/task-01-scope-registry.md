@@ -5,7 +5,7 @@ status: todo
 wave: 1
 depends_on: []
 plan: "plan.md"
-spec: "../../specs/auth/roles-and-scopes.md"
+spec: "../../specs/auth/requirements/roles-and-scopes.md"
 ---
 
 # Task 01: Scope Registry and Role Mapping
@@ -48,7 +48,7 @@ spec: "../../specs/auth/roles-and-scopes.md"
 
 ## Inputs
 
-- Spec: `docs/specs/auth/roles-and-scopes.md` — Scope registry, Role mappings,
+- Spec: `docs/specs/auth/requirements/roles-and-scopes.md` — Scope registry, Role mappings,
   Permissions, Failure modes.
 - Patterns: `internal/runtimeflags/registry.go` typed registration with
   completeness tests; the existing `RequireAdmin` / `RequireRealIdentity`

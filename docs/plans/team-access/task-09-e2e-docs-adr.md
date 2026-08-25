@@ -5,7 +5,7 @@ status: todo
 wave: 4
 depends_on: ["08-frontend-surfaces"]
 plan: "plan.md"
-spec: "../../specs/workspaces/membership.md"
+spec: "../../specs/workspaces/requirements/membership.md"
 ---
 
 # Task 09: E2E, Docs, and ADR

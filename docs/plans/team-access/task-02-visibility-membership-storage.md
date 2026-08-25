@@ -5,7 +5,7 @@ status: todo
 wave: 1
 depends_on: ["01-scope-registry"]
 plan: "plan.md"
-spec: "../../specs/workspaces/membership.md"
+spec: "../../specs/workspaces/requirements/membership.md"
 ---
 
 # Task 02: Visibility and Membership Storage

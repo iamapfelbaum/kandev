@@ -5,7 +5,7 @@ status: done
 wave: 3
 depends_on: ["04-management-api"]
 plan: "plan.md"
-spec: "../../specs/workspaces/membership.md"
+spec: "../../specs/workspaces/requirements/membership.md"
 ---
 
 # Task 06: Human Assignee and Takeover

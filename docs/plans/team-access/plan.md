@@ -1,5 +1,5 @@
 ---
-spec: docs/specs/workspaces/membership.md
+spec: docs/specs/workspaces/requirements/membership.md
 created: 2026-08-22
 updated: 2026-08-22
 status: draft
@@ -9,8 +9,8 @@ status: draft
 
 ## Scope
 
-Implement [org roles and scopes](../../specs/auth/roles-and-scopes.md) and
-[workspace visibility and membership](../../specs/workspaces/membership.md): a
+Implement [org roles and scopes](../../specs/auth/requirements/roles-and-scopes.md) and
+[workspace visibility and membership](../../specs/workspaces/requirements/membership.md): a
 named scope registry with fixed org and workspace roles, workspace visibility
 (`org` / `private`) with an org-level default, membership as the exception and
 narrowing mechanism, a human task assignee with takeover, and actor attribution

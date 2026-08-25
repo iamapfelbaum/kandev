@@ -5,7 +5,7 @@ package authz
 // that are visible to the whole organization.
 //
 // The `owner` role and the `org.delete` scope described in
-// docs/specs/auth/roles-and-scopes.md arrive with multi-tenancy: without an
+// docs/specs/auth/requirements/roles-and-scopes.md arrive with multi-tenancy: without an
 // org entity there is nothing to own or delete, and shipping an unreachable
 // role would only clutter the role picker.
 type OrgRole string
