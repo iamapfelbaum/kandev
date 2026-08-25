@@ -24,7 +24,7 @@ trust, see [Security posture](#security-posture).
 
 ## Quick path
 
-1. Open **Settings > Plugins**.
+1. Open **Settings > Plugins** (managing plugins requires the admin role when [authentication](authentication.md) is enabled).
 2. Install from the marketplace, a URL, or a local tarball.
 3. Let the installer verify package integrity before it extracts or spawns the plugin; review the install result before enabling it.
 4. Disable or uninstall a plugin when it is no longer trusted or needed.

@@ -76,26 +76,55 @@ func RegisterRoutes(router *gin.Engine, svc *Service, _ Deliverer, log *logger.L
 	ctrl := &Controller{svc: svc, log: log, actionInvoker: svc, webhookInvoker: svc}
 
 	api := router.Group("/api/plugins")
-	api.POST("/install", authn.RequireAdmin(), ctrl.install)
-	api.POST("/sync", ctrl.sync)
+	// A plugin is an install-wide artifact: there is no per-user ownership, so
+	// installing, removing, disabling or reconfiguring one changes what every
+	// user of this instance sees and what runs on the host. Every such mutation
+	// goes through `admin`, mirroring internal/system's g/admin split; the read
+	// surface stays on `api` so the plugin UI still loads for members.
+	//
+	// With authentication disabled httpmw.SyntheticIdentity injects the
+	// single-user identity on every request and it carries RoleAdmin, so
+	// RequireAdmin is a no-op there and that mode's behavior is unchanged.
+	admin := api.Group("", authn.RequireAdmin())
+
+	admin.POST("/install", ctrl.install)
+	// Admin: a sync registers whatever is on disk under the plugins dir, which
+	// starts new code on the host for everyone.
+	admin.POST("/sync", ctrl.sync)
 	// Register the static /marketplace and /settings routes before the /:id
 	// wildcard, matching the /install and /sync ordering — some gin/httprouter
 	// tree versions reject a static sibling added after an existing wildcard for
 	// the same method.
-	ctrl.registerMarketplaceRoutes(api)
+	ctrl.registerMarketplaceRoutes(api, admin)
+	// GET /settings stays open: the installed-plugin list renders each row's
+	// effective auto-update state against this default, and it carries no
+	// operator-owned value beyond that one boolean. Writing it is instance-wide.
 	api.GET("/settings", ctrl.getSettings)
-	api.PUT("/settings", ctrl.updateSettings)
+	admin.PUT("/settings", ctrl.updateSettings)
 	api.GET("", ctrl.list)
 	api.GET("/:id", ctrl.get)
-	api.GET("/:id/config", ctrl.getConfig)
-	api.PATCH("/:id", ctrl.updateConfig)
-	api.PUT("/:id/auto-update", ctrl.setAutoUpdate)
-	api.DELETE("/:id", ctrl.uninstall)
-	api.POST("/:id/enable", ctrl.enable)
-	api.POST("/:id/disable", ctrl.disable)
+	// Admin, despite the response masking declared secrets: the mask is driven
+	// by the plugin author's config_schema, so a manifest that under-declares
+	// hands every member a live credential, and the non-secret half (orgs,
+	// endpoints, channel names) is operator-owned config a member has no
+	// business reading. Nothing member-facing renders it — the config editor is
+	// admin-only now that PATCH /:id is.
+	admin.GET("/:id/config", ctrl.getConfig)
+	admin.PATCH("/:id", ctrl.updateConfig)
+	// Admin: the override decides whether the host silently replaces this
+	// plugin's code, instance-wide, without an operator in the loop.
+	admin.PUT("/:id/auto-update", ctrl.setAutoUpdate)
+	admin.DELETE("/:id", ctrl.uninstall)
+	admin.POST("/:id/enable", ctrl.enable)
+	admin.POST("/:id/disable", ctrl.disable)
 
 	api.GET("/:id/bundle", ctrl.bundle)
 	api.GET("/:id/ui/*path", ctrl.ui)
+	// Actions carry their own authorization (the caller's identity resolved
+	// against the declared selector, see action_handlers.go) and webhooks carry
+	// theirs (manifest visibility, see webhookCallerAuthorized), so neither
+	// belongs on the admin group. Per-user plugin storage is per-user by
+	// definition.
 	api.POST("/:id/actions/:key", ctrl.action)
 	// Registered before the /:id/webhooks/:key wildcard for the same reason
 	// /settings is registered before /:id above: some gin/httprouter tree

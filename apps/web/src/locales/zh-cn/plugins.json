@@ -1,5 +1,7 @@
 {
   "add": "添加",
+  "adminOnlyNotice": "只有管理员才能安装、更新、配置或移除插件。插件对此实例上的所有人生效。",
+  "adminOnlyPluginSettings": "只有管理员才能查看或更改此插件的设置。",
   "allCategories": "全部分类",
   "autoUpdate": "自动更新",
   "autoUpdateDescription": "定期检查市场并为已启用插件安装较新版本。适用于每个插件，除非在下方单独覆盖。",

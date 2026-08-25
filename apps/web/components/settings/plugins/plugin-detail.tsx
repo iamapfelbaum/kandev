@@ -10,6 +10,7 @@ import { Separator } from "@kandev/ui/separator";
 import { PluginSlot } from "@/components/plugins/plugin-slot";
 import Link from "@/components/routing/app-link";
 import { useRouter } from "@/lib/routing/client-router";
+import { useIsAdmin } from "@/hooks/domains/auth/use-is-admin";
 import { useResponsiveBreakpoint } from "@/hooks/use-responsive-breakpoint";
 import { usePlugins } from "@/hooks/domains/plugins/use-plugins";
 import { SettingsCard } from "@/components/settings/settings-card";
@@ -35,14 +36,20 @@ const PLUGINS_SETTINGS_HREF = "/settings/plugins";
  * GetConfig RPC.
  */
 export function PluginDetail({ pluginId }: { pluginId: string }) {
+  const { t } = useTranslation();
   const { items, loaded } = usePlugins();
   const router = useRouter();
   const { isFinePointer } = useResponsiveBreakpoint();
   const actions = usePluginActions();
+  // Reading and writing a plugin's config, and its lifecycle actions, are all
+  // admin-only on the backend, so a member gets the manifest overview and the
+  // plugin's own settings slot and nothing that would 403. Passing null keeps
+  // the form from even issuing the admin-only GET /:id/config.
+  const isAdmin = useIsAdmin();
   const plugin = items.find((p) => p.id === pluginId) ?? null;
   const [confirmingUninstall, setConfirmingUninstall] = useState(false);
   const uninstallAnchorRef = useRef<HTMLButtonElement>(null);
-  const form = usePluginConfigForm(plugin);
+  const form = usePluginConfigForm(isAdmin ? plugin : null);
   useSettingsSaveContributor({
     id: `plugin-config:${pluginId}`,
     revision: form.revision,
@@ -68,23 +75,34 @@ export function PluginDetail({ pluginId }: { pluginId: string }) {
         ownerPluginId={plugin.id}
         slotProps={{ pluginId: plugin.id, status: plugin.status }}
       />
-      <PluginSettingsCard
-        plugin={plugin}
-        form={form}
-        busy={actions.busyId === plugin.id || actions.uninstallBusy}
-      />
+      {isAdmin ? (
+        <PluginSettingsCard
+          plugin={plugin}
+          form={form}
+          busy={actions.busyId === plugin.id || actions.uninstallBusy}
+        />
+      ) : (
+        <p
+          data-testid="plugin-detail-admin-only"
+          className="rounded-lg border border-border/70 bg-muted/40 p-4 text-sm text-muted-foreground"
+        >
+          {t("plugins:adminOnlyPluginSettings")}
+        </p>
+      )}
       <PluginManifestCard plugin={plugin} />
 
-      <PluginDangerZone
-        plugin={plugin}
-        actions={actions}
-        isFinePointer={isFinePointer}
-        confirmingUninstall={confirmingUninstall}
-        uninstallAnchorRef={uninstallAnchorRef}
-        onUninstall={() => {
-          setConfirmingUninstall(true);
-        }}
-      />
+      {isAdmin && (
+        <PluginDangerZone
+          plugin={plugin}
+          actions={actions}
+          isFinePointer={isFinePointer}
+          confirmingUninstall={confirmingUninstall}
+          uninstallAnchorRef={uninstallAnchorRef}
+          onUninstall={() => {
+            setConfirmingUninstall(true);
+          }}
+        />
+      )}
       <PluginUninstallConfirmation
         target={plugin}
         open={confirmingUninstall}

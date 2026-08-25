@@ -49,7 +49,9 @@ A server that listens on non-loopback interfaces with authentication disabled lo
 - **Direct creation**: create an account with a password yourself.
 - **Disable / role changes**: disabling a user immediately revokes their sessions and tokens. The last active admin cannot be demoted or disabled.
 
-Roles: `admin` (user management, authentication settings, destructive system operations, feature toggles) and `member` (everything else, scoped to their own workspaces).
+Roles: `admin` (user management, authentication settings, destructive system operations, feature toggles, plugin management) and `member` (everything else, scoped to their own workspaces).
+
+Plugins are install-wide: they run on the host and their UI loads for everyone. Installing, syncing, enabling, disabling, uninstalling, configuring, changing auto-update, and managing marketplace sources are therefore admin-only. Members still see the installed plugins and use their UI.
 
 ## Personal access tokens
 

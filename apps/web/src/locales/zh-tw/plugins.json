@@ -1,5 +1,7 @@
 {
   "add": "新增",
+  "adminOnlyNotice": "只有管理員才能安裝、更新、設定或移除外掛。外掛對此執行個體上的所有人生效。",
+  "adminOnlyPluginSettings": "只有管理員才能檢視或變更此外掛的設定。",
   "allCategories": "全部分類",
   "autoUpdate": "自動更新",
   "autoUpdateDescription": "定期檢查市場併為已啟用外掛安裝較新版本。適用於每個外掛，除非在下方單獨覆蓋。",

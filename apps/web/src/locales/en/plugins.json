@@ -1,5 +1,7 @@
 {
   "add": "Add",
+  "adminOnlyNotice": "Only an administrator can install, update, configure, or remove plugins. Plugins apply to everyone on this instance.",
+  "adminOnlyPluginSettings": "Only an administrator can view or change this plugin's settings.",
   "allCategories": "All categories",
   "autoUpdate": "Auto-update",
   "autoUpdateDescription": "Check the marketplace periodically and install newer versions of active plugins. Applies to every plugin unless overridden per plugin below.",

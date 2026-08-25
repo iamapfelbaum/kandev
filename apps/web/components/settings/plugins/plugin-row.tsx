@@ -61,6 +61,13 @@ type PluginRowProps = {
   isFinePointer?: boolean;
   /** True while this plugin's uninstall request is in flight. */
   uninstallBusy?: boolean;
+  /**
+   * Whether the viewer may change this plugin. A plugin is an install-wide
+   * artifact, so enable/disable/uninstall/update/auto-update are admin-only on
+   * the backend; a member sees the row without those controls rather than
+   * buttons whose requests can only come back 403.
+   */
+  canManage?: boolean;
   onEnable: (plugin: PluginRecord) => void;
   onDisable: (plugin: PluginRecord) => void;
   onConfirmUninstall?: (plugin: PluginRecord) => void | Promise<void>;
@@ -89,6 +96,7 @@ export function PluginRow({
   needsSetup = false,
   isFinePointer = true,
   uninstallBusy = false,
+  canManage = true,
   onEnable,
   onDisable,
   onConfirmUninstall,
@@ -120,6 +128,7 @@ export function PluginRow({
         needsSetup={needsSetup}
         isFinePointer={isFinePointer}
         mutationBusy={mutationBusy}
+        canManage={canManage}
         canEnable={canEnable}
         canDisable={canDisable}
         confirmingUninstall={confirmingUninstall}
@@ -152,6 +161,7 @@ type PluginRowContentProps = {
   needsSetup: boolean;
   isFinePointer: boolean;
   mutationBusy: boolean;
+  canManage: boolean;
   canEnable: boolean;
   canDisable: boolean;
   confirmingUninstall: boolean;
@@ -170,6 +180,7 @@ function PluginRowContent({
   needsSetup,
   isFinePointer,
   mutationBusy,
+  canManage,
   canEnable,
   canDisable,
   confirmingUninstall,
@@ -205,6 +216,7 @@ function PluginRowContent({
               plugin={plugin}
               busy={mutationBusy}
               update={update}
+              canManage={canManage}
               canEnable={canEnable}
               canDisable={canDisable}
               isFinePointer={isFinePointer}
@@ -249,6 +261,7 @@ function PluginRowContent({
           plugin={plugin}
           autoUpdateDefault={autoUpdateDefault}
           busy={mutationBusy}
+          canManage={canManage}
           onSetAutoUpdate={onSetAutoUpdate}
         />
       </div>
@@ -388,11 +401,13 @@ function PluginAutoUpdateRow({
   plugin,
   autoUpdateDefault,
   busy,
+  canManage,
   onSetAutoUpdate,
 }: {
   plugin: PluginRecord;
   autoUpdateDefault: boolean;
   busy: boolean;
+  canManage: boolean;
   onSetAutoUpdate: (plugin: PluginRecord, value: boolean | null) => void;
 }) {
   const { t } = useTranslation();
@@ -410,7 +425,7 @@ function PluginAutoUpdateRow({
         )}
       </div>
       <div className="relative z-10 flex items-center gap-2">
-        {isOverridden && (
+        {isOverridden && canManage && (
           <button
             type="button"
             data-testid={`plugin-auto-update-reset-${plugin.id}`}
@@ -426,7 +441,7 @@ function PluginAutoUpdateRow({
           data-testid={`plugin-auto-update-${plugin.id}`}
           aria-label={t("plugins:autoUpdateFor", { name: plugin.display_name })}
           checked={effective}
-          disabled={busy}
+          disabled={busy || !canManage}
           onCheckedChange={(value) => onSetAutoUpdate(plugin, value)}
           className="cursor-pointer"
         />
@@ -447,6 +462,7 @@ type PluginRowActionsProps = Omit<
   | "onConfirmUninstall"
   | "uninstallBusy"
 > & {
+  canManage: boolean;
   canEnable: boolean;
   canDisable: boolean;
   isFinePointer: boolean;
@@ -457,7 +473,27 @@ type PluginRowActionsProps = Omit<
   onUninstall: (plugin: PluginRecord) => void;
 };
 
-function PluginRowActions({
+function PluginRowActions({ canManage, plugin, ...lifecycle }: PluginRowActionsProps) {
+  const { t } = useTranslation();
+  return (
+    <div className="relative z-10 flex flex-wrap items-center gap-2 shrink-0">
+      {/* Every action below mutates install-wide state, so a member gets the
+          row with only its settings link. */}
+      {canManage && <PluginRowLifecycleActions plugin={plugin} {...lifecycle} />}
+      <Link
+        href={`/settings/plugins/${encodeURIComponent(plugin.id)}`}
+        data-testid={`plugin-settings-link-${plugin.id}`}
+        aria-label={t("plugins:openSettingsFor", { name: plugin.display_name })}
+        className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer sm:min-h-0"
+      >
+        <IconSettings className="h-4 w-4" aria-hidden />
+        {t("plugins:settings")}
+      </Link>
+    </div>
+  );
+}
+
+function PluginRowLifecycleActions({
   plugin,
   busy,
   update,
@@ -470,11 +506,11 @@ function PluginRowActions({
   onDisable,
   onUninstall,
   onUpdate,
-}: PluginRowActionsProps) {
+}: Omit<PluginRowActionsProps, "canManage">) {
   const { t } = useTranslation();
   const updateEntry = update?.hasUpdate ? update.latest : undefined;
   return (
-    <div className="relative z-10 flex flex-wrap items-center gap-2 shrink-0">
+    <>
       {updateEntry && onUpdate && (
         <Button
           variant="default"
@@ -529,15 +565,6 @@ function PluginRowActions({
           {t("plugins:uninstall")}
         </Button>
       )}
-      <Link
-        href={`/settings/plugins/${encodeURIComponent(plugin.id)}`}
-        data-testid={`plugin-settings-link-${plugin.id}`}
-        aria-label={t("plugins:openSettingsFor", { name: plugin.display_name })}
-        className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer sm:min-h-0"
-      >
-        <IconSettings className="h-4 w-4" aria-hidden />
-        {t("plugins:settings")}
-      </Link>
-    </div>
+    </>
   );
 }

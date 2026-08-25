@@ -76,6 +76,7 @@ const baseProps = {
 /** Test ids reused across these cases. */
 const REPO_LINK_TESTID = "plugin-repo-link";
 const AUTO_UPDATE_TESTID = "plugin-auto-update-acme";
+const AUTO_UPDATE_RESET_TESTID = "plugin-auto-update-reset-acme";
 
 /** The class that lifts a control above the card's overlay link. */
 const ABOVE_OVERLAY = "z-10";
@@ -335,14 +336,14 @@ describe("PluginRow auto-update toggle", () => {
     const toggle = screen.getByTestId(AUTO_UPDATE_TESTID);
     expect(toggle.getAttribute("aria-checked")).toBe("true");
     // No override → no "override" badge and no Reset affordance.
-    expect(screen.queryByTestId("plugin-auto-update-reset-acme")).toBeNull();
+    expect(screen.queryByTestId(AUTO_UPDATE_RESET_TESTID)).toBeNull();
   });
 
   it("prefers the per-plugin override over the global default", () => {
     render(<PluginRow {...baseProps} plugin={plugin({ auto_update: false })} autoUpdateDefault />);
     const toggle = screen.getByTestId(AUTO_UPDATE_TESTID);
     expect(toggle.getAttribute("aria-checked")).toBe("false");
-    expect(screen.getByTestId("plugin-auto-update-reset-acme")).toBeTruthy();
+    expect(screen.getByTestId(AUTO_UPDATE_RESET_TESTID)).toBeTruthy();
   });
 
   it("sets an explicit override when toggled", () => {
@@ -364,7 +365,7 @@ describe("PluginRow auto-update toggle", () => {
     const onSetAutoUpdate = vi.fn();
     const p = plugin({ auto_update: true });
     render(<PluginRow {...baseProps} plugin={p} onSetAutoUpdate={onSetAutoUpdate} />);
-    fireEvent.click(screen.getByTestId("plugin-auto-update-reset-acme"));
+    fireEvent.click(screen.getByTestId(AUTO_UPDATE_RESET_TESTID));
     expect(onSetAutoUpdate).toHaveBeenCalledWith(p, null);
   });
 });
@@ -414,5 +415,52 @@ describe("PluginRow uninstall confirmation", () => {
 
     fireEvent.click(screen.getByTestId("plugin-uninstall-confirm"));
     await waitFor(() => expect(onConfirmUninstall).toHaveBeenCalledWith(p));
+  });
+});
+
+describe("PluginRow canManage", () => {
+  // The row's lifecycle actions all hit admin-only backend routes, so a member
+  // sees the row without them rather than buttons that only produce a 403.
+  const OVERRIDDEN = { auto_update: true };
+
+  it("hides the lifecycle actions and locks auto-update when canManage is false", () => {
+    render(
+      <PluginRow
+        {...baseProps}
+        plugin={plugin(OVERRIDDEN)}
+        update={updateState()}
+        onUpdate={noop}
+        canManage={false}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /disable/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /uninstall/i })).toBeNull();
+    expect(screen.queryByTestId(UPDATE_BUTTON_TESTID)).toBeNull();
+    expect(screen.queryByTestId(AUTO_UPDATE_RESET_TESTID)).toBeNull();
+    expect(screen.getByTestId(AUTO_UPDATE_TESTID).getAttribute("data-disabled")).not.toBeNull();
+  });
+
+  it("still shows the row's identity and its settings link when canManage is false", () => {
+    render(<PluginRow {...baseProps} plugin={plugin()} canManage={false} />);
+
+    expect(screen.getByText("Acme")).toBeTruthy();
+    expect(screen.getByTestId("plugin-settings-link-acme")).toBeTruthy();
+  });
+
+  it("keeps the lifecycle actions by default", () => {
+    render(
+      <PluginRow
+        {...baseProps}
+        plugin={plugin(OVERRIDDEN)}
+        update={updateState()}
+        onUpdate={noop}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /disable/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /uninstall/i })).toBeTruthy();
+    expect(screen.getByTestId(UPDATE_BUTTON_TESTID)).toBeTruthy();
+    expect(screen.getByTestId(AUTO_UPDATE_RESET_TESTID)).toBeTruthy();
   });
 });

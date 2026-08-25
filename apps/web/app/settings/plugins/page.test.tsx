@@ -106,6 +106,7 @@ const NEW_PLUGIN_ID = "new-plugin";
 const SYNC_BUTTON_TESTID = "plugins-sync-button";
 const CHECK_UPDATES_BUTTON_TESTID = "plugins-check-updates-button";
 const INSTALL_TRIGGER_TESTID = "install-plugin-trigger";
+const BROWSE_TAB_TESTID = "plugins-tab-browse";
 const INSTALL_URL_INPUT_TESTID = "install-plugin-url-input";
 const INSTALL_URL_SUBMIT_TESTID = "install-plugin-url-submit";
 const NEW_PLUGIN_URL = "https://example.test/new-plugin-1.0.0.tar.gz";
@@ -146,6 +147,10 @@ function installedPlugin(overrides: Partial<PluginRecord> = {}): PluginRecord {
 
 function setStoreState(plugins: PluginRecord[]) {
   storeState = {
+    // `user: null` is the auth-disabled single-user mode, whose backend
+    // identity is a synthetic admin. Role-aware cases live in
+    // page.authorization.test.tsx.
+    auth: { user: null },
     plugins: { items: plugins, loading: false, loaded: true, error: null },
     setPlugins: vi.fn(),
     setPluginsLoading: vi.fn(),
@@ -621,7 +626,7 @@ describe("PluginsSettingsPage marketplace update lifecycle", () => {
     });
 
     render(<PluginsSettingsPage />);
-    fireEvent.mouseDown(screen.getByTestId("plugins-tab-browse"));
+    fireEvent.mouseDown(screen.getByTestId(BROWSE_TAB_TESTID));
     await vi.waitFor(() =>
       expect(screen.getByTestId(`marketplace-install-${NEW_PLUGIN_ID}`)).toBeTruthy(),
     );

@@ -9,16 +9,15 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
 
+	"github.com/kandev/kandev/internal/auth/httpmw"
 	"github.com/kandev/kandev/internal/db"
 	"github.com/kandev/kandev/internal/plugins/store"
 )
 
-func newTestRouterWithSettings(t *testing.T) (*gin.Engine, *Service) {
+// attachSettingsStore wires an in-memory settings store onto svc, so the
+// /settings and /:id/auto-update routes have somewhere to persist.
+func attachSettingsStore(t *testing.T, svc *Service) {
 	t.Helper()
-	gin.SetMode(gin.TestMode)
-	svc, _, _ := newTestService(t)
-	svc.SetSecrets(newFakeSecretRevealer())
-
 	conn, err := sqlx.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -30,8 +29,21 @@ func newTestRouterWithSettings(t *testing.T) (*gin.Engine, *Service) {
 		t.Fatalf("new settings store: %v", err)
 	}
 	svc.SetSettings(ss)
+}
+
+// newTestRouterWithSettings serves the auto-update handler tests, which assert
+// the behavior of routes that are now admin-only. It resolves as the synthetic
+// single-user identity so those assertions keep describing an auth-disabled
+// instance exactly as they did before the gate existed.
+func newTestRouterWithSettings(t *testing.T) (*gin.Engine, *Service) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	svc, _, _ := newTestService(t)
+	svc.SetSecrets(newFakeSecretRevealer())
+	attachSettingsStore(t, svc)
 
 	router := gin.New()
+	useIdentity(router, httpmw.SyntheticIdentity())
 	RegisterRoutes(router, svc, nil, testLogger(t))
 	return router, svc
 }

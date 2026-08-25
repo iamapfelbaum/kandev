@@ -1,5 +1,7 @@
 {
   "add": "Adicionar",
+  "adminOnlyNotice": "Apenas um administrador pode instalar, atualizar, configurar ou remover plugins. Os plugins aplicam-se a todas as pessoas nesta instância.",
+  "adminOnlyPluginSettings": "Apenas um administrador pode ver ou alterar as definições deste plugin.",
   "allCategories": "Todas as categorias",
   "autoUpdate": "Atualização automática",
   "autoUpdateDescription": "Consulta o marketplace periodicamente e instala versões mais recentes dos plugins ativos. Aplica-se a todos os plugins, salvo se for substituído por plugin em baixo.",

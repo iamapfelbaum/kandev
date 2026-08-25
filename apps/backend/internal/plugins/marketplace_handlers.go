@@ -13,13 +13,18 @@ import (
 // registerMarketplaceRoutes wires the marketplace catalog + source-management
 // surface onto the /api/plugins group. Kept separate from RegisterRoutes so
 // the marketplace HTTP surface stays self-contained.
-func (c *Controller) registerMarketplaceRoutes(api *gin.RouterGroup) {
+//
+// The listings are reads and stay on api, so the Browse tab renders for
+// members. Source management is install-wide — a source is where this instance
+// fetches plugin packages from — so it goes on admin alongside the rest of the
+// lifecycle, as does the refresh that re-fetches every source's index.
+func (c *Controller) registerMarketplaceRoutes(api, admin *gin.RouterGroup) {
 	api.GET("/marketplace", c.marketplaceCatalog)
-	api.POST("/marketplace/refresh", c.marketplaceRefresh)
+	admin.POST("/marketplace/refresh", c.marketplaceRefresh)
 	api.GET("/marketplace/sources", c.listSources)
-	api.POST("/marketplace/sources", c.addSource)
-	api.PATCH("/marketplace/sources/:sid", c.updateSource)
-	api.DELETE("/marketplace/sources/:sid", c.deleteSource)
+	admin.POST("/marketplace/sources", c.addSource)
+	admin.PATCH("/marketplace/sources/:sid", c.updateSource)
+	admin.DELETE("/marketplace/sources/:sid", c.deleteSource)
 }
 
 // addSourceRequest is the POST /api/plugins/marketplace/sources body.

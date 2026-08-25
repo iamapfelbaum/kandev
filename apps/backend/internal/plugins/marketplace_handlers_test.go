@@ -10,6 +10,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
 
+	"github.com/kandev/kandev/internal/auth/httpmw"
 	"github.com/kandev/kandev/internal/db"
 	"github.com/kandev/kandev/internal/plugins/marketplace"
 )
@@ -86,6 +87,10 @@ func TestMarketplaceSourceCRUD(t *testing.T) {
 	svc, _, _ := newTestService(t)
 	attachMarketplaceWithSource(t, svc, "https://official.example/index.json")
 	router := gin.New()
+	// Source management is admin-only; the synthetic single-user identity is
+	// what an auth-disabled instance resolves to, so these keep asserting that
+	// mode's unchanged behavior.
+	useIdentity(router, httpmw.SyntheticIdentity())
 	RegisterRoutes(router, svc, nil, testLogger(t))
 
 	// List returns the built-in source.
@@ -125,6 +130,10 @@ func TestMarketplaceDeleteBuiltinReturns409(t *testing.T) {
 	svc, _, _ := newTestService(t)
 	attachMarketplaceWithSource(t, svc, "https://official.example/index.json")
 	router := gin.New()
+	// Source management is admin-only; the synthetic single-user identity is
+	// what an auth-disabled instance resolves to, so these keep asserting that
+	// mode's unchanged behavior.
+	useIdentity(router, httpmw.SyntheticIdentity())
 	RegisterRoutes(router, svc, nil, testLogger(t))
 
 	sources, err := svc.Marketplace().Sources()

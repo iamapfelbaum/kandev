@@ -372,7 +372,7 @@ func TestPluginHostGetConfigWithoutStoreReturnsEmpty(t *testing.T) {
 // --- handler tests ---
 
 func TestGetConfigHandlerReturnsMaskedConfig(t *testing.T) {
-	router, svc := newTestRouter(t)
+	router, svc := newAuthDisabledTestRouter(t)
 	installConfigPlugin(t, svc, "kandev-plugin-github")
 	if err := svc.UpdateConfig(context.Background(), "kandev-plugin-github", map[string]any{"github_token": "ghp_real"}); err != nil {
 		t.Fatalf("UpdateConfig: %v", err)
@@ -392,7 +392,7 @@ func TestGetConfigHandlerReturnsMaskedConfig(t *testing.T) {
 }
 
 func TestGetConfigHandlerMissingReturns404(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _ := newAuthDisabledTestRouter(t)
 	rec := doRequest(router, http.MethodGet, "/api/plugins/missing/config", "", nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
@@ -400,7 +400,7 @@ func TestGetConfigHandlerMissingReturns404(t *testing.T) {
 }
 
 func TestUpdateConfigHandlerInvalidSchemaReturns400(t *testing.T) {
-	router, svc := newTestRouter(t)
+	router, svc := newAuthDisabledTestRouter(t)
 	installConfigPlugin(t, svc, "kandev-plugin-github")
 
 	rec := doRequest(router, http.MethodPatch, "/api/plugins/kandev-plugin-github",

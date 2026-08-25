@@ -23,6 +23,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/kandev/kandev/internal/auth/authn"
+	"github.com/kandev/kandev/internal/auth/httpmw"
 	"github.com/kandev/kandev/internal/db"
 	"github.com/kandev/kandev/internal/plugins/pkgtar/pkgtartest"
 	"github.com/kandev/kandev/internal/plugins/state"
@@ -63,6 +64,15 @@ func newTestRouter(t *testing.T) (*gin.Engine, *Service) {
 	return router, svc
 }
 
+// useIdentity resolves every request on router to identity, standing in for
+// httpmw.Middleware in focused handler tests.
+func useIdentity(router *gin.Engine, identity authn.Identity) {
+	router.Use(func(ctx *gin.Context) {
+		authn.SetOnGin(ctx, identity)
+		ctx.Next()
+	})
+}
+
 func newTestRouterWithIdentity(t *testing.T, identity authn.Identity) (*gin.Engine, *Service) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -73,10 +83,7 @@ func newTestRouterWithIdentity(t *testing.T, identity authn.Identity) (*gin.Engi
 	// where Provide always attaches the shared vault.
 	svc.SetSecrets(newFakeSecretRevealer())
 	router := gin.New()
-	router.Use(func(ctx *gin.Context) {
-		authn.SetOnGin(ctx, identity)
-		ctx.Next()
-	})
+	useIdentity(router, identity)
 	RegisterRoutes(router, svc, nil, testLogger(t))
 	return router, svc
 }
@@ -84,6 +91,16 @@ func newTestRouterWithIdentity(t *testing.T, identity authn.Identity) (*gin.Engi
 func newAdminTestRouter(t *testing.T) (*gin.Engine, *Service) {
 	t.Helper()
 	return newTestRouterWithIdentity(t, authn.Identity{UserID: "admin-1", Role: authn.RoleAdmin})
+}
+
+// newAuthDisabledTestRouter builds the plugin surface as an instance with the
+// auth feature off sees it: httpmw injects the synthetic single-user identity
+// on every request, and it carries RoleAdmin. Handler tests for the
+// install-wide lifecycle routes use it so they keep asserting the exact
+// behavior that mode has always had.
+func newAuthDisabledTestRouter(t *testing.T) (*gin.Engine, *Service) {
+	t.Helper()
+	return newTestRouterWithIdentity(t, httpmw.SyntheticIdentity())
 }
 
 func doRequest(router *gin.Engine, method, path string, body string, headers map[string]string) *httptest.ResponseRecorder {
@@ -313,7 +330,7 @@ func TestGetHandlerMissingReturns404(t *testing.T) {
 }
 
 func TestEnableDisableHandlersTransitionStatus(t *testing.T) {
-	router, svc := newTestRouter(t)
+	router, svc := newAuthDisabledTestRouter(t)
 	installTestPlugin(t, svc, "kandev-plugin-slack") // already active after install
 
 	rec := doRequest(router, http.MethodPost, "/api/plugins/kandev-plugin-slack/disable", "", nil)
@@ -336,7 +353,7 @@ func TestEnableDisableHandlersTransitionStatus(t *testing.T) {
 }
 
 func TestUpdateConfigHandlerPersists(t *testing.T) {
-	router, svc := newTestRouter(t)
+	router, svc := newAuthDisabledTestRouter(t)
 	installTestPlugin(t, svc, "kandev-plugin-slack")
 
 	rec := doRequest(router, http.MethodPatch, "/api/plugins/kandev-plugin-slack", `{"config":{"default_channel":"#dev"}}`, nil)
@@ -346,7 +363,7 @@ func TestUpdateConfigHandlerPersists(t *testing.T) {
 }
 
 func TestUninstallHandlerRemovesPlugin(t *testing.T) {
-	router, svc := newTestRouter(t)
+	router, svc := newAuthDisabledTestRouter(t)
 	installTestPlugin(t, svc, "kandev-plugin-slack")
 
 	rec := doRequest(router, http.MethodDelete, "/api/plugins/kandev-plugin-slack", "", nil)
@@ -1074,7 +1091,7 @@ func TestWriteWebhookResponse_ValidStatusRelaysHeadersAndBody(t *testing.T) {
 }
 
 func TestSyncHandlerRegistersDirSideload(t *testing.T) {
-	router, svc := newTestRouter(t)
+	router, svc := newAuthDisabledTestRouter(t)
 	pluginsDir := svc.pluginsDir
 	versionDir := filepath.Join(pluginsDir, "kandev-plugin-side", "1.0.0")
 	if err := os.MkdirAll(versionDir, 0o755); err != nil {

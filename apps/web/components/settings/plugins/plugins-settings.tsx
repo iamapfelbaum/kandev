@@ -7,6 +7,7 @@ import { Button } from "@kandev/ui/button";
 import { Switch } from "@kandev/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@kandev/ui/tabs";
 import { SettingsPageTemplate } from "@/components/settings/settings-page-template";
+import { useIsAdmin } from "@/hooks/domains/auth/use-is-admin";
 import { useResponsiveBreakpoint } from "@/hooks/use-responsive-breakpoint";
 import { useAutoUpdateSettings } from "@/hooks/domains/plugins/use-auto-update-settings";
 import { usePlugins } from "@/hooks/domains/plugins/use-plugins";
@@ -28,6 +29,10 @@ import { settingsActionClassName } from "@/components/settings/settings-control"
 export function PluginsSettings() {
   const { t } = useTranslation();
   const { isFinePointer } = useResponsiveBreakpoint();
+  // A plugin is install-wide, so every mutation on this page is admin-only on
+  // the backend (internal/plugins/handlers.go). Members keep the read-only
+  // view instead of controls whose requests can only come back 403.
+  const isAdmin = useIsAdmin();
   const list = usePlugins();
   const actions = usePluginActions();
   const autoUpdate = useAutoUpdateSettings();
@@ -64,9 +69,13 @@ export function PluginsSettings() {
           >
             {t("plugins:tabInstalled")}
           </TabsTrigger>
-          <TabsTrigger value="browse" data-testid="plugins-tab-browse" className="cursor-pointer">
-            {t("plugins:tabBrowse")}
-          </TabsTrigger>
+          {/* Browse exists to install, which is admin-only, so it is hidden
+              rather than shown as a catalog nothing can be done with. */}
+          {isAdmin && (
+            <TabsTrigger value="browse" data-testid="plugins-tab-browse" className="cursor-pointer">
+              {t("plugins:tabBrowse")}
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="installed" className="space-y-6">
@@ -77,22 +86,27 @@ export function PluginsSettings() {
             updates={updates}
             updateAction={updateAction}
             isFinePointer={isFinePointer}
+            isAdmin={isAdmin}
           />
         </TabsContent>
 
-        <TabsContent value="browse">
-          <MarketplaceBrowser onInstallUrl={handleMarketplaceInstall} />
-        </TabsContent>
+        {isAdmin && (
+          <TabsContent value="browse">
+            <MarketplaceBrowser onInstallUrl={handleMarketplaceInstall} />
+          </TabsContent>
+        )}
       </Tabs>
 
-      <InstallPluginDialog
-        open={actions.installOpen}
-        busy={actions.installBusy}
-        error={actions.installError}
-        onOpenChange={actions.setInstallOpen}
-        onSubmitUrl={actions.submitInstallUrl}
-        onSubmitFile={actions.submitInstallFile}
-      />
+      {isAdmin && (
+        <InstallPluginDialog
+          open={actions.installOpen}
+          busy={actions.installBusy}
+          error={actions.installError}
+          onOpenChange={actions.setInstallOpen}
+          onSubmitUrl={actions.submitInstallUrl}
+          onSubmitFile={actions.submitInstallFile}
+        />
+      )}
     </SettingsPageTemplate>
   );
 }
@@ -104,6 +118,7 @@ type InstalledTabProps = {
   updates: ReturnType<typeof usePluginUpdates>;
   updateAction: ReturnType<typeof usePluginUpdateAction>;
   isFinePointer: boolean;
+  isAdmin: boolean;
 };
 
 /** The Installed tab: auto-update toggle, sync/install toolbar, update status, sync errors, and the plugin list. */
@@ -114,44 +129,55 @@ function InstalledTab({
   updates,
   updateAction,
   isFinePointer,
+  isAdmin,
 }: InstalledTabProps) {
   const { t } = useTranslation();
 
   return (
     <>
-      <GlobalAutoUpdateToggle settings={autoUpdate} />
+      {!isAdmin && (
+        <div
+          data-testid="plugins-admin-only-notice"
+          className="rounded-lg border border-border/70 bg-muted/40 p-4 text-sm text-muted-foreground"
+        >
+          {t("plugins:adminOnlyNotice")}
+        </div>
+      )}
+      <GlobalAutoUpdateToggle settings={autoUpdate} canManage={isAdmin} />
 
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div className="text-sm font-medium text-foreground">{t("plugins:installedPlugins")}</div>
-        <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row">
-          <Button
-            data-testid="plugins-sync-button"
-            variant="secondary"
-            disabled={actions.syncBusy}
-            onClick={actions.handleSync}
-            className={settingsActionClassName("cursor-pointer")}
-          >
-            <IconRefresh className={`h-4 w-4 ${actions.syncBusy ? "animate-spin" : ""}`} />
-            {t("plugins:sync")}
-          </Button>
-          <Button
-            data-testid="plugins-check-updates-button"
-            variant="secondary"
-            disabled={updates.checking}
-            onClick={updates.checkForUpdates}
-            className={settingsActionClassName("cursor-pointer")}
-          >
-            <IconRefresh className={`h-4 w-4 ${updates.checking ? "animate-spin" : ""}`} />
-            {t("plugins:checkForUpdates")}
-          </Button>
-          <Button
-            data-testid="install-plugin-trigger"
-            onClick={actions.openInstall}
-            className={settingsActionClassName("cursor-pointer")}
-          >
-            {t("plugins:installPlugin")}
-          </Button>
-        </div>
+        {isAdmin && (
+          <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row">
+            <Button
+              data-testid="plugins-sync-button"
+              variant="secondary"
+              disabled={actions.syncBusy}
+              onClick={actions.handleSync}
+              className={settingsActionClassName("cursor-pointer")}
+            >
+              <IconRefresh className={`h-4 w-4 ${actions.syncBusy ? "animate-spin" : ""}`} />
+              {t("plugins:sync")}
+            </Button>
+            <Button
+              data-testid="plugins-check-updates-button"
+              variant="secondary"
+              disabled={updates.checking}
+              onClick={updates.checkForUpdates}
+              className={settingsActionClassName("cursor-pointer")}
+            >
+              <IconRefresh className={`h-4 w-4 ${updates.checking ? "animate-spin" : ""}`} />
+              {t("plugins:checkForUpdates")}
+            </Button>
+            <Button
+              data-testid="install-plugin-trigger"
+              onClick={actions.openInstall}
+              className={settingsActionClassName("cursor-pointer")}
+            >
+              {t("plugins:installPlugin")}
+            </Button>
+          </div>
+        )}
       </div>
 
       <PluginUpdateStatus
@@ -180,6 +206,7 @@ function InstalledTab({
         updates={updates}
         updateAction={updateAction}
         isFinePointer={isFinePointer}
+        isAdmin={isAdmin}
       />
     </>
   );
@@ -192,8 +219,10 @@ function InstalledTab({
  */
 function GlobalAutoUpdateToggle({
   settings,
+  canManage,
 }: {
   settings: ReturnType<typeof useAutoUpdateSettings>;
+  canManage: boolean;
 }) {
   const { t } = useTranslation();
   return (
@@ -211,7 +240,7 @@ function GlobalAutoUpdateToggle({
         id="plugins-auto-update-default"
         data-testid="plugins-auto-update-default"
         checked={settings.autoUpdateDefault}
-        disabled={!settings.loaded}
+        disabled={!settings.loaded || !canManage}
         onCheckedChange={settings.setDefault}
         className="cursor-pointer"
       />
@@ -226,6 +255,7 @@ type PluginListProps = {
   updates: ReturnType<typeof usePluginUpdates>;
   updateAction: ReturnType<typeof usePluginUpdateAction>;
   isFinePointer: boolean;
+  isAdmin: boolean;
 };
 
 function PluginList({
@@ -235,10 +265,13 @@ function PluginList({
   updates,
   updateAction,
   isFinePointer,
+  isAdmin,
 }: PluginListProps) {
   const { t } = useTranslation();
   const { items, loaded, loading, error } = list;
-  const needsSetup = usePluginSetupStatus(items);
+  // The badge probes GET /api/plugins/:id/config, which is admin-only, and it
+  // points at a form only an admin can fill in — so members do not probe.
+  const needsSetup = usePluginSetupStatus(isAdmin ? items : []);
 
   if (error) {
     return (
@@ -286,6 +319,7 @@ function PluginList({
             needsSetup={needsSetup.has(plugin.id)}
             isFinePointer={isFinePointer}
             uninstallBusy={actions.uninstallBusy}
+            canManage={isAdmin}
             onEnable={actions.handleEnable}
             onDisable={actions.handleDisable}
             onConfirmUninstall={async (target) => {
