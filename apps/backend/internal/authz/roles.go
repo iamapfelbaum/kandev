@@ -77,14 +77,6 @@ var orgRoleScopes = map[OrgRole]Set{
 	OrgRoleGuest:  NewSet(),
 }
 
-// orgRoleDefaultWorkspaceRole maps an org role to the workspace role it
-// receives on a workspace whose visibility is `org`.
-var orgRoleDefaultWorkspaceRole = map[OrgRole]WorkspaceRole{
-	OrgRoleAdmin:  WorkspaceRoleCollaborator,
-	OrgRoleMember: WorkspaceRoleCollaborator,
-	OrgRoleGuest:  WorkspaceRoleNone,
-}
-
 // workspaceRoleScopes maps a workspace role to the workspace scopes it grants.
 //
 // session.exec is deliberately absent from viewer and present on collaborator:
@@ -109,12 +101,6 @@ func OrgScopes(role OrgRole) Set { return copySet(orgRoleScopes[role]) }
 
 // WorkspaceScopes returns the workspace scopes granted by a workspace role.
 func WorkspaceScopes(role WorkspaceRole) Set { return copySet(workspaceRoleScopes[role]) }
-
-// DefaultWorkspaceRole returns the workspace role an org role receives on an
-// org-visible workspace.
-func DefaultWorkspaceRole(role OrgRole) WorkspaceRole {
-	return orgRoleDefaultWorkspaceRole[role]
-}
 
 // AllScopes returns every scope both role tables can grant. Used by the
 // synthetic (auth-disabled) identity, which must behave exactly as the

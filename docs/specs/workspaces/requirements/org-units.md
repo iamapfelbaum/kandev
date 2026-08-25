@@ -31,7 +31,10 @@ a person reaches.
   and members. A department and a team are both units; they differ only in
   depth.
 - **Root unit:** The single unit at the top of an organization. Every other unit
-  descends from it.
+  descends from it. It takes members like any other unit; belonging to the
+  organization is not membership of it. If it were, every unit beneath it would
+  inherit the whole organization and no department could be separate from
+  another.
 - **Personal unit:** A unit belonging to exactly one user, which takes no
   members.
 - **Reach:** Whether a user can see a workspace at all, before any question of
@@ -88,9 +91,10 @@ they reach every board the team owns without further bookkeeping.
   and in all of its descendants, with no per-workspace record.
 - **AC-WORKSPACES-ORG-UNITS-002.3:** When a workspace is created under a unit,
   the system shall give the unit's existing members reach to it immediately.
-- **AC-WORKSPACES-ORG-UNITS-002.4:** When a user belongs to an organization, the
-  system shall treat that user as a member of the organization's root unit, at
-  the workspace role their organization role grants.
+- **AC-WORKSPACES-ORG-UNITS-002.4:** The system shall treat the root unit as an
+  ordinary unit: belonging to an organization grants no membership of it, and
+  no reach follows from an organization role alone. Sharing something with
+  everyone means adding them to the root, exactly as with any other unit.
 - **AC-WORKSPACES-ORG-UNITS-002.5:** When a unit membership is removed, the
   system shall withdraw reach to every workspace the user reached only through
   that membership, and shall disconnect their live subscriptions to those

@@ -36,7 +36,7 @@ permission model needs one registry and one resolver.
   extension point: there is no custom role builder, no per-user grant table and
   no UI for editing a role's scopes.
 - **AC-AUTH-ROLES-AND-SCOPES-001.5:** An org role grants org scopes outright
-  plus a default workspace role held at the org root unit; a workspace role
+  and nothing else; reach comes from unit membership, and a workspace role
   grants workspace scopes on one workspace; a single function resolves the
   effective scopes per user and workspace.
 - **AC-AUTH-ROLES-AND-SCOPES-001.6:** Org admin adds management scopes and never
@@ -144,12 +144,12 @@ values are never returned by any API to any role.
 
 **Org role → org scopes and default workspace role**
 
-| Org role | Org scopes | Default workspace role at the org root unit |
+| Org role | Org scopes | Reach granted |
 |---|---|---|
-| `owner` | all four | `collaborator` |
-| `admin` | `org.members.manage`, `org.settings.manage`, `org.config.manage` | `collaborator` |
-| `member` | none | `collaborator` |
-| `guest` | none | none — reaches only workspaces holding a direct grant for them |
+| `owner` | all four | none: reach comes from unit membership |
+| `admin` | `org.members.manage`, `org.settings.manage`, `org.config.manage`, `unit.manage` | none: reach comes from unit membership |
+| `member` | none | none: reach comes from unit membership |
+| `guest` | none | none, and a guest is not given unit membership |
 
 **Workspace role → workspace scopes**
 
@@ -172,11 +172,10 @@ Effective scopes for (user `U`, workspace `W`), evaluated in order:
 1. `U` is disabled, or `U`'s org is suspended → **no scopes**.
 2. Org scopes = the mapping for `U.role`, always.
 3. Workspace scopes are the **highest** role among:
-   1. the default workspace role for `U.role`, held at the org's root unit,
-   2. every `unit_members` row for `U` on a unit that is an ancestor of `W`'s
+   1. every `unit_members` row for `U` on a unit that is an ancestor of `W`'s
       unit, including that unit itself,
-   3. a `workspace_members` row for (`W`, `U`), which is a direct grant,
-   4. otherwise → **none**, and `W` is unreachable (404, no existence leak).
+   2. a `workspace_members` row for (`W`, `U`), which is a direct grant,
+   3. otherwise → **none**, and `W` is unreachable (404, no existence leak).
 
 This function is the only place permissions are derived. The roles combine by
 maximum, never by subtraction: a direct grant is how a `guest` gets into one
@@ -243,9 +242,9 @@ regardless of scope:
 - **GIVEN** an org admin and a workspace in another user's personal unit,
   **WHEN** they request it, **THEN** the response is 404 — admin is not a
   reach role.
-- **GIVEN** an org admin and a workspace under the org root unit, **WHEN** they
-  open it, **THEN** they hold `collaborator` scopes there, the same as any
-  member.
+- **GIVEN** an org admin who is a member of the root unit and a workspace
+  beneath it, **WHEN** they open it, **THEN** they hold the role that membership
+  gives, the same as any other member of the root.
 - **GIVEN** a `viewer` on a workspace, **WHEN** they read a task transcript,
   **THEN** it succeeds; **WHEN** they open a terminal or send a prompt,
   **THEN** the response is 403.
