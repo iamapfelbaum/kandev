@@ -72,7 +72,7 @@ func IsAssignableWorkspaceRole(role WorkspaceRole) bool {
 
 // orgRoleScopes maps an org role to the org scopes it grants.
 var orgRoleScopes = map[OrgRole]Set{
-	OrgRoleAdmin:  NewSet(ScopeOrgMembersManage, ScopeOrgSettingsManage, ScopeOrgConfigManage),
+	OrgRoleAdmin:  NewSet(ScopeOrgMembersManage, ScopeOrgSettingsManage, ScopeOrgConfigManage, ScopeUnitManage),
 	OrgRoleMember: NewSet(),
 	OrgRoleGuest:  NewSet(),
 }

@@ -2,8 +2,12 @@ package service
 
 import (
 	"context"
+	"errors"
 
 	"go.uber.org/zap"
+
+	"github.com/kandev/kandev/internal/authz"
+	"github.com/kandev/kandev/internal/task/models"
 )
 
 // UnitPlacer answers where a new workspace belongs.
@@ -17,6 +21,9 @@ type UnitPlacer interface {
 	PersonalUnitID(ctx context.Context, orgID, userID, displayName string) (string, error)
 	// RootUnitID returns the organization's root unit, creating it if needed.
 	RootUnitID(ctx context.Context, orgID string) (string, error)
+	// UnitOrgID reports which organization a unit belongs to, so a move can
+	// be refused before it crosses a tenant boundary.
+	UnitOrgID(ctx context.Context, unitID string) (string, error)
 }
 
 // SetUnitPlacer wires the placement seam.
@@ -47,4 +54,35 @@ func (s *Service) placementFor(ctx context.Context, ownerID, orgID string) strin
 		return ""
 	}
 	return unitID
+}
+
+// ErrUnitNotInWorkspaceOrg reports a destination in another tenant.
+var ErrUnitNotInWorkspaceOrg = errors.New("that unit belongs to another organization")
+
+// moveWorkspaceToUnit changes a workspace's placement, which is the only way to
+// change who reaches it.
+//
+// The caller already holds workspace.manage. They must also hold unit.manage,
+// because moving a board into a unit hands it to everyone in that unit, and
+// deciding who is in a unit is exactly what that scope governs.
+func (s *Service) moveWorkspaceToUnit(ctx context.Context, workspace *models.Workspace, unitID string) error {
+	if unitID == "" || unitID == workspace.UnitID {
+		return nil
+	}
+	subject := callerSubject(ctx)
+	if !subject.Unscoped && !authz.SubjectOrgScopes(subject).Has(authz.ScopeUnitManage) {
+		return ErrForbidden
+	}
+	if s.unitPlacer == nil {
+		return ErrUnitNotInWorkspaceOrg
+	}
+	orgID, err := s.unitPlacer.UnitOrgID(ctx, unitID)
+	if err != nil {
+		return err
+	}
+	if orgID != workspace.OrgID {
+		return ErrUnitNotInWorkspaceOrg
+	}
+	workspace.UnitID = unitID
+	return nil
 }

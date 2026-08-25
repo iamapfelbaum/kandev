@@ -14,6 +14,7 @@ var scopeConstNames = map[Scope]string{
 	ScopeOrgMembersManage:  "ScopeOrgMembersManage",
 	ScopeOrgSettingsManage: "ScopeOrgSettingsManage",
 	ScopeOrgConfigManage:   "ScopeOrgConfigManage",
+	ScopeUnitManage:        "ScopeUnitManage",
 	ScopeWorkspaceRead:     "ScopeWorkspaceRead",
 	ScopeWorkspaceManage:   "ScopeWorkspaceManage",
 	ScopeTaskWrite:         "ScopeTaskWrite",
@@ -64,6 +65,7 @@ func TestEveryRegisteredScopeIsEnforced(t *testing.T) {
 func TestScopeIdentifiersAreStable(t *testing.T) {
 	want := []string{
 		"org.config.manage", "org.members.manage", "org.settings.manage",
+		"unit.manage",
 		"member.manage", "repository.manage", "secret.manage",
 		"session.control", "session.exec", "session.prompt",
 		"task.write", "workspace.manage", "workspace.read",

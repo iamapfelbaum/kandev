@@ -128,6 +128,8 @@ type httpUpdateWorkspaceRequest struct {
 	DefaultEnvironmentID        *string `json:"default_environment_id,omitempty"`
 	DefaultAgentProfileID       *string `json:"default_agent_profile_id,omitempty"`
 	DefaultConfigAgentProfileID *string `json:"default_config_agent_profile_id,omitempty"`
+	// UnitID moves the workspace to another unit, changing who reaches it.
+	UnitID *string `json:"unit_id,omitempty"`
 }
 
 func (h *WorkspaceHandlers) httpUpdateWorkspace(c *gin.Context) {
@@ -143,6 +145,7 @@ func (h *WorkspaceHandlers) httpUpdateWorkspace(c *gin.Context) {
 		DefaultEnvironmentID:        body.DefaultEnvironmentID,
 		DefaultAgentProfileID:       body.DefaultAgentProfileID,
 		DefaultConfigAgentProfileID: body.DefaultConfigAgentProfileID,
+		UnitID:                      body.UnitID,
 	})
 	if err != nil {
 		handleNotFound(c, h.logger, err, "workspace not updated")

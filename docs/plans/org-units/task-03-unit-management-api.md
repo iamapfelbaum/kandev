@@ -1,7 +1,7 @@
 ---
 id: "03-unit-management-api"
 title: "Unit management API"
-status: todo
+status: done
 wave: 3
 depends_on: ["02-reach-resolution"]
 plan: "plan.md"
@@ -69,4 +69,18 @@ make lint
 
 ## Results
 
-Pending.
+Done. `/api/v1/units` serves the tree, its members, and workspace placement.
+Reading needs only an identity, because a member has to see the shape of their
+organization to understand why they reach what they reach; every write needs
+`unit.manage`, a new scope held by the organization administrator.
+
+A unit in another tenant answers 404 rather than 403, so one organization's tree
+is not enumerable from another, and moving a workspace validates the
+destination's organization before it changes anything.
+
+RED/GREEN:
+
+- RED: removing the scope gate from the write group fails three assertions in
+  `TestUnitWritesRequireUnitManage`.
+- GREEN: `go test ./internal/orgunit/... ./internal/authz/... ./internal/task/...`
+- GREEN: `make lint` reports 0 issues.

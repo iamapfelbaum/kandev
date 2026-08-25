@@ -171,6 +171,11 @@ func (s *Service) UpdateWorkspace(ctx context.Context, id string, req *UpdateWor
 		return nil, err
 	}
 
+	if req.UnitID != nil {
+		if err := s.moveWorkspaceToUnit(ctx, workspace, *req.UnitID); err != nil {
+			return nil, err
+		}
+	}
 	if req.Name != nil {
 		workspace.Name = *req.Name
 	}

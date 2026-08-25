@@ -293,3 +293,12 @@ func strongest(roles []string) string {
 	}
 	return best
 }
+
+// UnitOrgID reports which organization a unit belongs to.
+func (s *Service) UnitOrgID(ctx context.Context, unitID string) (string, error) {
+	unit, err := s.store.Get(ctx, unitID)
+	if err != nil {
+		return "", err
+	}
+	return unit.OrgID, nil
+}

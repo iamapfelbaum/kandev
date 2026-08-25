@@ -18,6 +18,7 @@ type Scope string
 // Org scopes are granted by the org role and are independent of any workspace.
 const (
 	ScopeOrgMembersManage  Scope = "org.members.manage"
+	ScopeUnitManage        Scope = "unit.manage"
 	ScopeOrgSettingsManage Scope = "org.settings.manage"
 	ScopeOrgConfigManage   Scope = "org.config.manage"
 )
@@ -58,6 +59,7 @@ var registry = []Definition{
 	{ScopeOrgMembersManage, KindOrg, "Invite, create, disable, and re-role users"},
 	{ScopeOrgSettingsManage, KindOrg, "Change organization-wide settings and defaults"},
 	{ScopeOrgConfigManage, KindOrg, "Manage executors, agent profiles, environments, editors, prompts, and notification providers"},
+	{ScopeUnitManage, KindOrg, "Create, rename, move, and delete organization units, and place workspaces in them"},
 
 	{ScopeWorkspaceRead, KindWorkspace, "See the workspace, its board, tasks, and transcripts"},
 	{ScopeWorkspaceManage, KindWorkspace, "Rename the workspace, change its defaults and visibility, delete it"},

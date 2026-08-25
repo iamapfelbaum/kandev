@@ -36,6 +36,7 @@ type WorkspaceDTO struct {
 	Description                 *string   `json:"description,omitempty"`
 	OwnerID                     string    `json:"owner_id"`
 	Visibility                  string    `json:"visibility"`
+	UnitID                      string    `json:"unit_id,omitempty"`
 	DefaultExecutorID           *string   `json:"default_executor_id,omitempty"`
 	DefaultEnvironmentID        *string   `json:"default_environment_id,omitempty"`
 	DefaultAgentProfileID       *string   `json:"default_agent_profile_id,omitempty"`
@@ -638,6 +639,7 @@ func FromWorkspace(workspace *models.Workspace) WorkspaceDTO {
 		Description:                 description,
 		OwnerID:                     workspace.OwnerID,
 		Visibility:                  string(authz.NormalizeVisibility(workspace.Visibility)),
+		UnitID:                      workspace.UnitID,
 		DefaultExecutorID:           workspace.DefaultExecutorID,
 		DefaultEnvironmentID:        workspace.DefaultEnvironmentID,
 		DefaultAgentProfileID:       workspace.DefaultAgentProfileID,
