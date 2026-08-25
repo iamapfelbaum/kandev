@@ -175,3 +175,40 @@ func TestUniqueRootAndPersonalUnits(t *testing.T) {
 		t.Fatal("a second personal unit was accepted for one user")
 	}
 }
+
+// Deleting an organization has to take its tree with it. Units are the one
+// thing no other owner removes: workspaces and accounts are deleted by their
+// own paths, so an orphaned tree would accumulate silently.
+func TestDeleteByOrgRemovesUnitsAndMemberships(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	doomed := mustInsert(t, s, &Unit{OrgID: "org-doomed", Kind: KindRoot, Name: "Initech"})
+	child := mustInsert(t, s, &Unit{OrgID: "org-doomed", ParentID: doomed.ID, Name: "Sales"})
+	keeper := mustInsert(t, s, &Unit{OrgID: "org-keep", Kind: KindRoot, Name: "Acme"})
+	for _, unit := range []*Unit{doomed, child, keeper} {
+		if err := s.SetMember(ctx, &Member{UnitID: unit.ID, UserID: "ada", Role: "owner"}); err != nil {
+			t.Fatalf("seed member: %v", err)
+		}
+	}
+
+	if err := s.DeleteByOrg(ctx, "org-doomed"); err != nil {
+		t.Fatalf("delete by org: %v", err)
+	}
+
+	if units, err := s.ListByOrg(ctx, "org-doomed"); err != nil || len(units) != 0 {
+		t.Fatalf("units after delete = %v (err %v), want none", units, err)
+	}
+	for _, id := range []string{doomed.ID, child.ID} {
+		if members, err := s.ListMembers(ctx, id); err != nil || len(members) != 0 {
+			t.Fatalf("memberships survived for %s: %v (err %v)", id, members, err)
+		}
+	}
+	// The other organization is untouched.
+	if units, err := s.ListByOrg(ctx, "org-keep"); err != nil || len(units) != 1 {
+		t.Fatalf("other org units = %v (err %v), want its root intact", units, err)
+	}
+	if members, err := s.ListMembers(ctx, keeper.ID); err != nil || len(members) != 1 {
+		t.Fatalf("other org membership = %v (err %v), want it intact", members, err)
+	}
+}

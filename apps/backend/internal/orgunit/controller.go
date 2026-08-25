@@ -53,7 +53,13 @@ func (c *Controller) list(ctx *gin.Context) {
 }
 
 func (c *Controller) listMembers(ctx *gin.Context) {
-	members, err := c.service.Store().ListMembers(ctx.Request.Context(), ctx.Param("id"))
+	id := ctx.Param("id")
+	// Reads need the tenant check as much as writes: without it, knowing a
+	// unit id from another organization is enough to enumerate its members.
+	if !c.unitInCallerOrg(ctx, id) {
+		return
+	}
+	members, err := c.service.Store().ListMembers(ctx.Request.Context(), id)
 	if err != nil {
 		c.fail(ctx, err)
 		return

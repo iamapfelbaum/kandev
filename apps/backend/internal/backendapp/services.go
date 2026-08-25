@@ -179,6 +179,8 @@ func provideServices(cfg *config.Config, log *logger.Logger, repos *Repositories
 	}
 	taskSvc.SetUnitPlacer(unitSvc)
 	taskSvc.SetUnitReach(unitSvc)
+	// Deleting an organization must take its unit tree with it.
+	orgSvc.SetUnitDeleter(unitSvc)
 
 	taskSvc.SetSecretStore(userSecretStore)
 	if deleter, ok := userSecretStore.(taskservice.WorkspaceSecretDeleter); ok {

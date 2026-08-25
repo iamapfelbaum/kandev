@@ -35,7 +35,9 @@ type DirectoryUser struct {
 
 // UserDirectory resolves users for membership operations.
 type UserDirectory interface {
-	ListDirectory(ctx context.Context) ([]DirectoryUser, error)
+	// ListDirectory returns the pickable accounts in one organization. An
+	// empty orgID means the single implicit organization.
+	ListDirectory(ctx context.Context, orgID string) ([]DirectoryUser, error)
 	// LookupStatus returns the user's status ("active"/"disabled") and role,
 	// or ok=false when no such user exists.
 	LookupStatus(ctx context.Context, userID string) (status string, role string, ok bool, err error)
@@ -137,11 +139,16 @@ func (s *Service) TransferWorkspaceOwnership(ctx context.Context, workspaceID, t
 }
 
 // ListDirectoryUsers returns the reduced user list for a member picker.
+//
+// It is scoped to the caller's organization. The picker is the one place a
+// person's name is shown to someone who has no other relationship with them,
+// so an unscoped list would make every account on the instance enumerable from
+// any tenant.
 func (s *Service) ListDirectoryUsers(ctx context.Context) ([]DirectoryUser, error) {
 	if s.userDirectory == nil {
 		return []DirectoryUser{}, nil
 	}
-	return s.userDirectory.ListDirectory(ctx)
+	return s.userDirectory.ListDirectory(ctx, callerOrgID(ctx))
 }
 
 // requireMemberManage resolves the workspace and enforces member.manage.

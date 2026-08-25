@@ -45,6 +45,15 @@ type AccountMigrator interface {
 	DeleteUsersByOrg(ctx context.Context, orgID string) error
 }
 
+// UnitDeleter removes an organization's unit tree.
+//
+// Deletion is the one path where the tree cannot be inferred from anything
+// else: workspaces and accounts are removed by their own owners, and units
+// would otherwise be left behind pointing at an organization that is gone.
+type UnitDeleter interface {
+	DeleteOrgUnits(ctx context.Context, orgID string) error
+}
+
 // FirstAdminCreator provisions an organization's first administrator. An
 // ordinary admin can only create accounts in their own tenant, so a brand-new
 // organization would otherwise have no way to get its first user; this is the
@@ -59,7 +68,13 @@ type Service struct {
 	log        *logger.Logger
 	enabled    bool
 	firstAdmin FirstAdminCreator
+	units      UnitDeleter
 }
+
+// SetUnitDeleter wires the tree-deletion seam. It is optional only because the
+// unit service is constructed after this one; when it is absent an
+// organization delete leaves its tree behind, which the wiring test guards.
+func (s *Service) SetUnitDeleter(d UnitDeleter) { s.units = d }
 
 // SetFirstAdminCreator installs the operator-only first-admin path.
 func (s *Service) SetFirstAdminCreator(create FirstAdminCreator) { s.firstAdmin = create }
@@ -235,6 +250,11 @@ func (s *Service) Delete(ctx context.Context, id, confirmSlug string) error {
 	}
 	if err := s.accounts.DeleteUsersByOrg(ctx, id); err != nil {
 		return fmt.Errorf("delete organization accounts: %w", err)
+	}
+	if s.units != nil {
+		if err := s.units.DeleteOrgUnits(ctx, id); err != nil {
+			return fmt.Errorf("delete organization units: %w", err)
+		}
 	}
 	if err := s.store.Delete(ctx, id); err != nil {
 		return err

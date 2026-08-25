@@ -138,3 +138,29 @@ func TestUnitCreateAndMember(t *testing.T) {
 		t.Fatalf("members = %d body = %s", w.Code, w.Body.String())
 	}
 }
+
+// Reads leak as readily as writes. Knowing a unit id from another tenant must
+// not be enough to enumerate who is in it, so the read handler carries the
+// same tenant check the write handlers do.
+func TestListMembersRefusesAnotherTenantsUnit(t *testing.T) {
+	router, svc := newTestRouter(t, authn.RoleAdmin)
+	ctx := t.Context()
+
+	// The caller's identity carries no org in this harness, so a unit that
+	// does carry one belongs to somebody else.
+	foreign, err := svc.Store().Insert(ctx, &Unit{OrgID: "org-other", Kind: KindRoot, Name: "Globex"})
+	if err != nil {
+		t.Fatalf("seed foreign unit: %v", err)
+	}
+	if err := svc.SetMember(ctx, foreign.ID, "user-elsewhere", "collaborator", "someone"); err != nil {
+		t.Fatalf("seed foreign member: %v", err)
+	}
+
+	w := do(t, router, http.MethodGet, "/api/v1/units/"+foreign.ID+"/members", "")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d body = %s, want 404", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "user-elsewhere") {
+		t.Fatal("another tenant's membership leaked in the response body")
+	}
+}

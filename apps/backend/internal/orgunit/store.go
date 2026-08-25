@@ -391,3 +391,24 @@ func (s *Store) AncestorMemberIDs(ctx context.Context, path string) ([]string, e
 	}
 	return out, rows.Err()
 }
+
+// DeleteByOrg removes every unit in an organization and their memberships. It
+// is the deletion path for a whole tenant: without it, deleting an
+// organization leaves its tree behind with nothing pointing at it.
+func (s *Store) DeleteByOrg(ctx context.Context, orgID string) error {
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, tx.Rebind(
+		`DELETE FROM unit_members WHERE unit_id IN (SELECT id FROM org_units WHERE org_id = ?)`),
+		orgID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, tx.Rebind(
+		`DELETE FROM org_units WHERE org_id = ?`), orgID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

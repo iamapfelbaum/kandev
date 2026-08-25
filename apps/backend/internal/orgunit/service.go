@@ -315,3 +315,8 @@ func (s *Service) UnitReaders(ctx context.Context, unitID string) ([]string, err
 	}
 	return s.store.AncestorMemberIDs(ctx, unit.Path)
 }
+
+// DeleteOrgUnits removes an organization's whole tree.
+func (s *Service) DeleteOrgUnits(ctx context.Context, orgID string) error {
+	return s.store.DeleteByOrg(ctx, orgID)
+}
