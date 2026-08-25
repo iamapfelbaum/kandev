@@ -51,7 +51,17 @@ func (s *Service) EnsureRoot(ctx context.Context, orgID, orgName string) (*Unit,
 	if name == "" {
 		name = "Organization"
 	}
-	return s.store.Insert(ctx, &Unit{OrgID: orgID, Kind: KindRoot, Name: name})
+	unit, err := s.store.Insert(ctx, &Unit{OrgID: orgID, Kind: KindRoot, Name: name})
+	if err != nil {
+		// Lost a race with a concurrent caller. The unique index kept the
+		// database right; re-reading is what keeps the method idempotent, as
+		// its name promises.
+		if existing, readErr := s.store.Root(ctx, orgID); readErr == nil {
+			return existing, nil
+		}
+		return nil, err
+	}
+	return unit, nil
 }
 
 // EnsurePersonal returns a user's personal unit, creating it when absent.
@@ -73,13 +83,24 @@ func (s *Service) EnsurePersonal(ctx context.Context, orgID, userID, displayName
 	if name == "" {
 		name = "Personal"
 	}
-	return s.store.Insert(ctx, &Unit{
+	unit, err := s.store.Insert(ctx, &Unit{
 		OrgID:       orgID,
 		ParentID:    root.ID,
 		Kind:        KindPersonal,
 		OwnerUserID: userID,
 		Name:        name,
 	})
+	if err != nil {
+		// Same race as the root: two first-time requests for one account can
+		// both pass the lookup above. Returning the row the winner created is
+		// the idempotent answer, and matters more here because the caller's
+		// fallback for an error used to be the organization root.
+		if existing, readErr := s.store.Personal(ctx, userID); readErr == nil {
+			return existing, nil
+		}
+		return nil, err
+	}
+	return unit, nil
 }
 
 // Create adds a standard unit under a parent.

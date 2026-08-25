@@ -109,7 +109,11 @@ func (s *Service) CreateWorkspace(ctx context.Context, req *CreateWorkspaceReque
 		// be able to place a workspace in another tenant.
 		OrgID: callerOrgID(ctx),
 	}
-	workspace.UnitID = s.placementFor(ctx, ownerID, workspace.OrgID)
+	placement, placementErr := s.placementFor(ctx, ownerID, workspace.OrgID)
+	if placementErr != nil {
+		return nil, placementErr
+	}
+	workspace.UnitID = placement
 
 	var kanbanWorkflow *models.Workflow
 	if req.BootstrapKanbanWorkflow {

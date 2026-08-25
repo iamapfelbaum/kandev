@@ -31,29 +31,35 @@ func (s *Service) SetUnitPlacer(p UnitPlacer) { s.unitPlacer = p }
 
 // placementFor decides the unit a new workspace goes in.
 //
-// A workspace created by a signed-in caller lands in their personal unit, which
-// is where "only I can see this" lives now that there is no private flag. One
-// created by an internal or pre-authentication caller has no person to belong
-// to and lands at the root, which reproduces the everyone-reaches-it behaviour
-// those workspaces already had.
-func (s *Service) placementFor(ctx context.Context, ownerID, orgID string) string {
+// A workspace created by a signed-in caller lands in their personal unit,
+// which is where "only I can see this" lives now that there is no private
+// flag. One created by an internal or pre-authentication caller has no person
+// to belong to and lands at the root, which reproduces the
+// everyone-reaches-it behaviour those workspaces already had.
+//
+// A failure to resolve an owner's personal unit is an error rather than a
+// fallback. Falling back to the root would take a workspace that was meant to
+// be private and hand it to everyone in the organization, which is the one
+// outcome a placement bug must never produce quietly.
+func (s *Service) placementFor(ctx context.Context, ownerID, orgID string) (string, error) {
 	if s.unitPlacer == nil {
-		return ""
+		return "", nil
 	}
 	if ownerID != "" {
 		unitID, err := s.unitPlacer.PersonalUnitID(ctx, orgID, ownerID, "")
-		if err == nil {
-			return unitID
+		if err != nil {
+			s.logger.Error("personal unit lookup failed; refusing to create the workspace",
+				zap.String("user_id", ownerID), zap.Error(err))
+			return "", err
 		}
-		s.logger.Warn("personal unit lookup failed; placing at the organization root",
-			zap.String("user_id", ownerID), zap.Error(err))
+		return unitID, nil
 	}
 	unitID, err := s.unitPlacer.RootUnitID(ctx, orgID)
 	if err != nil {
 		s.logger.Warn("root unit lookup failed; workspace is left unplaced", zap.Error(err))
-		return ""
+		return "", nil
 	}
-	return unitID
+	return unitID, nil
 }
 
 // ErrUnitNotInWorkspaceOrg reports a destination in another tenant.

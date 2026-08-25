@@ -3,6 +3,7 @@ package orgunit
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 )
 
@@ -151,5 +152,96 @@ func TestDeleteFailsClosedWithoutCounter(t *testing.T) {
 	}
 	if err := svc.Delete(ctx, dept.ID); !errors.Is(err, ErrNotEmpty) {
 		t.Fatalf("delete with no counter wired returned %v, want a refusal", err)
+	}
+}
+
+// Two first-time requests for one account can both pass the lookup inside
+// EnsurePersonal. The unique index keeps the database right, but the loser
+// used to get an error, and its caller's fallback was the organization root:
+// a workspace meant to be private would have been created where everyone
+// reaches it.
+//
+// This races for real rather than seeding the row first, because seeding it
+// makes the early lookup succeed and the conflict path is never reached. That
+// is exactly the mistake that made the first version of this test vacuous.
+func TestEnsurePersonalIsRaceSafe(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	if _, err := svc.EnsureRoot(ctx, "org-1", "Acme"); err != nil {
+		t.Fatalf("ensure root: %v", err)
+	}
+
+	const racers = 8
+	ids := make([]string, racers)
+	errs := make([]error, racers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			unit, err := svc.EnsurePersonal(ctx, "org-1", "ada", "Ada")
+			errs[i] = err
+			if unit != nil {
+				ids[i] = unit.ID
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("racer %d got an error instead of the existing unit: %v", i, err)
+		}
+	}
+	for i, id := range ids {
+		if id == "" || id != ids[0] {
+			t.Fatalf("racer %d returned %q, want every caller to get %q", i, id, ids[0])
+		}
+	}
+
+	units, err := svc.Store().ListByOrg(ctx, "org-1")
+	if err != nil {
+		t.Fatalf("list units: %v", err)
+	}
+	if len(units) != 2 {
+		t.Fatalf("units = %d, want a root and exactly one personal unit", len(units))
+	}
+}
+
+// Same race on the root, where a spurious error breaks boot rather than reach.
+func TestEnsureRootIsRaceSafe(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+
+	const racers = 8
+	ids := make([]string, racers)
+	errs := make([]error, racers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			unit, err := svc.EnsureRoot(ctx, "org-1", "Acme")
+			errs[i] = err
+			if unit != nil {
+				ids[i] = unit.ID
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("racer %d got an error instead of the existing root: %v", i, err)
+		}
+		if ids[i] != ids[0] || ids[i] == "" {
+			t.Fatalf("racer %d returned %q, want every caller to get %q", i, ids[i], ids[0])
+		}
 	}
 }
