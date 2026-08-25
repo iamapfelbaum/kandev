@@ -591,6 +591,9 @@
         "apps/backend/internal/task/service/service_events_assignee_test.go",
         "apps/web/components/task/task-assignee-control.test.tsx",
         "apps/web/lib/ws/handlers/tasks-assignee.test.ts"
+      ],
+      "settingsRoutes": [
+        "/settings/units"
       ]
     },
     {
