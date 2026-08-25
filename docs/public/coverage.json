@@ -581,7 +581,8 @@
         "apps/web/components/settings/workspaces/workspace-team-access-card.tsx",
         "apps/web/components/task/task-assignee-control.tsx",
         "apps/web/components/kanban-card-assignee-badge.tsx",
-        "apps/web/hooks/domains/users/use-assignable-people.ts"
+        "apps/web/hooks/domains/users/use-assignable-people.ts",
+        "apps/web/components/settings/workspaces/workspace-placement-card.tsx"
       ],
       "tests": [
         "apps/backend/internal/authz/resolve_test.go",
@@ -590,7 +591,8 @@
         "apps/web/lib/types/team-access.test.ts",
         "apps/backend/internal/task/service/service_events_assignee_test.go",
         "apps/web/components/task/task-assignee-control.test.tsx",
-        "apps/web/lib/ws/handlers/tasks-assignee.test.ts"
+        "apps/web/lib/ws/handlers/tasks-assignee.test.ts",
+        "apps/web/components/settings/workspaces/workspace-placement-card.test.tsx"
       ],
       "settingsRoutes": [
         "/settings/units"

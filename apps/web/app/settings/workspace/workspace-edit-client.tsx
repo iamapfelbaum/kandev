@@ -36,6 +36,7 @@ import { useSettingsSaveContributor } from "@/components/settings/settings-save-
 import { SettingsTarget } from "@/components/settings/settings-target";
 import { workspaceDiscoveryTarget } from "@/lib/settings-discovery/dynamic-targets";
 import { WorkspaceSectionHeader } from "@/components/settings/workspaces/workspace-section-header";
+import { WorkspacePlacementCard } from "@/components/settings/workspaces/workspace-placement-card";
 import { WorkspaceTeamAccessCard } from "@/components/settings/workspaces/workspace-team-access-card";
 import { hasScope, SCOPE } from "@/lib/types/team-access";
 
@@ -579,6 +580,12 @@ function WorkspaceEditForm({ workspace }: WorkspaceEditFormProps) {
         form mounts, and a snapshot would freeze the owner out of their own
         workspace.
       */}
+      <WorkspacePlacementCard
+        workspaceId={workspace.id}
+        unitId={workspace.unit_id}
+        scopes={workspace.scopes}
+      />
+      <Separator />
       <WorkspaceTeamAccessCard
         workspaceId={workspace.id}
         ownerId={workspace.owner_id ?? ""}

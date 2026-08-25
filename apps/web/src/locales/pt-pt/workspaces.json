@@ -183,5 +183,13 @@
   "workspaceSecretScope": "Área de trabalho",
   "workspaceSettings": "Definições da área de trabalho",
   "worktreeBranchTemplate": "Modelo de branch do worktree",
-  "worktreeSync": "Sincronização de worktree"
+  "worktreeSync": "Sincronização de worktree",
+  "placement.title": "Localização",
+  "placement.description": "A unidade onde esta área de trabalho está e, por isso, quem lhe acede. Movê-la é a única forma de mudar isso: os perfis combinam-se pelo mais forte, nada pode ser retirado no lugar.",
+  "placement.pick": "Escolher unidade",
+  "placement.search": "Procurar unidades",
+  "placement.none": "Nenhuma unidade encontrada",
+  "placement.moved": "Área de trabalho movida.",
+  "placement.failed": "Não foi possível mover a área de trabalho.",
+  "placement.ownerOnly": "Só o proprietário pode mover"
 }

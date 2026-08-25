@@ -183,5 +183,13 @@
   "workspaceSecretScope": "Workspace",
   "workspaceSettings": "Workspace Settings",
   "worktreeBranchTemplate": "Worktree Branch Template",
-  "worktreeSync": "Worktree Sync"
+  "worktreeSync": "Worktree Sync",
+  "placement.title": "Placement",
+  "placement.description": "Which unit this workspace sits in, and therefore who reaches it. Moving it is the only way to change that: roles combine by taking the strongest, so nothing can be taken away in place.",
+  "placement.pick": "Pick a unit",
+  "placement.search": "Search units",
+  "placement.none": "No units found",
+  "placement.moved": "Workspace moved.",
+  "placement.failed": "The workspace could not be moved.",
+  "placement.ownerOnly": "Only the workspace owner can move it"
 }

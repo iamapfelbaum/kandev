@@ -76,6 +76,13 @@ homeless.
 
 Copy ships in all five locales.
 
+A gap found later while auditing screenshots: this order claimed workspace
+placement was shown on the workspace, and it was not. The API and the e2e
+coverage existed, but nothing in the interface could move a workspace, which is
+the only way to narrow access in this design. `WorkspacePlacementCard` closes
+it, gated on `workspace.manage` and restoring the previous unit when a move is
+refused.
+
 RED/GREEN:
 
 - RED: treating a personal unit as an ordinary one fails

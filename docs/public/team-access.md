@@ -33,6 +33,8 @@ A Kandev workspace is coarse. It owns the default executor, environment and agen
 
 Add a unit under any other. A department and a team are the same thing at different depths, so adding a level later is a move rather than a migration.
 
+![The Organization units page with a New unit card open beneath the tree, its name field filled in with Security.](../screenshots/team-access-unit-create.png)
+
 Two units are created for you and behave differently on purpose:
 
 - The **root** is the whole organization. A workspace parked here is reached by everyone you put in the root.
@@ -43,6 +45,12 @@ Two units are created for you and behave differently on purpose:
 ![The members dialog for the Platform unit, listing Bruno Costa as a collaborator with an add-member row beneath.](../screenshots/team-access-unit-members.png)
 
 Everyone in a unit reaches every workspace under it, at the role you give them. Add someone once when they join the team, not once per board.
+
+## Moving a workspace
+
+A workspace sits in exactly one unit, and `Settings > Workspaces > (workspace)` is where you change it. Moving it is how you hand a board to another team, or take it back.
+
+![The workspace settings page showing a Placement card set to Runtime, above the Team access card.](../screenshots/team-access-workspace-placement.png)
 
 ## Narrowing access
 

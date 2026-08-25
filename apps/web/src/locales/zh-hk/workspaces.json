@@ -183,5 +183,13 @@
   "workspaceSecretScope": "工作區",
   "workspaceSettings": "工作區設定",
   "worktreeBranchTemplate": "工作樹分支模板",
-  "worktreeSync": "工作樹同步"
+  "worktreeSync": "工作樹同步",
+  "placement.title": "位置",
+  "placement.description": "該工作區所屬的單位，也就決定了誰能存取它。移動它是改變存取範圍的唯一方式：角色按最高權限合併，無法就地收回。",
+  "placement.pick": "選擇單位",
+  "placement.search": "搜尋單位",
+  "placement.none": "找不到單位",
+  "placement.moved": "工作區已移動。",
+  "placement.failed": "無法移動該工作區。",
+  "placement.ownerOnly": "僅工作區擁有者可移動"
 }

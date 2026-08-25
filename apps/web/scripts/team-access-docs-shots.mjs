@@ -80,6 +80,19 @@ try {
   await shot(ana, "team-access-unit-members");
   await ana.keyboard.press("Escape");
 
+  // Creating a unit, and the placement control that decides who reaches a
+  // workspace. Placement is the only way to narrow access, so it earns a shot.
+  await ana.getByTestId("unit-add-child").first().click();
+  await ana.getByTestId("unit-name-input").waitFor({ state: "visible", timeout: 20000 });
+  await ana.getByTestId("unit-name-input").fill("Security");
+  await ana.waitForTimeout(400);
+  await shot(ana, "team-access-unit-create");
+  await ana.getByRole("button", { name: /cancel/i }).click();
+
+  await ana.goto(`${BASE}/settings/workspace/${team.id}`, { waitUntil: "networkidle" });
+  await ana.getByTestId("workspace-placement-card").waitFor({ state: "visible", timeout: 20000 });
+  await shot(ana, "team-access-workspace-placement", '[data-testid="workspace-placement-card"]');
+
   await ana.goto(`${BASE}/settings/workspace/${team.id}`, { waitUntil: "networkidle" });
   await shot(ana, "team-access-owner-card", CARD_BOTTOM);
 
