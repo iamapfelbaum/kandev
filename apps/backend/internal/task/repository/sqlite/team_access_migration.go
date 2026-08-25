@@ -1,7 +1,5 @@
 package sqlite
 
-import "context"
-
 // Team-access schema evolution: workspace visibility, workspace membership,
 // and the human task assignee.
 //
@@ -86,13 +84,4 @@ func (r *Repository) ensureOrgUnitPlacement() {
 		"workspaces.unit_idx",
 		`CREATE INDEX IF NOT EXISTS idx_workspaces_unit ON workspaces(unit_id)`,
 	)
-}
-
-// CountWorkspacesInUnit reports how many workspaces a unit holds, which is what
-// stops internal/orgunit from deleting a unit out from under them.
-func (r *Repository) CountWorkspacesInUnit(ctx context.Context, unitID string) (int, error) {
-	var count int
-	err := r.ro.QueryRowxContext(ctx, r.ro.Rebind(
-		`SELECT COUNT(*) FROM workspaces WHERE unit_id = ?`), unitID).Scan(&count)
-	return count, err
 }

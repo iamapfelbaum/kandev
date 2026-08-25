@@ -27,11 +27,38 @@ type teamAccessRepo interface {
 	UpsertWorkspaceMember(context.Context, *models.WorkspaceMember) error
 }
 
-func seedTeamWorkspace(t *testing.T, repo teamAccessRepo, visibility authz.Visibility) {
+// seedTeamWorkspace builds the shape a team actually has: a unit that holds
+// the board, with the colleague a member of it. `shared` decides whether the
+// board sits in that unit or in its owner's personal one, which is the whole
+// of the private-versus-shared distinction now.
+func seedTeamWorkspace(t *testing.T, repo teamAccessRepo, shared bool) {
 	t.Helper()
 	ctx := context.Background()
+	units := testUnits[t.Name()]
+	if units == nil {
+		t.Fatal("no unit service for this test")
+	}
+	root, err := units.EnsureRoot(ctx, "", "Test org")
+	if err != nil {
+		t.Fatalf("ensure root: %v", err)
+	}
+	personal, err := units.EnsurePersonal(ctx, "", "user-ana", "Ana")
+	if err != nil {
+		t.Fatalf("ensure personal unit: %v", err)
+	}
+	team, err := units.Create(ctx, root.ID, "Platform")
+	if err != nil {
+		t.Fatalf("create team unit: %v", err)
+	}
+	unitID := personal.ID
+	if shared {
+		unitID = team.ID
+		if err := units.SetMember(ctx, team.ID, "user-bruno", "collaborator", "user-ana"); err != nil {
+			t.Fatalf("add unit member: %v", err)
+		}
+	}
 	if err := repo.CreateWorkspace(ctx, &models.Workspace{
-		ID: "ws-team", Name: "Team", OwnerID: "user-ana", Visibility: string(visibility),
+		ID: "ws-team", Name: "Team", OwnerID: "user-ana", UnitID: unitID,
 	}); err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
@@ -46,23 +73,24 @@ func seedTeamWorkspace(t *testing.T, repo teamAccessRepo, visibility authz.Visib
 	}
 }
 
-// The #2824 golden path: a colleague sees the board with no invitation.
-func TestOrgVisibleWorkspaceReachableWithoutInvitation(t *testing.T) {
+// The golden path: a colleague reaches the board through the unit they are
+// in, with no invitation and no per-workspace row.
+func TestUnitMemberReachesWorkspaceWithoutInvitation(t *testing.T) {
 	svc, _, repo := createTestService(t)
-	seedTeamWorkspace(t, repo, authz.VisibilityOrg)
+	seedTeamWorkspace(t, repo, true)
 
 	if _, err := svc.GetWorkspace(ctxAsRole("user-bruno", authn.RoleMember), "ws-team"); err != nil {
-		t.Fatalf("org-visible workspace must be reachable by a member: %v", err)
+		t.Fatalf("a workspace in a unit the member belongs to must be reachable: %v", err)
 	}
 	if _, err := svc.GetTask(ctxAsRole("user-bruno", authn.RoleMember), "task-team"); err != nil {
-		t.Fatalf("org-visible task must be readable by a member: %v", err)
+		t.Fatalf("a task on that board must be readable by the same member: %v", err)
 	}
 }
 
 // The privacy case the current design is built around must not regress.
 func TestPrivateWorkspaceStaysPrivate(t *testing.T) {
 	svc, _, repo := createTestService(t)
-	seedTeamWorkspace(t, repo, authz.VisibilityPrivate)
+	seedTeamWorkspace(t, repo, false)
 
 	bruno := ctxAsRole("user-bruno", authn.RoleMember)
 	if _, err := svc.GetWorkspace(bruno, "ws-team"); !errors.Is(err, repoerrors.ErrWorkspaceNotFound) {
@@ -81,7 +109,7 @@ func TestPrivateWorkspaceStaysPrivate(t *testing.T) {
 // A guest is deliberately excluded from org-visible workspaces.
 func TestGuestExcludedFromOrgVisibleWorkspace(t *testing.T) {
 	svc, _, repo := createTestService(t)
-	seedTeamWorkspace(t, repo, authz.VisibilityOrg)
+	seedTeamWorkspace(t, repo, true)
 
 	guest := ctxAsRole("user-contractor", authn.RoleGuest)
 	if _, err := svc.GetWorkspace(guest, "ws-team"); !errors.Is(err, repoerrors.ErrWorkspaceNotFound) {
@@ -99,32 +127,75 @@ func TestGuestExcludedFromOrgVisibleWorkspace(t *testing.T) {
 	}
 }
 
-// An explicit row outranks the org default in the narrowing direction too.
-func TestViewerRowNarrowsMemberOnOrgVisibleWorkspace(t *testing.T) {
+// A direct grant raises a role; it cannot lower one. Narrowing is done by
+// placing a workspace in a unit with fewer members, which is what lets the
+// combining rule stay "the strongest wins" with no deny concept to reason
+// about. This test pins the direction, because the model it replaced narrowed
+// in both.
+func TestDirectGrantCannotLowerAnInheritedRole(t *testing.T) {
 	svc, _, repo := createTestService(t)
-	seedTeamWorkspace(t, repo, authz.VisibilityOrg)
+	seedTeamWorkspace(t, repo, true)
 	if err := repo.UpsertWorkspaceMember(context.Background(), &models.WorkspaceMember{
 		WorkspaceID: "ws-team", UserID: "user-bruno", Role: string(authz.WorkspaceRoleViewer),
 	}); err != nil {
-		t.Fatalf("add viewer: %v", err)
+		t.Fatalf("add viewer grant: %v", err)
 	}
 
-	viewer := ctxAsRole("user-bruno", authn.RoleMember)
-	if _, err := svc.GetTask(viewer, "task-team"); err != nil {
-		t.Fatalf("viewer must still read: %v", err)
+	bruno := ctxAsRole("user-bruno", authn.RoleMember)
+	if _, err := svc.GetTask(bruno, "task-team"); err != nil {
+		t.Fatalf("reading must still work: %v", err)
 	}
-	// Reading is 200; writing is 403, not 404 — existence is already known.
+	title := "renamed by a colleague"
+	if _, err := svc.UpdateTask(bruno, "task-team", &UpdateTaskRequest{Title: &title}); err != nil {
+		t.Fatalf("a viewer grant lowered the collaborator role the unit gives: %v", err)
+	}
+}
+
+// A viewer on the unit is a viewer everywhere beneath it: reading is allowed
+// and writing is 403 rather than 404, because existence is already known.
+func TestUnitViewerCanReadButNotWrite(t *testing.T) {
+	svc, _, repo := createTestService(t)
+	seedTeamWorkspace(t, repo, true)
+	seedUnitViewer(t, "user-carla")
+
+	viewer := ctxAsRole("user-carla", authn.RoleMember)
+	if _, err := svc.GetTask(viewer, "task-team"); err != nil {
+		t.Fatalf("viewer must read: %v", err)
+	}
 	title := "hijacked"
-	_, err := svc.UpdateTask(viewer, "task-team", &UpdateTaskRequest{Title: &title})
-	if !IsForbidden(err) {
+	if _, err := svc.UpdateTask(viewer, "task-team", &UpdateTaskRequest{Title: &title}); !IsForbidden(err) {
 		t.Fatalf("viewer task write = %v, want ErrForbidden", err)
 	}
+}
+
+// seedUnitViewer adds a viewer member to the seeded team unit.
+func seedUnitViewer(t *testing.T, userID string) {
+	t.Helper()
+	ctx := context.Background()
+	units := testUnits[t.Name()]
+	root, err := units.EnsureRoot(ctx, "", "Test org")
+	if err != nil {
+		t.Fatalf("ensure root: %v", err)
+	}
+	all, err := units.Store().ListByOrg(ctx, "")
+	if err != nil {
+		t.Fatalf("list units: %v", err)
+	}
+	for _, u := range all {
+		if u.ParentID == root.ID && u.Name == "Platform" {
+			if err := units.SetMember(ctx, u.ID, userID, "viewer", "user-ana"); err != nil {
+				t.Fatalf("add viewer member: %v", err)
+			}
+			return
+		}
+	}
+	t.Fatal("seed did not create the team unit")
 }
 
 // A collaborator contributes; it does not administer.
 func TestCollaboratorCannotManageWorkspace(t *testing.T) {
 	svc, _, repo := createTestService(t)
-	seedTeamWorkspace(t, repo, authz.VisibilityOrg)
+	seedTeamWorkspace(t, repo, true)
 
 	bruno := ctxAsRole("user-bruno", authn.RoleMember)
 	title := "renamed by a collaborator"
@@ -143,7 +214,7 @@ func TestCollaboratorCannotManageWorkspace(t *testing.T) {
 // The owner keeps full control, and the DTO projection agrees with the resolver.
 func TestOwnerScopesProjectIntoAccessProjection(t *testing.T) {
 	svc, _, repo := createTestService(t)
-	seedTeamWorkspace(t, repo, authz.VisibilityOrg)
+	seedTeamWorkspace(t, repo, true)
 
 	workspace, err := svc.GetWorkspace(ctxAsRole("user-ana", authn.RoleMember), "ws-team")
 	if err != nil {
@@ -169,7 +240,7 @@ func TestOwnerScopesProjectIntoAccessProjection(t *testing.T) {
 // Membership management rejects each bad input with its own reason.
 func TestMemberManagementValidation(t *testing.T) {
 	svc, _, repo := createTestService(t)
-	seedTeamWorkspace(t, repo, authz.VisibilityPrivate)
+	seedTeamWorkspace(t, repo, false)
 	ana := ctxAsRole("user-ana", authn.RoleMember)
 
 	if _, err := svc.UpsertWorkspaceMember(ana, "ws-team", "user-bruno", "owner"); !errors.Is(err, ErrMemberRoleInvalid) {
@@ -189,7 +260,7 @@ func TestMemberManagementValidation(t *testing.T) {
 // Ownership transfer must leave owner_id and the owner row in agreement.
 func TestTransferOwnershipKeepsOwnerRowConsistent(t *testing.T) {
 	svc, _, repo := createTestService(t)
-	seedTeamWorkspace(t, repo, authz.VisibilityPrivate)
+	seedTeamWorkspace(t, repo, false)
 	ana := ctxAsRole("user-ana", authn.RoleMember)
 
 	if _, err := svc.UpsertWorkspaceMember(ana, "ws-team", "user-bruno", "collaborator"); err != nil {
@@ -247,13 +318,11 @@ func TestMessageAuthorIsServerStamped(t *testing.T) {
 // reach-only helper until review caught them.
 func TestViewerCannotReachWriteOnlyMutators(t *testing.T) {
 	svc, _, repo := createTestService(t)
-	seedTeamWorkspace(t, repo, authz.VisibilityOrg)
-	if err := repo.UpsertWorkspaceMember(context.Background(), &models.WorkspaceMember{
-		WorkspaceID: "ws-team", UserID: "user-bruno", Role: string(authz.WorkspaceRoleViewer),
-	}); err != nil {
-		t.Fatalf("add viewer: %v", err)
-	}
-	viewer := ctxAsRole("user-bruno", authn.RoleMember)
+	seedTeamWorkspace(t, repo, true)
+	// A viewer now comes from the tree: a direct grant could only raise the
+	// collaborator role the unit already gives user-bruno.
+	seedUnitViewer(t, "user-carla")
+	viewer := ctxAsRole("user-carla", authn.RoleMember)
 
 	if _, err := svc.UpdateTaskMetadata(viewer, "task-team", map[string]interface{}{"x": 1}); !IsForbidden(err) {
 		t.Errorf("viewer UpdateTaskMetadata = %v, want ErrForbidden", err)
@@ -266,7 +335,7 @@ func TestViewerCannotReachWriteOnlyMutators(t *testing.T) {
 // A lookup failure must never read as "granted".
 func TestAuthorizationFailsClosedOnLookupError(t *testing.T) {
 	svc, _, repo := createTestService(t)
-	seedTeamWorkspace(t, repo, authz.VisibilityPrivate)
+	seedTeamWorkspace(t, repo, false)
 	// A task pointing at a workspace row that does not exist is a dangling
 	// reference and stays readable; that is the documented exception.
 	if err := repo.CreateTask(context.Background(), &models.Task{

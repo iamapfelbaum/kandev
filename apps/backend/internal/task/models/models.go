@@ -1012,7 +1012,11 @@ type Workspace struct {
 	// Visibility is "private" (owner plus explicit members) or "org" (every
 	// non-guest user). Values are authz.Visibility; the field is a plain
 	// string so models stays free of an authz import.
-	Visibility                  string    `json:"visibility"`
+	Visibility string `json:"visibility"`
+	// UnitID places the workspace in the organization unit tree. Reach is
+	// resolved from this placement, so a workspace without one is reachable by
+	// nobody.
+	UnitID                      string    `json:"unit_id,omitempty"`
 	DefaultExecutorID           *string   `json:"default_executor_id,omitempty"`
 	DefaultEnvironmentID        *string   `json:"default_environment_id,omitempty"`
 	DefaultAgentProfileID       *string   `json:"default_agent_profile_id,omitempty"`

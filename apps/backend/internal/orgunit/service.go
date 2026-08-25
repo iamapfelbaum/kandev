@@ -208,3 +208,88 @@ func (s *Service) logInfo(msg string, unit *Unit) {
 		zap.String("org_id", unit.OrgID),
 		zap.String("kind", string(unit.Kind)))
 }
+
+// PersonalUnitID returns a user's personal unit, creating it on demand. It
+// satisfies the task service's placement seam.
+func (s *Service) PersonalUnitID(ctx context.Context, orgID, userID, displayName string) (string, error) {
+	unit, err := s.EnsurePersonal(ctx, orgID, userID, displayName)
+	if err != nil {
+		return "", err
+	}
+	return unit.ID, nil
+}
+
+// RootUnitID returns an organization's root unit, creating it on demand.
+func (s *Service) RootUnitID(ctx context.Context, orgID string) (string, error) {
+	unit, err := s.EnsureRoot(ctx, orgID, "")
+	if err != nil {
+		return "", err
+	}
+	return unit.ID, nil
+}
+
+// InheritedRole returns the highest role a user holds on a unit or any of its
+// ancestors. It satisfies the task service's reach seam.
+func (s *Service) InheritedRole(ctx context.Context, userID, unitID string) (string, error) {
+	unit, err := s.store.Get(ctx, unitID)
+	if err != nil {
+		if err == ErrUnitNotFound {
+			// A workspace pointing at a unit that is gone reaches nobody,
+			// which is the safe reading: it is not an error the caller can act
+			// on, and treating it as one would deny every request instead.
+			return "", nil
+		}
+		return "", err
+	}
+	roles, err := s.store.AncestorRoles(ctx, userID, unit.Path)
+	if err != nil {
+		return "", err
+	}
+	return strongest(roles), nil
+}
+
+// InheritedRolesByUnit resolves inherited roles for many units at once, in two
+// queries rather than one per unit.
+func (s *Service) InheritedRolesByUnit(ctx context.Context, userID string, unitIDs []string) (map[string]string, error) {
+	if userID == "" || len(unitIDs) == 0 {
+		return map[string]string{}, nil
+	}
+	held, err := s.store.UserRoles(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(held) == 0 {
+		return map[string]string{}, nil
+	}
+	paths, err := s.store.PathsByID(ctx, unitIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(paths))
+	for unitID, path := range paths {
+		var roles []string
+		for _, ancestor := range AncestorIDs(path) {
+			if role, ok := held[ancestor]; ok {
+				roles = append(roles, role)
+			}
+		}
+		if role := strongest(roles); role != "" {
+			out[unitID] = role
+		}
+	}
+	return out, nil
+}
+
+// strongest picks the highest role, which is the whole combining rule: nothing
+// a person holds anywhere in the ancestry can take away what another grant
+// gives them.
+func strongest(roles []string) string {
+	rank := map[string]int{"viewer": 1, "collaborator": 2, "owner": 3}
+	best, bestRank := "", 0
+	for _, role := range roles {
+		if r := rank[role]; r > bestRank {
+			best, bestRank = role, r
+		}
+	}
+	return best
+}

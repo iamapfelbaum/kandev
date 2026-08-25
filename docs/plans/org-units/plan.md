@@ -50,8 +50,8 @@ a half-migrated reach model.
 
 ## Work orders
 
-- [ ] [01 — Unit tree storage and placement](task-01-unit-tree-storage.md)
-- [ ] [02 — Reach resolution on the tree](task-02-reach-resolution.md)
+- [x] [01 — Unit tree storage and placement](task-01-unit-tree-storage.md)
+- [x] [02 — Reach resolution on the tree](task-02-reach-resolution.md)
 - [ ] [03 — Unit management API](task-03-unit-management-api.md)
 - [ ] [04 — Unit tree and placement interface](task-04-unit-interface.md)
 - [ ] [05 — Remove workspace visibility](task-05-remove-visibility.md)

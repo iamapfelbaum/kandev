@@ -1,7 +1,7 @@
 ---
 id: "01-unit-tree-storage"
 title: "Unit tree storage and placement"
-status: in_progress
+status: done
 wave: 1
 depends_on: []
 plan: "plan.md"
@@ -73,18 +73,33 @@ go test ./internal/task/service/ -run 'TestUnitPlacement|TestMigrationDoesNotWid
 
 ## Results
 
-In progress. Landed so far:
+Done. `internal/orgunit` owns the tree, its membership, and its invariants:
+single root and single personal unit per user enforced by unique indexes, a
+cycle refused on move, protected units refused on move and delete, a personal
+unit refusing members, and delete failing closed when the occupancy seam is
+unwired. Ancestry is a materialized path, and reparenting rewrites the whole
+subtree in one transaction.
 
-- `internal/orgunit` with the tree, membership, materialized path, and the
-  invariants: single root and single personal unit per user enforced by unique
-  indexes, cycle refused on move, protected units refused on move and delete,
-  a personal unit refusing members, and delete failing closed when the
-  occupancy seam is unwired.
-- `workspaces.unit_id` with its index, and `CountWorkspacesInUnit` as the
-  occupancy seam.
-- Tests for each of the above, every one mutation-checked. Two mutants that
-  only broke the build were rerun as valid mutations rather than counted as
-  caught.
+`workspaces.unit_id` is added with its index, and the one-shot backfill gives
+every organization a root, every account a personal unit, and every existing
+workspace a home. The placement rule is the one that keeps an upgrade from
+widening access: an owned workspace lands in its owner's personal unit and never
+under the root, including when its owner's account is gone.
 
-Remaining: root and personal unit creation hooked to organization and user
-creation, and the one-shot data migration that places existing workspaces.
+New workspaces are placed at creation through a lazy seam rather than a
+user-creation hook, so an account created by any path gets a personal unit the
+first time it needs one, with no ordering to get wrong.
+
+Verified on a fresh instance: an unowned pre-authentication workspace sits at
+the root, and both workspaces created by a signed-in user sit in her personal
+unit. Every test is mutation-checked; two mutants that only broke the build were
+rerun as valid mutations rather than counted as caught.
+
+RED/GREEN:
+
+- RED: removing the owner branch from the backfill fails
+  `TestBackfillDoesNotWidenReach` and
+  `TestBackfillIsolatesWorkspacesOfMissingOwners`.
+- RED: dropping the descendant rewrite from `Reparent` fails
+  `TestReparentRewritesDescendantPaths`.
+- GREEN: `go test ./internal/orgunit/... ./internal/task/... ./internal/office/...`

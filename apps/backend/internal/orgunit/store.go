@@ -317,3 +317,48 @@ func AncestorIDs(path string) []string {
 	}
 	return out
 }
+
+// UserRoles returns every unit role a user holds, keyed by unit id. It is one
+// query, so a caller resolving many workspaces does not issue one per row.
+func (s *Store) UserRoles(ctx context.Context, userID string) (map[string]string, error) {
+	rows, err := s.ro.QueryxContext(ctx, s.ro.Rebind(
+		`SELECT unit_id, role FROM unit_members WHERE user_id = ?`), userID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]string{}
+	for rows.Next() {
+		var unitID, role string
+		if err := rows.Scan(&unitID, &role); err != nil {
+			return nil, err
+		}
+		out[unitID] = role
+	}
+	return out, rows.Err()
+}
+
+// PathsByID returns the materialized path of each requested unit.
+func (s *Store) PathsByID(ctx context.Context, unitIDs []string) (map[string]string, error) {
+	if len(unitIDs) == 0 {
+		return map[string]string{}, nil
+	}
+	query, args, err := sqlx.In(`SELECT id, path FROM org_units WHERE id IN (?)`, unitIDs)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.ro.QueryxContext(ctx, s.ro.Rebind(query), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, path string
+		if err := rows.Scan(&id, &path); err != nil {
+			return nil, err
+		}
+		out[id] = path
+	}
+	return out, rows.Err()
+}

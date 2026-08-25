@@ -92,9 +92,8 @@ func (s *Service) workspaceDecision(ctx context.Context, workspace *models.Works
 	}
 
 	ref := authz.WorkspaceRef{
-		OwnerID:    workspace.OwnerID,
-		OrgID:      workspace.OrgID,
-		Visibility: authz.NormalizeVisibility(workspace.Visibility),
+		OwnerID: workspace.OwnerID,
+		OrgID:   workspace.OrgID,
 	}
 	// The tenant boundary is absolute and is checked before owner or
 	// membership, so a foreign-org workspace is resolved without touching the
@@ -102,10 +101,16 @@ func (s *Service) workspaceDecision(ctx context.Context, workspace *models.Works
 	if subject.OrgID != "" && workspace.OrgID != "" && subject.OrgID != workspace.OrgID {
 		return authz.Denied()
 	}
-	// Owner and unowned workspaces resolve without touching the member table.
+	// Owner and unowned workspaces resolve without touching the tree.
 	if workspace.OwnerID == "" || workspace.OwnerID == subject.UserID {
 		return authz.ResolveWorkspace(subject, ref)
 	}
+
+	inherited, ok := s.inheritedRole(ctx, subject.UserID, workspace)
+	if !ok {
+		return authz.Denied()
+	}
+	ref.InheritedRole = inherited
 
 	member, err := s.workspaces.GetWorkspaceMember(ctx, workspace.ID, subject.UserID)
 	if err != nil {
@@ -340,16 +345,21 @@ func (s *Service) filterWorkspacesForCaller(ctx context.Context, workspaces []*m
 		return nil
 	}
 
+	inherited, ok := s.inheritedRolesFor(ctx, subject.UserID, workspaces)
+	if !ok {
+		return nil
+	}
+
 	visible := make([]*models.Workspace, 0, len(workspaces))
 	for _, workspace := range workspaces {
 		if workspace == nil {
 			continue
 		}
 		ref := authz.WorkspaceRef{
-			OwnerID:    workspace.OwnerID,
-			OrgID:      workspace.OrgID,
-			Visibility: authz.NormalizeVisibility(workspace.Visibility),
-			MemberRole: authz.NormalizeWorkspaceRole(memberRoles[workspace.ID]),
+			OwnerID:       workspace.OwnerID,
+			OrgID:         workspace.OrgID,
+			MemberRole:    authz.NormalizeWorkspaceRole(memberRoles[workspace.ID]),
+			InheritedRole: inherited[workspace.ID],
 		}
 		if authz.ResolveWorkspace(subject, ref).CanRead() {
 			visible = append(visible, workspace)

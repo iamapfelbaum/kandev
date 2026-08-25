@@ -134,3 +134,19 @@ func copySet(src Set) Set {
 	}
 	return out
 }
+
+// workspaceRoleRank orders the workspace roles so they can be combined by
+// maximum. The zero value is the weakest, so an unknown role never outranks a
+// real one.
+func workspaceRoleRank(role WorkspaceRole) int {
+	switch role {
+	case WorkspaceRoleOwner:
+		return 3
+	case WorkspaceRoleCollaborator:
+		return 2
+	case WorkspaceRoleViewer:
+		return 1
+	default:
+		return 0
+	}
+}

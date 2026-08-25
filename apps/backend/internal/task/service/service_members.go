@@ -314,15 +314,25 @@ func (s *Service) ProjectWorkspaceAccess(ctx context.Context, workspaces []*mode
 		memberRoles = roles
 	}
 
+	inherited, ok := s.inheritedRolesFor(ctx, subject.UserID, workspaces)
+	if !ok {
+		for _, workspace := range workspaces {
+			if workspace != nil {
+				projection.Decisions[workspace.ID] = authz.Denied()
+			}
+		}
+		return projection
+	}
+
 	for _, workspace := range workspaces {
 		if workspace == nil {
 			continue
 		}
 		projection.Decisions[workspace.ID] = authz.ResolveWorkspace(subject, authz.WorkspaceRef{
-			OwnerID:    workspace.OwnerID,
-			OrgID:      workspace.OrgID,
-			Visibility: authz.NormalizeVisibility(workspace.Visibility),
-			MemberRole: authz.NormalizeWorkspaceRole(memberRoles[workspace.ID]),
+			OwnerID:       workspace.OwnerID,
+			OrgID:         workspace.OrgID,
+			MemberRole:    authz.NormalizeWorkspaceRole(memberRoles[workspace.ID]),
+			InheritedRole: inherited[workspace.ID],
 		})
 	}
 	return projection
@@ -493,9 +503,8 @@ func (s *Service) userReachesWorkspace(ctx context.Context, workspace *models.Wo
 		return false
 	}
 	ref := authz.WorkspaceRef{
-		OwnerID:    workspace.OwnerID,
-		OrgID:      workspace.OrgID,
-		Visibility: authz.NormalizeVisibility(workspace.Visibility),
+		OwnerID: workspace.OwnerID,
+		OrgID:   workspace.OrgID,
 	}
 	if member != nil {
 		ref.MemberRole = authz.NormalizeWorkspaceRole(member.Role)

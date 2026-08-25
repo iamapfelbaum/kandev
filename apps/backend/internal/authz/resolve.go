@@ -1,27 +1,5 @@
 package authz
 
-// Visibility decides who, beyond the owner and explicit members, can reach a
-// workspace.
-type Visibility string
-
-const (
-	// VisibilityPrivate restricts a workspace to its owner and explicitly
-	// added members. It is the default and the value every pre-existing
-	// workspace migrates to: an upgrade must never widen access.
-	VisibilityPrivate Visibility = "private"
-	// VisibilityOrg makes a workspace reachable by every non-guest user.
-	VisibilityOrg Visibility = "org"
-)
-
-// NormalizeVisibility coerces an unknown stored value to private. Unknown
-// input must never widen access.
-func NormalizeVisibility(value string) Visibility {
-	if Visibility(value) == VisibilityOrg {
-		return VisibilityOrg
-	}
-	return VisibilityPrivate
-}
-
 // Subject is the caller, as far as authorization is concerned.
 type Subject struct {
 	UserID  string
@@ -39,13 +17,17 @@ type Subject struct {
 	Unscoped bool
 }
 
-// WorkspaceRef is the workspace state authorization needs. MemberRole is
-// WorkspaceRoleNone when the caller has no explicit membership row.
+// WorkspaceRef is the workspace state authorization needs.
 type WorkspaceRef struct {
 	OwnerID string
 	// OrgID is the workspace's tenant, empty when organizations are off.
-	OrgID      string
-	Visibility Visibility
+	OrgID string
+	// InheritedRole is the highest role the caller holds on any unit that is
+	// an ancestor of the workspace's unit, including that unit itself. It is
+	// WorkspaceRoleNone when they are a member of none of them.
+	InheritedRole WorkspaceRole
+	// MemberRole is a direct grant recorded against this workspace alone. It
+	// can only raise the result, never lower it.
 	MemberRole WorkspaceRole
 }
 
@@ -64,9 +46,10 @@ func (d Decision) Has(scope Scope) bool { return d.Scopes.Has(scope) }
 
 // ResolveWorkspace is the only place workspace permissions are derived.
 //
-// Order matters, and an explicit membership row deliberately outranks the org
-// default in BOTH directions: it is how a guest is admitted to one workspace,
-// and how a member is narrowed to viewer on a sensitive one.
+// Roles combine by maximum. Nothing subtracts, so no grant can lower what a
+// unit already gives: narrowing is done by placing a workspace in a unit with
+// fewer members, which keeps the rule to one sentence and keeps a permission
+// question answerable by reading the tree.
 func ResolveWorkspace(subject Subject, ref WorkspaceRef) Decision {
 	// The tenant boundary is checked first and is absolute. It is not a
 	// permission level that a role can outrank: a workspace in another org is
@@ -88,15 +71,21 @@ func ResolveWorkspace(subject Subject, ref WorkspaceRef) Decision {
 	case subject.UserID != "" && ref.OwnerID == subject.UserID:
 		return decide(WorkspaceRoleOwner)
 
-	case ref.MemberRole != WorkspaceRoleNone:
-		return decide(ref.MemberRole)
-
-	case ref.Visibility == VisibilityOrg:
-		return decide(DefaultWorkspaceRole(subject.OrgRole))
-
 	default:
-		return decide(WorkspaceRoleNone)
+		return decide(highestRole(ref.InheritedRole, ref.MemberRole))
 	}
+}
+
+// highestRole returns the strongest of the roles it is given. It is the whole
+// of the combining rule.
+func highestRole(roles ...WorkspaceRole) WorkspaceRole {
+	best := WorkspaceRoleNone
+	for _, role := range roles {
+		if workspaceRoleRank(role) > workspaceRoleRank(best) {
+			best = role
+		}
+	}
+	return best
 }
 
 // Denied is the fail-closed decision. Resolution errors return this rather

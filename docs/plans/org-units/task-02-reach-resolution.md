@@ -1,7 +1,7 @@
 ---
 id: "02-reach-resolution"
 title: "Reach resolution on the tree"
-status: todo
+status: done
 wave: 2
 depends_on: ["01-unit-tree-storage"]
 plan: "plan.md"
@@ -68,4 +68,23 @@ make lint
 
 ## Results
 
-Pending.
+Done. `authz.WorkspaceRef` carries `InheritedRole` instead of `Visibility`, and
+`ResolveWorkspace` returns the maximum of the inherited role, any direct grant,
+and ownership. Nothing subtracts, so a grant can only raise what a unit gives.
+
+Reach is resolved in two queries for a list rather than one per row: the
+caller's unit roles and the units' paths are fetched once and matched by
+ancestry in memory. Both the single and the bulk path fail closed, and the bulk
+path fails closed for the whole list, because a partial answer would hide
+workspaces the caller can reach and read as data loss rather than as a
+permission error.
+
+The service tests now build a real tree instead of setting a flag, which also
+means the wiring is exercised: a resolver nothing calls protects nothing.
+
+RED/GREEN:
+
+- RED: making `highestRole` return the last non-empty role instead of the
+  strongest fails `TestRolesCombineByMaximum/a direct grant cannot lower it`.
+- GREEN: `go test ./internal/authz/... ./internal/task/... ./internal/orgunit/...`
+- GREEN: `make lint` reports 0 issues.

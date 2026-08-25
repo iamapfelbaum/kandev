@@ -25,6 +25,7 @@ import (
 	officesqlite "github.com/kandev/kandev/internal/office/repository/sqlite"
 	officeservice "github.com/kandev/kandev/internal/office/service"
 	"github.com/kandev/kandev/internal/org"
+	"github.com/kandev/kandev/internal/orgunit"
 	"github.com/kandev/kandev/internal/plugins"
 	promptservice "github.com/kandev/kandev/internal/prompts/service"
 	promptstore "github.com/kandev/kandev/internal/prompts/store"
@@ -77,6 +78,7 @@ type Services struct {
 	// Org owns organizations. Always non-nil; Enabled() reports whether the
 	// multi-tenancy feature is on.
 	Org           *org.Service
+	OrgUnits      *orgunit.Service
 	User          *userservice.Service
 	Editor        *editorservice.Service
 	Notification  *notificationservice.Service

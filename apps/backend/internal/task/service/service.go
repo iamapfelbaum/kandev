@@ -297,6 +297,8 @@ type Repos struct {
 type Service struct {
 	workspaces                      repository.WorkspaceRepository
 	userDirectory                   UserDirectory
+	unitPlacer                      UnitPlacer
+	unitReach                       UnitReachResolver
 	orgSettings                     OrgSettings
 	userOrgs                        func(ctx context.Context, userID string) (string, error)
 	tasks                           repository.TaskRepository

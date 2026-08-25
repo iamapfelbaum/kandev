@@ -170,6 +170,16 @@ func provideServices(cfg *config.Config, log *logger.Logger, repos *Repositories
 	if _, err := orgSvc.EnsureDefaultOrg(context.Background(), defaultOrgName); err != nil {
 		return nil, nil, fmt.Errorf("organization migration: %w", err)
 	}
+	// The unit tree is built after the tenancy migration, which is what stamps
+	// organization ids: placing a workspace before it knows its organization
+	// would put it under the wrong root.
+	unitSvc, unitErr := buildOrgUnitService(dbPool, repos.Task, repos.UserAccounts, log)
+	if unitErr != nil {
+		return nil, nil, fmt.Errorf("initialize organization units: %w", unitErr)
+	}
+	taskSvc.SetUnitPlacer(unitSvc)
+	taskSvc.SetUnitReach(unitSvc)
+
 	if orgSettingsStore, orgErr := systemsettings.NewStore(dbPool); orgErr != nil {
 		log.Warn("org settings unavailable; new workspaces default to private", zap.Error(orgErr))
 	} else {
@@ -311,6 +321,7 @@ func provideServices(cfg *config.Config, log *logger.Logger, repos *Repositories
 		DynamicBindingResolver:   dynamicBindingResolver,
 		Task:                     taskSvc,
 		Org:                      orgSvc,
+		OrgUnits:                 unitSvc,
 		User:                     userSvc,
 		Editor:                   editorSvc,
 		Prompts:                  promptSvc,
