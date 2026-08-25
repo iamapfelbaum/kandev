@@ -225,12 +225,15 @@ func (s *Service) authorizeWorkflowID(ctx context.Context, workflowID string) er
 		return nil
 	}
 	workspace, err := s.workspaces.GetWorkspace(ctx, workflow.WorkspaceID)
-	if err != nil {
-		// Same rule as tasks: a missing workspace row is a dangling
-		// reference, anything else fails closed.
-		if errors.Is(err, repoerrors.ErrWorkspaceNotFound) {
-			return nil
-		}
+	switch {
+	case errors.Is(err, repoerrors.ErrWorkspaceNotFound):
+		// A dangling workspace reference should not hide the workflow from the
+		// single user who can already see everything else about it.
+		return nil
+	case err != nil:
+		// Anything else is a failed lookup, not an answer. Treating it as
+		// "authorized" would let a transient database error hand a guessed
+		// workflow ID to whoever asked, so it fails closed by propagating.
 		return err
 	}
 	if !s.workspaceDecision(ctx, workspace).CanRead() {
@@ -243,6 +246,13 @@ func (s *Service) authorizeWorkflowID(ctx context.Context, workflowID string) er
 // WS gateway's subscription checks.
 func (s *Service) AuthorizeTaskAccess(ctx context.Context, taskID string) error {
 	return s.authorizeTaskID(ctx, taskID)
+}
+
+// AuthorizeWorkflowAccess is the public form of authorizeWorkflowID, consumed
+// by the workflow service, whose step/export/import surface reaches workflows
+// by ID but does not own workspace permissions.
+func (s *Service) AuthorizeWorkflowAccess(ctx context.Context, workflowID string) error {
+	return s.authorizeWorkflowID(ctx, workflowID)
 }
 
 // AuthorizeWorkspaceAccess is the public form of authorizeWorkspaceID,
