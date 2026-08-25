@@ -59,6 +59,7 @@ const SEGMENT_LABEL_KEYS: Record<string, string> = {
   changelog: "common:changelog",
   "data-storage": "system:navDataStorage",
   executor: "common:executor",
+  units: "settings:navUnits",
   executors: "common:executors",
   "external-mcp": "common:externalMcp",
   "feature-toggles": "system:navFeatureToggles",
