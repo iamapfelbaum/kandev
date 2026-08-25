@@ -1,7 +1,7 @@
 ---
 id: "01-unit-tree-storage"
 title: "Unit tree storage and placement"
-status: todo
+status: in_progress
 wave: 1
 depends_on: []
 plan: "plan.md"
@@ -73,4 +73,18 @@ go test ./internal/task/service/ -run 'TestUnitPlacement|TestMigrationDoesNotWid
 
 ## Results
 
-Pending.
+In progress. Landed so far:
+
+- `internal/orgunit` with the tree, membership, materialized path, and the
+  invariants: single root and single personal unit per user enforced by unique
+  indexes, cycle refused on move, protected units refused on move and delete,
+  a personal unit refusing members, and delete failing closed when the
+  occupancy seam is unwired.
+- `workspaces.unit_id` with its index, and `CountWorkspacesInUnit` as the
+  occupancy seam.
+- Tests for each of the above, every one mutation-checked. Two mutants that
+  only broke the build were rerun as valid mutations rather than counted as
+  caught.
+
+Remaining: root and personal unit creation hooked to organization and user
+creation, and the one-shot data migration that places existing workspaces.

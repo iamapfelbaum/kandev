@@ -1,5 +1,7 @@
 package sqlite
 
+import "context"
+
 // Team-access schema evolution: workspace visibility, workspace membership,
 // and the human task assignee.
 //
@@ -36,6 +38,8 @@ func (r *Repository) ensureTeamAccessSchema() error {
 		`ALTER TABLE tasks ADD COLUMN assignee_user_id TEXT NOT NULL DEFAULT ''`,
 	)
 
+	r.ensureOrgUnitPlacement()
+
 	// workspace_members is created by the infra DDL on both fresh and existing
 	// databases, so only the owner backfill needs to run here.
 	return r.backfillWorkspaceOwnerMembers()
@@ -59,4 +63,36 @@ func (r *Repository) backfillWorkspaceOwnerMembers() error {
 		  )
 	`)
 	return err
+}
+
+// ensureOrgUnitPlacement adds the column that places a workspace in the
+// organization unit tree.
+//
+// It lives here rather than in internal/orgunit because the task repository
+// owns the workspaces table.
+//
+// No migration currently recreates `workspaces`. If one is ever added, this
+// column has to be in its replacement CREATE TABLE and its INSERT ... SELECT
+// list: a rebuild copies a fixed column list, and MigrateLogger.Apply swallows
+// errors, so a column added before a rebuild disappears without a sound. That
+// is recorded in apps/backend/AGENTS.md and has already cost this branch a
+// silent loss once, on `tasks`.
+func (r *Repository) ensureOrgUnitPlacement() {
+	r.migrate.Apply(
+		"workspaces.unit_id",
+		`ALTER TABLE workspaces ADD COLUMN unit_id TEXT NOT NULL DEFAULT ''`,
+	)
+	r.migrate.Apply(
+		"workspaces.unit_idx",
+		`CREATE INDEX IF NOT EXISTS idx_workspaces_unit ON workspaces(unit_id)`,
+	)
+}
+
+// CountWorkspacesInUnit reports how many workspaces a unit holds, which is what
+// stops internal/orgunit from deleting a unit out from under them.
+func (r *Repository) CountWorkspacesInUnit(ctx context.Context, unitID string) (int, error) {
+	var count int
+	err := r.ro.QueryRowxContext(ctx, r.ro.Rebind(
+		`SELECT COUNT(*) FROM workspaces WHERE unit_id = ?`), unitID).Scan(&count)
+	return count, err
 }
