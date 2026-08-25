@@ -33,6 +33,7 @@ import (
 	"github.com/kandev/kandev/internal/auth"
 	"github.com/kandev/kandev/internal/auth/authn"
 	authhttpapi "github.com/kandev/kandev/internal/auth/httpapi"
+	"github.com/kandev/kandev/internal/authz"
 	"github.com/kandev/kandev/internal/automation"
 	"github.com/kandev/kandev/internal/azuredevops"
 	"github.com/kandev/kandev/internal/clarification"
@@ -1458,6 +1459,40 @@ func dockerSessionAuthorizer(taskSvc *taskservice.Service) docker.SessionAuthori
 		return nil
 	}
 	return taskSvc
+}
+
+// lifecycleAccessAuthorizer is the task-service surface the lifecycle manager's
+// per-user visibility checks are wired to. Narrowed to an interface so the
+// wiring itself is testable: the three single-ID checkers take the same
+// signature, so a crossed wire (session visibility installed in the task slot,
+// say) compiles and silently authorizes the wrong resource.
+type lifecycleAccessAuthorizer interface {
+	AuthorizeSessionAccess(ctx context.Context, sessionID string) error
+	AuthorizeEnvironmentAccess(ctx context.Context, taskEnvironmentID string) error
+	AuthorizeTaskAccess(ctx context.Context, taskID string) error
+	AuthorizeTaskEnvironmentAccess(ctx context.Context, taskID, taskEnvironmentID string) error
+	AuthorizeSessionScope(ctx context.Context, sessionID string, scope authz.Scope) error
+	AuthorizeEnvironmentScope(ctx context.Context, taskEnvironmentID string, scope authz.Scope) error
+}
+
+// wireLifecycleAccessCheckers installs every per-user visibility check on the
+// lifecycle manager. Kept together so a surface that needs a new kind of check
+// has one place to add it, rather than another setter call somewhere else in
+// startup that nothing asserts on.
+func wireLifecycleAccessCheckers(lifecycleMgr *lifecycle.Manager, access lifecycleAccessAuthorizer) {
+	lifecycleMgr.SetSessionAccessChecker(access.AuthorizeSessionAccess)
+	lifecycleMgr.SetEnvironmentAccessChecker(access.AuthorizeEnvironmentAccess)
+	lifecycleMgr.SetTaskAccessChecker(access.AuthorizeTaskAccess)
+	lifecycleMgr.SetTaskEnvironmentAccessChecker(access.AuthorizeTaskEnvironmentAccess)
+	// Execution surfaces (terminal, shell, file writes, VS Code, port
+	// previews) require session.exec, which a viewer does not hold. They are
+	// keyed either by session or by environment, so both slots get one.
+	lifecycleMgr.SetSessionExecAccessChecker(func(ctx context.Context, sessionID string) error {
+		return access.AuthorizeSessionScope(ctx, sessionID, authz.ScopeSessionExec)
+	})
+	lifecycleMgr.SetEnvironmentExecAccessChecker(func(ctx context.Context, environmentID string) error {
+		return access.AuthorizeEnvironmentScope(ctx, environmentID, authz.ScopeSessionExec)
+	})
 }
 
 func dockerTaskTitleProvider(taskRepo *sqliterepo.Repository, log *logger.Logger) docker.TaskTitleProvider {

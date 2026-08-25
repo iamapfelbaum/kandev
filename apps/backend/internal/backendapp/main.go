@@ -584,18 +584,9 @@ func startAgentInfrastructure(
 	// LSP, terminals) enforce per-user workspace scoping (opt-in auth). The
 	// GetOrEnsure* execution paths run these checks internally; the vscode and
 	// port reverse proxies (bare lookup + cache) call CheckSessionAccess at
-	// the handler.
-	lifecycleMgr.SetSessionAccessChecker(services.Task.AuthorizeSessionAccess)
-	// Execution surfaces (terminal, shell, file writes, VS Code, port
-	// previews) require session.exec, which a viewer does not hold.
-	lifecycleMgr.SetSessionExecAccessChecker(func(ctx context.Context, sessionID string) error {
-		return services.Task.AuthorizeSessionScope(ctx, sessionID, authz.ScopeSessionExec)
-	})
-	// The environment-keyed terminal route reaches an execution the same way
-	// the session-keyed ones do, so it needs the same scope.
-	lifecycleMgr.SetEnvironmentAccessChecker(func(ctx context.Context, environmentID string) error {
-		return services.Task.AuthorizeEnvironmentScope(ctx, environmentID, authz.ScopeSessionExec)
-	})
+	// the handler, and the SSR terminal-list routes call CheckTaskAccess /
+	// CheckEnvironmentAccess / CheckTaskEnvironmentAccess in a route guard.
+	wireLifecycleAccessCheckers(lifecycleMgr, services.Task)
 	log.Info("Workspace info provider configured for session recovery")
 
 	// TODO(task-model-unification Phase 2, ADR 0004): wire agentruntime.New(lifecycleMgr)
