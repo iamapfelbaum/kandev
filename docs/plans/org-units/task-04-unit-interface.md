@@ -1,7 +1,7 @@
 ---
 id: "04-unit-interface"
 title: "Unit tree and placement interface"
-status: todo
+status: done
 wave: 3
 depends_on: ["03-unit-management-api"]
 plan: "plan.md"
@@ -67,4 +67,18 @@ pnpm run i18n:check && pnpm run i18n:ratchet
 
 ## Results
 
-Pending.
+Done. `Settings > Access Control > Organization units` renders the tree with a
+row per unit, indented by depth derived from the materialized path, and offers
+create, delete and member management. A personal unit and the root show no
+control that would only ever be refused: a personal unit takes no members and
+cannot be deleted, and deleting the root would leave every workspace beneath it
+homeless.
+
+Copy ships in all five locales.
+
+RED/GREEN:
+
+- RED: treating a personal unit as an ordinary one fails
+  "offers no member or delete control on a personal unit".
+- GREEN: `pnpm test -- components/settings/units lib/api/domains/org-units-api.test.ts`
+- GREEN: typecheck, eslint, i18n:check, i18n:ratchet.

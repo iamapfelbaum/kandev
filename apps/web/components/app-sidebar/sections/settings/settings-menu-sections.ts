@@ -20,6 +20,7 @@ import {
   IconRobot,
   IconShieldLock,
   IconTerminal2,
+  IconSitemap,
   IconUsers,
   IconWand,
 } from "@tabler/icons-react";
@@ -179,6 +180,12 @@ export const SETTINGS_MENU_SECTIONS: SettingsMenuSection[] = [
       // is instance operation. The href keeps its /settings/system/ prefix,
       // like the Users row above it: these sections group by subject, not by
       // URL.
+      {
+        href: "/settings/units",
+        labelKey: "settings:navUnits",
+        icon: IconSitemap,
+        requires: "users",
+      },
       {
         href: "/settings/system/organizations",
         labelKey: "orgs:navOrganizations",
