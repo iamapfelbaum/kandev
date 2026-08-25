@@ -1,5 +1,5 @@
 ---
-spec: docs/specs/workspaces/requirements/membership.md
+spec: docs/specs/auth/requirements/roles-and-scopes.md
 created: 2026-08-22
 updated: 2026-08-22
 status: draft
@@ -7,10 +7,16 @@ status: draft
 
 # Team Access Plan — Roles, Scopes, and Workspace Visibility
 
+> **Partly superseded.** Workspace visibility and the membership model it came
+> with are replaced by
+> [organization units](../org-units/plan.md). The scope registry, the human
+> assignee, and actor attribution from this plan stand and are not revisited
+> there. Work orders 02, 03 and 08 describe a reach model that no longer ships.
+
 ## Scope
 
 Implement [org roles and scopes](../../specs/auth/requirements/roles-and-scopes.md) and
-[workspace visibility and membership](../../specs/workspaces/requirements/membership.md): a
+[workspace visibility and membership](../../specs/workspaces/requirements/org-units.md): a
 named scope registry with fixed org and workspace roles, workspace visibility
 (`org` / `private`) with an org-level default, membership as the exception and
 narrowing mechanism, a human task assignee with takeover, and actor attribution

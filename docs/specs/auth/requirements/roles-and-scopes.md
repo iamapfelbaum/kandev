@@ -9,7 +9,7 @@ owners:
 # Org Roles and Scopes
 
 Extends [`auth.md`](auth.md). Consumed by
-[workspace visibility and membership](../../workspaces/requirements/membership.md) and
+[organization units](../../workspaces/requirements/org-units.md) and
 [multi-tenancy](../../multi-tenancy/spec.md).
 
 ## Requirements
@@ -36,11 +36,12 @@ permission model needs one registry and one resolver.
   extension point: there is no custom role builder, no per-user grant table and
   no UI for editing a role's scopes.
 - **AC-AUTH-ROLES-AND-SCOPES-001.5:** An org role grants org scopes outright
-  plus a default workspace role used on org-visible workspaces; a workspace role
+  plus a default workspace role held at the org root unit; a workspace role
   grants workspace scopes on one workspace; a single function resolves the
   effective scopes per user and workspace.
 - **AC-AUTH-ROLES-AND-SCOPES-001.6:** Org admin adds management scopes and never
-  reach. An admin sees an org-visible workspace because it is org-visible, and
+  reach. An admin reaches a workspace because it sits under a unit they belong
+  to, and
   sees nothing of a private workspace they are not a member of.
 - **AC-AUTH-ROLES-AND-SCOPES-001.7:** Scopes are enforced server-side and
   mirrored to the client for hiding controls only; hiding a control is never the
@@ -77,9 +78,9 @@ an explicit, auditable set of permissions rather than a single admin bit.
   are visible to the whole org. A workspace role grants **workspace scopes** on
   one workspace. Effective scopes are resolved per (user, workspace) by a
   single function; nothing else derives permissions.
-- **Org admin is still not a visibility role.** An admin sees org-visible
-  workspaces because they are org-visible, exactly like any member, and sees
-  nothing of a private workspace they are not in. Admin adds management scopes,
+- **Org admin is still not a visibility role.** An admin reaches a workspace
+  because it sits under a unit they belong to, exactly like any member, and
+  reaches nothing in another user's personal unit. Admin adds management scopes,
   never reach. This preserves today's hard-privacy guarantee rather than
   quietly dropping it.
 - **Scopes are enforced server-side and mirrored to the client.** The API is
@@ -104,7 +105,7 @@ workspace_members.role workspace role: owner | collaborator | viewer
   becomes `owner`. `guest` is new and is never assigned by migration.
 - Exactly one `owner` exists per org.
 - Workspace roles are defined by
-  [workspace membership](../../workspaces/requirements/membership.md); this spec owns only what
+  [workspace membership](../../workspaces/requirements/org-units.md); this spec owns only what
   each one grants.
 
 ## Scope registry
@@ -114,7 +115,7 @@ workspace_members.role workspace role: owner | collaborator | viewer
 | Scope | Grants |
 |---|---|
 | `org.members.manage` | invite, create, disable, and re-role users; mint invites |
-| `org.settings.manage` | org name, org-level defaults, org visibility default |
+| `org.settings.manage` | org name and org-level defaults |
 | `org.config.manage` | org executors, executor profiles, environments, agents, agent profiles, editors, prompts, notification providers |
 | `org.delete` | delete the org |
 
@@ -123,7 +124,7 @@ workspace_members.role workspace role: owner | collaborator | viewer
 | Scope | Grants |
 |---|---|
 | `workspace.read` | see the workspace, its board, tasks, workflows, transcripts, diffs |
-| `workspace.manage` | rename, defaults, visibility, delete the workspace |
+| `workspace.manage` | rename, defaults, placement, delete the workspace |
 | `task.write` | create, edit, move, assign, archive, delete tasks |
 | `session.prompt` | start or resume a session and message an agent |
 | `session.control` | stop or cancel a running agent |
@@ -143,12 +144,12 @@ values are never returned by any API to any role.
 
 **Org role → org scopes and default workspace role**
 
-| Org role | Org scopes | Default workspace role on org-visible workspaces |
+| Org role | Org scopes | Default workspace role at the org root unit |
 |---|---|---|
 | `owner` | all four | `collaborator` |
 | `admin` | `org.members.manage`, `org.settings.manage`, `org.config.manage` | `collaborator` |
 | `member` | none | `collaborator` |
-| `guest` | none | none — reaches only workspaces they are explicitly a member of |
+| `guest` | none | none — reaches only workspaces holding a direct grant for them |
 
 **Workspace role → workspace scopes**
 
@@ -170,16 +171,18 @@ Effective scopes for (user `U`, workspace `W`), evaluated in order:
 
 1. `U` is disabled, or `U`'s org is suspended → **no scopes**.
 2. Org scopes = the mapping for `U.role`, always.
-3. Workspace scopes:
-   1. `W.owner_id == U.id` → the `owner` workspace role.
-   2. A `workspace_members` row for (`W`, `U`) exists → that row's role.
-   3. `W.visibility == 'org'` and `U` is in `W`'s org → the default workspace
-      role for `U.role`.
+3. Workspace scopes are the **highest** role among:
+   1. the default workspace role for `U.role`, held at the org's root unit,
+   2. every `unit_members` row for `U` on a unit that is an ancestor of `W`'s
+      unit, including that unit itself,
+   3. a `workspace_members` row for (`W`, `U`), which is a direct grant,
    4. otherwise → **none**, and `W` is unreachable (404, no existence leak).
 
-This function is the only place permissions are derived. Step 3.2 outranks 3.3
-in both directions: it is how a `guest` gets into one workspace, and how a
-member is narrowed to `viewer` on a sensitive one.
+This function is the only place permissions are derived. The roles combine by
+maximum, never by subtraction: a direct grant is how a `guest` gets into one
+workspace, and narrowing is done by placing the workspace in a unit with fewer
+members rather than by a lower grant. Reach itself is owned by
+[organization units](../../workspaces/requirements/org-units.md).
 
 ## API surface
 
@@ -237,19 +240,22 @@ regardless of scope:
   registry, **THEN** the completeness test fails and names the action.
 - **GIVEN** a registered scope with no enforcement call site, **WHEN** the
   completeness test runs, **THEN** it fails and names the scope.
-- **GIVEN** an org admin and a private workspace they are not a member of,
+- **GIVEN** an org admin and a workspace in another user's personal unit,
   **WHEN** they request it, **THEN** the response is 404 — admin is not a
-  visibility role.
-- **GIVEN** an org admin and an org-visible workspace, **WHEN** they open it,
-  **THEN** they hold `collaborator` scopes there, the same as any member.
+  reach role.
+- **GIVEN** an org admin and a workspace under the org root unit, **WHEN** they
+  open it, **THEN** they hold `collaborator` scopes there, the same as any
+  member.
 - **GIVEN** a `viewer` on a workspace, **WHEN** they read a task transcript,
   **THEN** it succeeds; **WHEN** they open a terminal or send a prompt,
   **THEN** the response is 403.
 - **GIVEN** a `guest`, **WHEN** they list workspaces, **THEN** they see only
-  workspaces they are explicitly a member of, even ones marked org-visible.
-- **GIVEN** a `member` narrowed to `viewer` by an explicit membership row on an
-  org-visible workspace, **WHEN** they attempt `task.write`, **THEN** the
-  response is 403 — the explicit row outranks the org default.
+  workspaces holding a direct grant for them, including ones under the root
+  unit, because a guest holds no role there.
+- **GIVEN** a `member` who inherits `collaborator` from a unit and also holds a
+  `viewer` direct grant on one of its workspaces, **WHEN** they attempt
+  `task.write`, **THEN** it succeeds — roles combine by maximum and a grant
+  never lowers an inherited role.
 - **GIVEN** the only `owner` of an org, **WHEN** an admin attempts to demote or
   disable them, **THEN** the request is refused.
 - **GIVEN** any user, **WHEN** they attempt to change their own org role,

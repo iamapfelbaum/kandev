@@ -5,7 +5,7 @@ status: todo
 wave: 3
 depends_on: ["04-management-api"]
 plan: "plan.md"
-spec: "../../specs/workspaces/requirements/membership.md"
+spec: "../../specs/tasks/requirements/human-assignee.md"
 ---
 
 # Task 07: Actor Attribution and Audit

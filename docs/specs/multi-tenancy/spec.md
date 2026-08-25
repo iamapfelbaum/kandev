@@ -22,8 +22,8 @@ the reason the boundary must be real rather than cosmetic. Concretely: the
 design is built to be strong enough for untrusted co-tenants, but it ships and
 is validated on self-hosted instances first. What a self-hosted team actually
 asks for today ([#2824](https://github.com/kdlbs/kandev/issues/2824)) is
-[org roles and scopes](../auth/roles-and-scopes.md) plus
-[workspace visibility](../workspaces/membership.md) — neither needs an org, and
+[org roles and scopes](../auth/requirements/roles-and-scopes.md) plus
+[organization units](../workspaces/requirements/org-units.md) — neither needs an org, and
 both ship ahead of this spec. Organizations are what make that team board safe
 to put on a box shared with another team, and later on a box shared with
 another customer.
@@ -40,11 +40,11 @@ another customer.
   a caller between tenants.
 - **The org is the outer edge of sharing, not a sharing mechanism of its own.**
   Who sees what inside an org is decided by
-  [org roles and scopes](../auth/roles-and-scopes.md) and
-  [workspace visibility](../workspaces/membership.md), exactly as on a
-  single-org instance. This spec adds no visibility rule; it bounds every
+  [org roles and scopes](../auth/requirements/roles-and-scopes.md) and
+  [organization units](../workspaces/requirements/org-units.md), exactly as on a
+  single-org instance. This spec adds no reach rule; it bounds every
   existing one.
-- **`org` visibility means the workspace's own org and nothing wider.** A
+- **The unit tree is confined to one org and nothing wider.** A
   workspace marked visible to the organization is reachable by members of *its*
   org only. Adding a member from another org is refused with 404, so org
   membership is not enumerable, and the tenancy migration drops any pre-existing
@@ -63,7 +63,7 @@ another customer.
 - **A third role tier above the org.** `operator` is instance-level and manages
   orgs, feature toggles, instance configuration templates, backups, and storage
   maintenance. The org roles (`owner`, `admin`, `member`, `guest`) and their
-  scopes are defined by [roles and scopes](../auth/roles-and-scopes.md) and are
+  scopes are defined by [roles and scopes](../auth/requirements/roles-and-scopes.md) and are
   re-scoped to one org. An operator holds **no org scopes** and MUST NOT gain
   read access to any org's workspaces, tasks, sessions, transcripts, or
   secrets; operator is an administration role, not a visibility role, exactly
@@ -261,7 +261,7 @@ a secret value, a sensitive env-var value, or an integration credential with
 ## Permissions
 
 This spec adds only the instance tier. Org-level authority is the scope set in
-[roles and scopes](../auth/roles-and-scopes.md).
+[roles and scopes](../auth/requirements/roles-and-scopes.md).
 
 | Action | operator | org owner | org admin | member / guest |
 |---|---|---|---|---|
@@ -405,16 +405,15 @@ Deletion is the only destructive path and is never reached implicitly.
   is rejected with `template_may_not_carry_credentials` and nothing is written.
 - **GIVEN** an operator who belongs to org 1, **WHEN** they request any
   workspace, task, session, or secret belonging to org 2, **THEN** the response
-  is 404 — the instance tier grants no org scopes and no org visibility.
-- **GIVEN** an org-visible workspace in org 1, **WHEN** a member of org 2
-  requests it, **THEN** the response is 404 — `org` visibility means the
-  workspace's own org.
+  is 404 — the instance tier grants no org scopes and no reach.
+- **GIVEN** a workspace under org 1's root unit, **WHEN** a member of org 2
+  requests it, **THEN** the response is 404 — a unit tree spans one org only.
 - **GIVEN** a workspace owner in org 1, **WHEN** they try to add a user from
   org 2 as a workspace member, **THEN** the response is 404 and no membership
   row is written.
 - **GIVEN** an instance already using org-visible workspaces and workspace
   members, **WHEN** multi-tenancy is enabled and every user lands in the default
-  org, **THEN** every visibility setting and membership row is retained and
+  org, **THEN** every unit, membership row and placement is retained and
   every shared board keeps working exactly as before.
 - **GIVEN** a membership row whose member and workspace would land in different
   orgs, **WHEN** the tenancy migration runs, **THEN** the row is dropped and
@@ -454,8 +453,8 @@ Deletion is the only destructive path and is never reached implicitly.
 ## Out of scope
 
 - **Workspace sharing, roles, and scopes.** Those are
-  [roles and scopes](../auth/roles-and-scopes.md) and
-  [workspace visibility and membership](../workspaces/membership.md), which ship
+  [roles and scopes](../auth/requirements/roles-and-scopes.md) and
+  [organization units](../workspaces/requirements/org-units.md), which ship
   first and do not require an org. This spec only bounds them to one org.
 - **Multiple orgs per user.** One org per user is the design, not a stopgap: it
   makes the tenant a total function of the identity and removes an entire class

@@ -5,7 +5,7 @@ status: todo
 wave: 2
 depends_on: ["03-reach-and-scope-resolution"]
 plan: "plan.md"
-spec: "../../specs/workspaces/requirements/membership.md"
+spec: "../../specs/workspaces/requirements/org-units.md"
 ---
 
 # Task 04: Management API, Roles, and User Directory

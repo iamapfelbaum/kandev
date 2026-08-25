@@ -417,7 +417,7 @@ func (r *Repository) runTaskPriorityRecreate() error {
 	// priority-migration fixtures predate them too.
 	_, _ = conn.ExecContext(ctx, `ALTER TABLE tasks ADD COLUMN external_id TEXT COLLATE BINARY`)
 	_, _ = conn.ExecContext(ctx, `ALTER TABLE tasks ADD COLUMN external_id_settled_at TIMESTAMP`)
-	// Same defensive add for the human assignee (docs/specs/workspaces/requirements/membership.md).
+	// Same defensive add for the human assignee (docs/specs/tasks/requirements/human-assignee.md).
 	// It is applied by task/repository/sqlite ensureTeamAccessSchema() before
 	// the office migrations run on a real install, but priority-migration
 	// fixtures seed their own legacy tasks table and never see it.

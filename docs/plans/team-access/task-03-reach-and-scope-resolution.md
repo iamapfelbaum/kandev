@@ -5,7 +5,7 @@ status: todo
 wave: 1
 depends_on: ["02-visibility-membership-storage"]
 plan: "plan.md"
-spec: "../../specs/workspaces/requirements/membership.md"
+spec: "../../specs/workspaces/requirements/org-units.md"
 ---
 
 # Task 03: Reach Predicate and Scope Resolution

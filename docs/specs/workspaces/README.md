@@ -42,11 +42,12 @@ Git state.
 - [Copy and Move Secrets Between Scopes](requirements/secret-scope-transfer.md)
 - [Workspace Base-Branch Propagation](requirements/workspace-base-branch-propagation.md)
 - [Worktree Branch Templates](requirements/worktree-branch-templates.md)
-- [Workspace Visibility and Membership](requirements/membership.md)
+- [Organization Units](requirements/org-units.md)
 
 ### System design
 
 
+- [Organization Units](system-design/org-units.md)
 
 - [Improve Kandev](system-design/improve-kandev.md)
 - [Copy and Move Secrets Between Scopes](system-design/secret-scope-transfer.md)

@@ -5,7 +5,7 @@ status: todo
 wave: 4
 depends_on: ["05-ws-fanout-and-revocation", "06-human-assignee-takeover", "07-actor-attribution"]
 plan: "plan.md"
-spec: "../../specs/workspaces/requirements/membership.md"
+spec: "../../specs/workspaces/requirements/org-units.md"
 ---
 
 # Task 08: Frontend Team-Access Surfaces
