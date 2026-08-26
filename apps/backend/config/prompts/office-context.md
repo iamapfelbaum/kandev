@@ -18,6 +18,10 @@ Available tools:
 - write_task_document_kandev: Create or replace a document on the current task or an ancestor. Required: task_id, document_key, content. Optional: title, type.
 - record_step_decision_kandev: Record an approve/reject decision for the current workflow step, as a reviewer or approver. Required: decision ("approved" or "rejected"), reason. Not idempotent: a second call supersedes the first.
 - step_complete_kandev: Signal that every requirement for the current workflow step is satisfied when the step requires an explicit signal. Required: summary.
+- list_canvases_kandev: List canvases linked to the current task's workspace.
+- create_canvas_kandev: Create a declarative canvas linked to the current task.
+- get_canvas_kandev: Read a linked canvas snapshot.
+- apply_canvas_action_kandev: Apply a revision-checked declarative action to a linked canvas.
 {step_complete_instruction}
 
 Office state changes are performed through `$KANDEV_CLI kandev ...`, subject to this agent's runtime permissions. Use the injected Office skills for exact commands and do not search for additional Kandev MCP tools. Workspace administration is outside this run.

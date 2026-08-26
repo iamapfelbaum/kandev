@@ -17,6 +17,7 @@ import PluginsSettingsPage from "@/app/settings/plugins/page";
 import PluginDetailPage from "@/app/settings/plugins/[pluginId]/page";
 import UtilityAgentsSettingsPage from "@/app/settings/utility-agents/page";
 import AutomationsPage from "@/app/settings/workspace/[id]/automations/page";
+import CanvasesPage from "@/app/settings/workspace/[id]/canvases/page";
 import AutomationEditorPage from "@/app/settings/workspace/[id]/automations/[automationId]/page";
 import NewAutomationPage from "@/app/settings/workspace/[id]/automations/new/page";
 import WorkspaceEditPage from "@/app/settings/workspace/[id]/page";
@@ -355,12 +356,18 @@ function renderDynamicSettingsRoute(pathname: string) {
 // chain: the nested version pushed the enclosing matcher over both the
 // cyclomatic and cognitive complexity limits.
 // Keep in step with the alternation in the sub-page pattern below.
-type WorkspaceSubpageSection = "repositories" | "workflows" | "automations" | "secrets";
+type WorkspaceSubpageSection =
+  | "repositories"
+  | "workflows"
+  | "automations"
+  | "canvases"
+  | "secrets";
 
 const WORKSPACE_SUBPAGE_PAGES: Record<WorkspaceSubpageSection, (id: string) => ReactNode> = {
   repositories: (id) => <WorkspaceRepositoriesRoute workspaceId={id} />,
   workflows: (id) => <WorkspaceWorkflowsRoute workspaceId={id} />,
   automations: (id) => <AutomationsPage workspaceId={id} />,
+  canvases: (id) => <CanvasesPage workspaceId={id} />,
   secrets: (id) => <SecretsSettings scope="workspace" workspaceId={id} />,
 };
 
@@ -418,7 +425,7 @@ function renderWorkspaceSettingsRoute(pathname: string): ReactNode {
 
   const workspaceSubpage = matchDouble(
     pathname,
-    /^\/settings\/workspaces\/([^/]+)\/(repositories|workflows|automations|secrets)$/,
+    /^\/settings\/workspaces\/([^/]+)\/(repositories|workflows|automations|canvases|secrets)$/,
   );
   if (workspaceSubpage) {
     const [id, section] = workspaceSubpage;

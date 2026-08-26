@@ -24,6 +24,7 @@ import (
 	analyticsservice "github.com/kandev/kandev/internal/analytics/service"
 	"github.com/kandev/kandev/internal/automation"
 	"github.com/kandev/kandev/internal/azuredevops"
+	"github.com/kandev/kandev/internal/canvas"
 	"github.com/kandev/kandev/internal/common/config"
 	"github.com/kandev/kandev/internal/common/logger"
 	"github.com/kandev/kandev/internal/db"
@@ -171,6 +172,15 @@ func provideServices(cfg *config.Config, log *logger.Logger, repos *Repositories
 
 	// Wire start step resolver to task service for CreateTask
 	taskSvc.SetStartStepResolver(&startStepResolverAdapter{svc: workflowSvc})
+	canvasSvc := canvas.NewService(repos.Canvas, log)
+	canvasSvc.SetWorkspaceAuthorizer(taskSvc.AuthorizeWorkspaceAccess)
+	canvasSvc.SetTaskWorkspaceResolver(func(ctx context.Context, taskID string) (string, error) {
+		task, err := taskSvc.GetTask(ctx, taskID)
+		if err != nil {
+			return "", err
+		}
+		return task.WorkspaceID, nil
+	})
 	// Session history is owned by workflow service, but access is owned by the
 	// task service. Keep the authorization check at the service boundary.
 	workflowSvc.SetSessionAccessChecker(taskSvc.AuthorizeSessionAccess)
@@ -298,6 +308,7 @@ func provideServices(cfg *config.Config, log *logger.Logger, repos *Repositories
 		DynamicProfileResolver:   dynamicResolver,
 		DynamicBindingResolver:   dynamicBindingResolver,
 		Task:                     taskSvc,
+		Canvas:                   canvasSvc,
 		User:                     userSvc,
 		Editor:                   editorSvc,
 		Prompts:                  promptSvc,

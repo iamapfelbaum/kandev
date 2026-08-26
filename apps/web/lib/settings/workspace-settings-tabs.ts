@@ -4,6 +4,7 @@ import {
   IconBolt,
   IconGitBranch,
   IconKey,
+  IconLayoutDashboard,
   IconLayoutGrid,
   IconPlugConnected,
 } from "@tabler/icons-react";
@@ -26,6 +27,7 @@ export type WorkspaceSettingsTab =
   | "workflows"
   | "integrations"
   | "automations"
+  | "canvases"
   | "secrets";
 
 export function workspaceSettingsHref(workspaceId: string, tab: WorkspaceSettingsTab): string {
@@ -51,6 +53,7 @@ export const WORKSPACE_SETTINGS_TABS: ReadonlyArray<WorkspaceTabSpec> = [
   { tab: "workflows", labelKey: "workflows:workflows", icon: IconArrowsShuffle },
   { tab: "integrations", labelKey: "common:integrations", icon: IconPlugConnected },
   { tab: "automations", labelKey: "common:automations", icon: IconBolt },
+  { tab: "canvases", labelKey: "canvases:canvases", icon: IconLayoutDashboard },
   { tab: "secrets", labelKey: "settings:secrets", icon: IconKey },
 ];
 

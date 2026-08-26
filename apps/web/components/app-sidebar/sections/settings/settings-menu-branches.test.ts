@@ -75,6 +75,7 @@ describe("buildWorkspacesBranch", () => {
       `/settings/workspaces/${WORKSPACE_ID}/workflows`,
       `/settings/workspaces/${WORKSPACE_ID}/integrations`,
       `/settings/workspaces/${WORKSPACE_ID}/automations`,
+      `/settings/workspaces/${WORKSPACE_ID}/canvases`,
       `/settings/workspaces/${WORKSPACE_ID}/secrets`,
     ]);
   });

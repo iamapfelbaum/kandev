@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect } from "react";
 import { MRDetailPanelComponent } from "@/components/gitlab/mr-detail-panel";
+import { CanvasPage } from "@/components/canvas/canvas-page";
 import { ReviewDetailPanelComponent } from "./review-detail-panel";
 import { useAppStore } from "@/components/state-provider";
 import { useSessionChangesCount } from "@/hooks/domains/session/use-session-changes-count";
@@ -210,6 +211,11 @@ function PlanContent() {
   return <TaskPlanPanel taskId={taskId} visible />;
 }
 
+function CanvasContent({ params }: { params: Record<string, unknown> }) {
+  const canvasId = typeof params.canvasId === "string" ? params.canvasId : "";
+  return canvasId ? <CanvasPage canvasId={canvasId} embedded /> : null;
+}
+
 const COMPONENT_ALIASES: Record<string, string> = {
   "diff-files": "changes",
   "all-files": "files",
@@ -238,6 +244,7 @@ const PANEL_RENDERERS: Record<string, PanelRenderer> = {
   files: () => <FilesContent />,
   terminal: (panelId, params) => <TerminalPanel panelId={panelId} params={params} />,
   browser: (panelId, params) => <BrowserPanel panelId={panelId} params={params} />,
+  canvas: (_panelId, params) => <CanvasContent params={params} />,
   vscode: (panelId) => <VscodePanel panelId={panelId} />,
   plan: () => <PlanContent />,
   todos: () => <TodosContent />,

@@ -532,6 +532,16 @@ export function buildPanelActions(set: StoreSet, get: StoreGet) {
         params: { url: url ?? "" },
       });
     },
+    addCanvasPanel: (canvasId: string, title: string, groupId?: string) => {
+      const { api, centerGroupId } = get();
+      if (!api) return;
+      addSimplePanel(api, groupId ?? centerGroupId, {
+        id: `canvas:${canvasId}`,
+        component: "canvas",
+        title,
+        params: { canvasId },
+      });
+    },
     /**
      * Open the preview browser without stacking a tab per call.
      *

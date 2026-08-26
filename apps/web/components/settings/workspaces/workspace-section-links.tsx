@@ -7,6 +7,7 @@ import { listAutomations } from "@/lib/api/domains/automation-api";
 import { listWorkflows } from "@/lib/api/domains/kanban-api";
 import { listRepositories } from "@/lib/api/domains/workspace-api";
 import { listSecrets } from "@/lib/api/domains/secrets-api";
+import { listCanvases } from "@/lib/api/domains/canvas-api";
 import { getAzureDevOpsConfig } from "@/lib/api/domains/azure-devops-api";
 import { fetchGitHubStatus } from "@/lib/api/domains/github-auth-api";
 import { getGitLabConfig } from "@/lib/api/domains/gitlab-api";
@@ -26,6 +27,7 @@ export type SectionCounts = {
   workflows?: number;
   integrations?: number;
   automations?: number;
+  canvases?: number;
   secrets?: number;
 };
 
@@ -78,6 +80,9 @@ export function useWorkspaceSectionCounts(workspaceId: string): {
       listAutomations(workspaceId)
         .then((automations) => apply({ automations: (automations ?? []).length }))
         .catch(() => undefined),
+      listCanvases(workspaceId, false)
+        .then((response) => apply({ canvases: (response ?? []).length }))
+        .catch(() => undefined),
       countConfiguredIntegrations(workspaceId)
         .then((integrations) => apply({ integrations }))
         .catch(() => undefined),
@@ -108,6 +113,7 @@ const SECTION_STATS: SectionStat[] = [
   { key: "workflows", tab: "workflows" },
   { key: "integrations", tab: "integrations" },
   { key: "automations", tab: "automations" },
+  { key: "canvases", tab: "canvases" },
   { key: "secrets", tab: "secrets" },
 ];
 
@@ -131,7 +137,7 @@ export function WorkspaceSectionStats({
     <div
       className={cn(
         // Desktop columns cap at 175px per tile instead of stretching full width.
-        "grid flex-1 grid-cols-3 gap-2 lg:grid-cols-[repeat(5,minmax(0,175px))]",
+        "grid flex-1 grid-cols-3 gap-2 lg:grid-cols-[repeat(6,minmax(0,175px))]",
         className,
       )}
       data-testid="workspace-section-stats"

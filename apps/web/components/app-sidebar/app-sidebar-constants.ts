@@ -2,6 +2,7 @@
 export const APP_SIDEBAR_SECTION_IDS = {
   tasks: "tasks",
   automations: "automations",
+  canvases: "canvases",
   officeWork: "office-work",
   officeWorkspace: "office-workspace",
   projects: "projects",

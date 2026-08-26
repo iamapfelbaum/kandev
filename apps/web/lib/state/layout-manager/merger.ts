@@ -28,6 +28,7 @@ const CENTER_EXTRA_COMPONENTS = new Set([
   // Plugin task panels (e.g. a Notes scratchpad) are main-content surfaces
   // like plan/browser/vscode, not side "tools" — see plugin-panels.ts.
   "plugin-panel",
+  "canvas",
 ]);
 
 /** Collect all panels from a LayoutState, flattened. */

@@ -52,6 +52,7 @@ import type {
   WorkflowStep,
 } from "@/lib/types/http";
 import { TaskDetailRoute } from "./task-detail-route";
+import { CanvasPage } from "@/components/canvas/canvas-page";
 import { useTranslation } from "react-i18next";
 
 const OfficeRoutes = lazy(() =>
@@ -79,6 +80,7 @@ type SpaRoute =
       simple?: string;
       mode?: string;
     }
+  | { kind: "canvas"; canvasId: string }
   | { kind: "tasks" }
   | { kind: "github" }
   | { kind: "gitlab" }
@@ -97,7 +99,7 @@ type SpaRoute =
 
 type DataBackedSpaRoute = Exclude<
   SpaRoute,
-  { kind: "kanban" | "settings" | "office" | "login" | "setup" | "invite" }
+  { kind: "kanban" | "settings" | "office" | "canvas" | "login" | "setup" | "invite" }
 >;
 
 type RouteDataState = {
@@ -111,12 +113,20 @@ export function resolveSpaRoute(pathname: string, searchParams: URLSearchParams)
   const normalized = normalizePath(pathname);
   return (
     resolveTaskDetailRoute(normalized, searchParams) ??
+    resolveCanvasRoute(normalized) ??
     resolveRunsRoute(normalized, searchParams) ??
     resolveTopLevelRoute(normalized, searchParams) ??
     resolveNestedRoute(normalized) ??
     resolvePluginRoute(normalized) ??
     resolveKanbanRoute(searchParams)
   );
+}
+
+function resolveCanvasRoute(normalized: string): SpaRoute | null {
+  const raw = normalized.match(/^\/canvases\/([^/]+)$/)?.[1];
+  if (!raw) return null;
+  const canvasId = safeDecodePathSegment(raw);
+  return canvasId ? { kind: "canvas", canvasId } : null;
 }
 
 /**
@@ -256,6 +266,9 @@ export function SpaRoutes({ routeData }: { routeData?: BootRouteData }) {
         initialData={routeData?.taskDetail}
       />
     );
+  }
+  if (route.kind === "canvas") {
+    return <CanvasPage canvasId={route.canvasId} />;
   }
   if (route.kind === "settings") {
     return (

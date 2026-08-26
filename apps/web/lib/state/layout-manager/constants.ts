@@ -74,6 +74,7 @@ export const STRUCTURAL_COMPONENTS = new Set([
   // name (see lib/state/layout-manager/plugin-panels.ts) — structural
   // regardless of which plugin registered it.
   "plugin-panel",
+  "canvas",
 ]);
 
 /**

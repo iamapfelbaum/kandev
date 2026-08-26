@@ -44,6 +44,7 @@ turns and sessions, but the user remains able to inspect and redirect it.
 | --- | --- | --- |
 | [Workspaces](../workspaces/README.md) | Owns workspace, repository, worktree, branch, and secret context. | Provides repository scope to tasks and integrations. |
 | [Tasks](../tasks/README.md) | Owns durable work items, workflows, sessions, transitions, and task runtime state. | Coordinates the core work loop. |
+| [Canvases](../canvases/README.md) | Owns workspace canvas blocks, actions, history, task links, portable files, and live owner state. | Gives one user and trusted agents a durable workspace artifact without replacing task authority. |
 | [Agents](../agents/README.md) | Owns agent identities, profiles, permissions, provider capabilities, and runtime versions. | Supplies the agent configuration selected by a task or session. |
 | [Executors](../executors/README.md) | Owns local, container, SSH, process, port, and environment boundaries. | Materializes the environment in which agent work runs. |
 | [Integrations](../integrations/README.md) | Owns external provider credentials, identity, synchronization, and actions. | Connects task and repository state to code hosts and services. |
@@ -67,6 +68,9 @@ turns and sessions, but the user remains able to inspect and redirect it.
   worktree context. Agents own profile and provider configuration. Executors
   own the runtime environment. These boundaries prevent one system from
   silently becoming the source of truth for another.
+- Canvases own canvas blocks, actions, events, task links, and portable files.
+  A canvas link or export never grants access to a task, workspace, repository,
+  file, user, or secret.
 - Integrations own external provider identity and actions. A provider's remote
   state is not silently treated as a replacement for Kandev's task state.
 - Plugins contribute through host contracts. A plugin does not copy or replace

@@ -35,6 +35,7 @@ import (
 	authhttpapi "github.com/kandev/kandev/internal/auth/httpapi"
 	"github.com/kandev/kandev/internal/automation"
 	"github.com/kandev/kandev/internal/azuredevops"
+	"github.com/kandev/kandev/internal/canvas"
 	"github.com/kandev/kandev/internal/clarification"
 	"github.com/kandev/kandev/internal/common/config"
 	"github.com/kandev/kandev/internal/common/logger"
@@ -712,6 +713,10 @@ func registerRoutes(p routeParams) {
 	}
 
 	p.gateway.SetupRoutes(p.router)
+	if p.services.Canvas != nil {
+		canvas.RegisterRoutes(p.router, p.gateway.Dispatcher, p.services.Canvas, p.log)
+		p.log.Debug("Registered Canvas handlers (HTTP + WebSocket)")
+	}
 	registerTaskRoutes(p, planService, handoffSvc)
 	registerSecondaryRoutes(p, workflowCtrl, clarificationStore, clarificationCanceller, clarificationResolver, planService, handoffSvc)
 	if p.authSvc != nil {

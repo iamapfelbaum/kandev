@@ -55,6 +55,7 @@ const SEGMENT_LABEL_KEYS: Record<string, string> = {
   agents: "common:agents",
   appearance: "settings:appearance",
   automations: "common:automations",
+  canvases: "canvases:canvases",
   browse: "agents:browseAvailableAgents",
   changelog: "common:changelog",
   "data-storage": "system:navDataStorage",

@@ -32,6 +32,8 @@ type Hub struct {
 	userSubscribers map[string]map[*Client]bool
 	// Clients subscribed to specific office run ids (for run.event.appended).
 	runSubscribers map[string]map[*Client]bool
+	// Clients subscribed to server-owned canvas events.
+	canvasSubscribers map[string]map[*Client]bool
 	// Clients subscribed to backend/resource metrics.
 	systemMetricsSubscribers map[*Client]bool
 
@@ -68,7 +70,8 @@ type Hub struct {
 
 	// authPolicy carries the per-user scoping hooks (opt-in auth). Zero
 	// value = unscoped, today's behavior. See access.go.
-	authPolicy AuthPolicy
+	authPolicy     AuthPolicy
+	canvasProvider CanvasSubscriptionProvider
 
 	mu     sync.RWMutex
 	logger *logger.Logger
@@ -82,6 +85,7 @@ func NewHub(dispatcher *ws.Dispatcher, log *logger.Logger) *Hub {
 		sessionSubscribers:       make(map[string]map[*Client]bool),
 		userSubscribers:          make(map[string]map[*Client]bool),
 		runSubscribers:           make(map[string]map[*Client]bool),
+		canvasSubscribers:        make(map[string]map[*Client]bool),
 		systemMetricsSubscribers: make(map[*Client]bool),
 		done:                     make(chan struct{}),
 		register:                 make(chan *Client),
@@ -142,6 +146,8 @@ func (h *Hub) closeAllClients() {
 			metricClientIDs = append(metricClientIDs, client.ID)
 			client.systemMetricsSubscribed = false
 		}
+		canvasSubscriptionsActive.Add(int64(-len(client.canvasSubscriptions)))
+		client.canvasSubscriptions = make(map[string]bool)
 		client.closeSend()
 		delete(h.clients, client)
 	}
@@ -149,6 +155,7 @@ func (h *Hub) closeAllClients() {
 	h.taskSubscribers = make(map[string]map[*Client]bool)
 	h.sessionSubscribers = make(map[string]map[*Client]bool)
 	h.runSubscribers = make(map[string]map[*Client]bool)
+	h.canvasSubscribers = make(map[string]map[*Client]bool)
 	h.systemMetricsSubscribers = make(map[*Client]bool)
 	h.sessionMode.focusByClient = make(map[string]map[*Client]bool)
 	h.mu.Unlock()
@@ -196,6 +203,12 @@ func (h *Hub) removeClient(client *Client) {
 	}
 	for runID := range client.runSubscriptions {
 		removeClientFromSubscriberMap(h.runSubscribers, runID, client)
+	}
+	for canvasID := range client.canvasSubscriptions {
+		if subscribers := h.canvasSubscribers[canvasID]; subscribers[client] {
+			canvasSubscriptionsActive.Add(-1)
+		}
+		removeClientFromSubscriberMap(h.canvasSubscribers, canvasID, client)
 	}
 	var metricClientID string
 	var tracker SystemMetricsInterestTracker

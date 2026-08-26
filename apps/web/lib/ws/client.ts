@@ -3,6 +3,7 @@ import type { ConnectionStatus } from "@/lib/types/connection";
 import { generateUUID } from "@/lib/utils";
 import { createDebugLogger, isDebug } from "@/lib/debug/log";
 import { dispatchToPluginWsHandlers } from "@/lib/ws/plugin-bridge";
+import { CanvasSubscriptionRegistry } from "@/lib/ws/canvas-subscriptions";
 
 const debugDispatch = createDebugLogger("ws:dispatch");
 
@@ -82,6 +83,7 @@ export class WebSocketClient {
   private sessionFocusCounts = new Map<string, number>();
   private userSubscriptionCount = 0;
   private runSubscriptions = new Map<string, number>();
+  private canvasSubscriptions = new CanvasSubscriptionRegistry();
   private systemMetricsSubscriptionCount = 0;
 
   constructor(
@@ -169,6 +171,10 @@ export class WebSocketClient {
     this.socket.send(data);
   }
 
+  private sendRequest(action: string, payload: unknown) {
+    this.send({ id: generateUUID(), type: "request", action, payload });
+  }
+
   request<T>(action: string, payload: unknown, timeoutMs = 5000): Promise<T> {
     const id = generateUUID();
     return new Promise((resolve, reject) => {
@@ -190,12 +196,7 @@ export class WebSocketClient {
     const nextCount = currentCount + 1;
     this.subscriptions.set(taskId, nextCount);
     if (this.status === "connected" && nextCount === 1) {
-      this.send({
-        id: generateUUID(),
-        type: "request",
-        action: "task.subscribe",
-        payload: { task_id: taskId },
-      });
+      this.sendRequest("task.subscribe", { task_id: taskId });
     }
     return () => this.unsubscribe(taskId);
   }
@@ -249,12 +250,7 @@ export class WebSocketClient {
     const nextCount = currentCount + 1;
     this.sessionFocusCounts.set(sessionId, nextCount);
     if (this.status === "connected" && nextCount === 1) {
-      this.send({
-        id: generateUUID(),
-        type: "request",
-        action: "session.focus",
-        payload: { session_id: sessionId },
-      });
+      this.sendRequest("session.focus", { session_id: sessionId });
     }
     return () => this.unfocusSession(sessionId);
   }
@@ -268,12 +264,7 @@ export class WebSocketClient {
   refreshSessionData(sessionId: string) {
     if (this.status !== "connected") return;
     if (!this.sessionFocusCounts.get(sessionId)) return;
-    this.send({
-      id: generateUUID(),
-      type: "request",
-      action: "session.git.refresh",
-      payload: { session_id: sessionId },
-    });
+    this.sendRequest("session.git.refresh", { session_id: sessionId });
   }
 
   unfocusSession(sessionId: string) {
@@ -283,12 +274,7 @@ export class WebSocketClient {
     if (nextCount <= 0) {
       this.sessionFocusCounts.delete(sessionId);
       if (this.status === "connected") {
-        this.send({
-          id: generateUUID(),
-          type: "request",
-          action: "session.unfocus",
-          payload: { session_id: sessionId },
-        });
+        this.sendRequest("session.unfocus", { session_id: sessionId });
       }
       return;
     }
@@ -298,12 +284,7 @@ export class WebSocketClient {
   subscribeUser() {
     this.userSubscriptionCount += 1;
     if (this.status === "connected" && this.userSubscriptionCount === 1) {
-      this.send({
-        id: generateUUID(),
-        type: "request",
-        action: "user.subscribe",
-        payload: {},
-      });
+      this.sendRequest("user.subscribe", {});
     }
   }
 
@@ -314,12 +295,7 @@ export class WebSocketClient {
     if (nextCount <= 0) {
       this.subscriptions.delete(taskId);
       if (this.status === "connected") {
-        this.send({
-          id: generateUUID(),
-          type: "request",
-          action: "task.unsubscribe",
-          payload: { task_id: taskId },
-        });
+        this.sendRequest("task.unsubscribe", { task_id: taskId });
       }
       return;
     }
@@ -335,12 +311,7 @@ export class WebSocketClient {
       this.sessionSubscriptions.delete(sessionId);
       this.cancelSessionSubscriptionReadiness(sessionId);
       if (this.status === "connected") {
-        this.send({
-          id: generateUUID(),
-          type: "request",
-          action: "session.unsubscribe",
-          payload: { session_id: sessionId },
-        });
+        this.sendRequest("session.unsubscribe", { session_id: sessionId });
       }
       return;
     }
@@ -359,12 +330,7 @@ export class WebSocketClient {
     const nextCount = currentCount + 1;
     this.runSubscriptions.set(runId, nextCount);
     if (this.status === "connected" && nextCount === 1) {
-      this.send({
-        id: generateUUID(),
-        type: "request",
-        action: "run.subscribe",
-        payload: { run_id: runId },
-      });
+      this.sendRequest("run.subscribe", { run_id: runId });
     }
     return () => this.unsubscribeRun(runId);
   }
@@ -372,12 +338,7 @@ export class WebSocketClient {
   subscribeSystemMetrics() {
     this.systemMetricsSubscriptionCount += 1;
     if (this.status === "connected" && this.systemMetricsSubscriptionCount === 1) {
-      this.send({
-        id: generateUUID(),
-        type: "request",
-        action: "system.metrics.subscribe",
-        payload: {},
-      });
+      this.sendRequest("system.metrics.subscribe", {});
     }
     return () => this.unsubscribeSystemMetrics();
   }
@@ -385,12 +346,7 @@ export class WebSocketClient {
   unsubscribeSystemMetrics() {
     this.systemMetricsSubscriptionCount = Math.max(0, this.systemMetricsSubscriptionCount - 1);
     if (this.status === "connected" && this.systemMetricsSubscriptionCount === 0) {
-      this.send({
-        id: generateUUID(),
-        type: "request",
-        action: "system.metrics.unsubscribe",
-        payload: {},
-      });
+      this.sendRequest("system.metrics.unsubscribe", {});
     }
   }
 
@@ -401,27 +357,33 @@ export class WebSocketClient {
     if (nextCount <= 0) {
       this.runSubscriptions.delete(runId);
       if (this.status === "connected") {
-        this.send({
-          id: generateUUID(),
-          type: "request",
-          action: "run.unsubscribe",
-          payload: { run_id: runId },
-        });
+        this.sendRequest("run.unsubscribe", { run_id: runId });
       }
       return;
     }
     this.runSubscriptions.set(runId, nextCount);
   }
 
+  subscribeCanvas(canvasId: string) {
+    return this.canvasSubscriptions.subscribe(
+      canvasId,
+      () => this.status === "connected",
+      (action, id) => this.sendCanvasSubscription(action, id),
+    );
+  }
+
+  unsubscribeCanvas(canvasId: string) {
+    this.canvasSubscriptions.unsubscribe(
+      canvasId,
+      () => this.status === "connected",
+      (action, id) => this.sendCanvasSubscription(action, id),
+    );
+  }
+
   unsubscribeUser() {
     this.userSubscriptionCount = Math.max(0, this.userSubscriptionCount - 1);
     if (this.status === "connected" && this.userSubscriptionCount === 0) {
-      this.send({
-        id: generateUUID(),
-        type: "request",
-        action: "user.unsubscribe",
-        payload: {},
-      });
+      this.sendRequest("user.unsubscribe", {});
     }
   }
 
@@ -642,49 +604,34 @@ export class WebSocketClient {
   private resubscribe() {
     // Re-subscribe to all tasks after reconnection
     this.subscriptions.forEach((_count, taskId) => {
-      this.send({
-        id: generateUUID(),
-        type: "request",
-        action: "task.subscribe",
-        payload: { task_id: taskId },
-      });
+      this.sendRequest("task.subscribe", { task_id: taskId });
     });
     this.sessionSubscriptions.forEach((_count, sessionId) => {
       const readiness = this.getOrCreateSessionSubscriptionReadiness(sessionId);
       this.startSessionSubscription(sessionId, readiness);
     });
     this.sessionFocusCounts.forEach((_count, sessionId) => {
-      this.send({
-        id: generateUUID(),
-        type: "request",
-        action: "session.focus",
-        payload: { session_id: sessionId },
-      });
+      this.sendRequest("session.focus", { session_id: sessionId });
     });
     this.runSubscriptions.forEach((_count, runId) => {
-      this.send({
-        id: generateUUID(),
-        type: "request",
-        action: "run.subscribe",
-        payload: { run_id: runId },
-      });
+      this.sendRequest("run.subscribe", { run_id: runId });
     });
+    this.canvasSubscriptions.resubscribe((action, canvasId) =>
+      this.sendCanvasSubscription(action, canvasId),
+    );
     if (this.userSubscriptionCount > 0) {
-      this.send({
-        id: generateUUID(),
-        type: "request",
-        action: "user.subscribe",
-        payload: {},
-      });
+      this.sendRequest("user.subscribe", {});
     }
     if (this.systemMetricsSubscriptionCount > 0) {
-      this.send({
-        id: generateUUID(),
-        type: "request",
-        action: "system.metrics.subscribe",
-        payload: {},
-      });
+      this.sendRequest("system.metrics.subscribe", {});
     }
+  }
+
+  private sendCanvasSubscription(
+    action: "canvas.subscribe" | "canvas.unsubscribe",
+    canvasId: string,
+  ) {
+    this.sendRequest(action, { canvas_id: canvasId });
   }
 
   private flushQueue() {

@@ -129,6 +129,7 @@ const components: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
   files: PortalSlot,
   terminal: PortalSlot,
   browser: PortalSlot,
+  canvas: PortalSlot,
   vscode: PortalSlot,
   plan: PortalSlot,
   todos: PortalSlot,

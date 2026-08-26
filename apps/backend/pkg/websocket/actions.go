@@ -158,6 +158,14 @@ const (
 	ActionSystemMetricsSubscribe   = "system.metrics.subscribe"
 	ActionSystemMetricsUnsubscribe = "system.metrics.unsubscribe"
 
+	// Canvas actions
+	ActionCanvasList        = "canvas.list"
+	ActionCanvasCreate      = "canvas.create"
+	ActionCanvasGet         = "canvas.get"
+	ActionCanvasSubscribe   = "canvas.subscribe"
+	ActionCanvasUnsubscribe = "canvas.unsubscribe"
+	ActionCanvasCommand     = "canvas.command"
+
 	// Message actions
 	ActionMessageAdd    = "message.add"
 	ActionMessageGet    = "message.get"

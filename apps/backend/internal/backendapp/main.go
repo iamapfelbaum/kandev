@@ -28,6 +28,7 @@ import (
 
 	// Common packages
 	"github.com/kandev/kandev/internal/backendapp/ownershiplock"
+	"github.com/kandev/kandev/internal/canvas"
 	"github.com/kandev/kandev/internal/common/config"
 	"github.com/kandev/kandev/internal/common/constants"
 	"github.com/kandev/kandev/internal/common/logger"
@@ -861,6 +862,12 @@ func startGatewayAndServe(
 	// broadcast routing. Must be installed before SetupRoutes runs in
 	// buildHTTPServer.
 	gateway.SetAuthPolicy(gatewayAuthPolicy(services.Auth, services.Task, repos.Task, repos.Office))
+	if services.Canvas != nil {
+		gateway.Hub.SetCanvasSubscriptionProvider(services.Canvas)
+		services.Canvas.SetEventPublisher(func(canvasID string, event *canvas.CanvasEvent) {
+			gateway.Hub.BroadcastToCanvas(canvasID, event)
+		})
+	}
 
 	waitForAgentctlControlHealthy(ctx, cfg, log)
 

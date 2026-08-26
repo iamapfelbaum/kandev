@@ -38,6 +38,7 @@ import { CommitDetailPanel } from "./commit-detail-panel";
 import type { CommitDetailTarget, OpenDiffOptions } from "./changes-diff-target";
 import { ReviewDetailPanelComponent } from "./review-detail-panel";
 import { MRDetailPanelComponent } from "@/components/gitlab/mr-detail-panel";
+import { CanvasPage } from "@/components/canvas/canvas-page";
 import { PluginTaskPanel } from "./plugin-task-panel";
 import { PluginPanelTab } from "./plugin-panel-tab";
 import { PromptHistoryContent } from "./prompt-history-panel-host";
@@ -118,6 +119,7 @@ export const dockviewComponents: Record<string, React.FunctionComponent<IDockvie
   files: PortalSlot,
   terminal: PortalSlot,
   browser: PortalSlot,
+  canvas: PortalSlot,
   vscode: PortalSlot,
   plan: PortalSlot,
   todos: PortalSlot,
@@ -424,6 +426,7 @@ const PANEL_RENDERERS: Record<string, PanelRenderer> = {
   files: () => <FilesContent />,
   terminal: (panelId, params) => <TerminalPanel panelId={panelId} params={params} />,
   browser: (panelId, params) => <BrowserPanel panelId={panelId} params={params} />,
+  canvas: (_panelId, params) => <CanvasPage canvasId={String(params.canvasId ?? "")} embedded />,
   vscode: (panelId) => <VscodePanel panelId={panelId} />,
   plan: () => <PlanContent />,
   todos: () => <TodosContent />,

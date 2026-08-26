@@ -52,6 +52,7 @@ type Client struct {
 	sessionFocus            map[string]bool // Session IDs this client has focused (a strict subset of subscriptions, conceptually — see hub_session_mode.go)
 	userSubscriptions       map[string]bool // User IDs this client is subscribed to
 	runSubscriptions        map[string]bool // Office run IDs this client is subscribed to (for run.event.appended)
+	canvasSubscriptions     map[string]bool // Canvas IDs this client is subscribed to
 	systemMetricsSubscribed bool
 	mu                      sync.RWMutex
 	closed                  bool
@@ -92,6 +93,7 @@ func NewClient(id string, identity authn.Identity, conn *websocket.Conn, hub *Hu
 		sessionFocus:            make(map[string]bool),
 		userSubscriptions:       make(map[string]bool),
 		runSubscriptions:        make(map[string]bool),
+		canvasSubscriptions:     make(map[string]bool),
 		replaceableByKey:        make(map[queuedReplaceableKey]outboundNotification),
 		replaceableBySession:    make(map[string][]sessionNotificationQueueItem),
 		replaceableCurrentByKey: make(map[replaceableNotificationKey]queuedReplaceableKey),
@@ -221,6 +223,12 @@ func (c *Client) handleMessage(msg *ws.Message) {
 		return
 	case ws.ActionSystemMetricsUnsubscribe:
 		c.handleSystemMetricsUnsubscribe(msg)
+		return
+	case ws.ActionCanvasSubscribe:
+		c.handleCanvasSubscribe(msg)
+		return
+	case ws.ActionCanvasUnsubscribe:
+		c.handleCanvasUnsubscribe(msg)
 		return
 	}
 

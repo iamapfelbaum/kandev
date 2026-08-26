@@ -39,6 +39,7 @@ import type { TaskStatusSummary } from "@/lib/types/task-status-summary";
 import type { TaskMRAutomationOptions } from "@/lib/types/gitlab";
 import type { SystemMetricsSnapshot } from "./system";
 import type { AgentRuntimeAvailability } from "./agent-runtime";
+import type { CanvasEvent } from "./canvas";
 import type {
   ExecutorPayload,
   ExecutorProfilePayload,
@@ -452,6 +453,7 @@ export type BackendMessageMap = SessionBackendMessageMap &
       TaskMRAutomationOptions
     >;
     "run.event.appended": BackendMessage<"run.event.appended", RunEventAppendedPayload>;
+    "canvas.event": BackendMessage<"canvas.event", CanvasEvent>;
   };
 
 // Workspace file types (extracted to reduce file size)

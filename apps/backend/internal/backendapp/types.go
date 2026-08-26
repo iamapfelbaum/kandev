@@ -12,6 +12,7 @@ import (
 	authstore "github.com/kandev/kandev/internal/auth/store"
 	"github.com/kandev/kandev/internal/automation"
 	"github.com/kandev/kandev/internal/azuredevops"
+	"github.com/kandev/kandev/internal/canvas"
 	editorservice "github.com/kandev/kandev/internal/editors/service"
 	editorstore "github.com/kandev/kandev/internal/editors/store"
 	"github.com/kandev/kandev/internal/gitcredentials"
@@ -48,6 +49,7 @@ import (
 
 type Repositories struct {
 	Task          *sqliterepo.Repository
+	Canvas        *canvas.Repository
 	Analytics     analyticsrepository.Repository
 	AgentSettings settingsstore.Repository
 	User          userstore.Repository
@@ -73,6 +75,7 @@ type Services struct {
 	DynamicProfileResolver   *agentruntime.ProfileExecutionResolver
 	DynamicBindingResolver   *dynamicruntime.CredentialBindingResolver
 	Task                     *taskservice.Service
+	Canvas                   *canvas.Service
 	User                     *userservice.Service
 	Editor                   *editorservice.Service
 	Notification             *notificationservice.Service

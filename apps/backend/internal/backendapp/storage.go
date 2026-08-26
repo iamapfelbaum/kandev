@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	analyticsrepository "github.com/kandev/kandev/internal/analytics/repository"
+	canvasrepository "github.com/kandev/kandev/internal/canvas"
 	"github.com/kandev/kandev/internal/common/config"
 	"github.com/kandev/kandev/internal/common/logger"
 	"github.com/kandev/kandev/internal/db"
@@ -44,6 +45,10 @@ func provideRepositories(ctx context.Context, cfg *config.Config, log *logger.Lo
 		return nil, nil, nil, err
 	}
 	cleanups = append(cleanups, cleanup)
+	canvasRepo, err := canvasrepository.NewRepository(writer, reader, log)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("canvas repository: %w", err)
+	}
 	// Workflow repo must be initialized before analytics repo because
 	// analytics creates indexes on the workflow_steps table.
 	workflowRepo, err := workflowrepository.NewWithDB(writer, reader, log)
@@ -107,6 +112,7 @@ func provideRepositories(ctx context.Context, cfg *config.Config, log *logger.Lo
 
 	repos := &Repositories{
 		Task:          taskRepoImpl,
+		Canvas:        canvasRepo,
 		Analytics:     analyticsRepo,
 		AgentSettings: agentSettingsRepo,
 		User:          supportRepos.user,

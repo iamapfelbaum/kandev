@@ -169,6 +169,41 @@ describe("session subscription readiness", () => {
   });
 });
 
+describe("canvas subscriptions", () => {
+  it("sends one subscription for multiple consumers and unsubscribes on the last release", () => {
+    const { client, socket } = connectClient();
+
+    const first = client.subscribeCanvas("canvas-1");
+    const second = client.subscribeCanvas("canvas-1");
+    expect(socket.sent.filter((message) => message.action === "canvas.subscribe")).toHaveLength(1);
+
+    first();
+    expect(socket.sent.filter((message) => message.action === "canvas.unsubscribe")).toHaveLength(
+      0,
+    );
+    second();
+    expect(socket.sent.filter((message) => message.action === "canvas.unsubscribe")).toHaveLength(
+      1,
+    );
+  });
+
+  it("re-subscribes active canvases after reconnect", () => {
+    vi.useFakeTimers();
+    const { client, socket } = connectClient({ enabled: true, initialDelay: 0, maxAttempts: 1 });
+    const release = client.subscribeCanvas("canvas-1");
+
+    socket.close();
+    vi.runOnlyPendingTimers();
+    const reconnectedSocket = FakeWebSocket.latest();
+    reconnectedSocket.open();
+
+    expect(
+      reconnectedSocket.sent.filter((message) => message.action === "canvas.subscribe"),
+    ).toHaveLength(1);
+    release();
+  });
+});
+
 describe("session subscription reconnect recovery", () => {
   it("keeps queued hydration behind the reconnect subscription acknowledgement", async () => {
     vi.useFakeTimers();

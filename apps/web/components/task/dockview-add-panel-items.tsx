@@ -9,6 +9,7 @@ import {
   IconGitPullRequest,
   IconHistory,
   IconListCheck,
+  IconLayoutDashboard,
   IconNetwork,
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
@@ -22,6 +23,9 @@ import {
 import type { DockviewApi } from "dockview-react";
 import { prPanelLabel, prIdentitySlug, prTaskKey } from "@/components/github/pr-utils";
 import { useDockviewStore } from "@/lib/state/dockview-store";
+import { useAppStore } from "@/components/state-provider";
+import { createCanvas, addCanvasTaskLink } from "@/lib/api/domains/canvas-api";
+import { useTaskCanvases } from "@/hooks/domains/canvas/use-task-canvases";
 import { reviewPanelId } from "@/lib/state/dockview-review-panel-id";
 import { pluginRegistry, usePluginRegistry } from "@/lib/plugins/registry";
 import { resolvePluginIcon } from "@/lib/plugins/icons";
@@ -233,6 +237,42 @@ function PromptHistoryPanelMenuItem({ groupId }: { groupId: string }) {
   );
 }
 
+function CanvasPanelMenuItems({ taskId, groupId }: { taskId: string; groupId: string }) {
+  const { t } = useTranslation();
+  const workspaceId = useAppStore((state) => state.workspaces.activeId);
+  const addCanvasPanel = useDockviewStore((state) => state.addCanvasPanel);
+  const { canvases } = useTaskCanvases(workspaceId ?? undefined, taskId);
+
+  const createAndOpen = async () => {
+    if (!workspaceId) return;
+    const title = window.prompt(t("canvases:canvasTitle"), t("canvases:canvasTitlePlaceholder"));
+    if (!title?.trim()) return;
+    const canvas = await createCanvas(workspaceId, title.trim());
+    await addCanvasTaskLink(canvas.id, taskId);
+    addCanvasPanel(canvas.id, canvas.title, groupId);
+  };
+
+  return (
+    <>
+      <DropdownMenuItem onClick={() => void createAndOpen()} className={MENU_ITEM_CLASS}>
+        <IconLayoutDashboard className={MENU_ICON_CLASS} />
+        {t("canvases:newCanvas")}
+      </DropdownMenuItem>
+      {canvases.map((canvas) => (
+        <DropdownMenuItem
+          key={canvas.id}
+          onClick={() => addCanvasPanel(canvas.id, canvas.title, groupId)}
+          className={MENU_ITEM_CLASS}
+          data-testid={`add-panel-canvas-item-${canvas.id}`}
+        >
+          <IconLayoutDashboard className={MENU_ICON_CLASS} />
+          {canvas.title}
+        </DropdownMenuItem>
+      ))}
+    </>
+  );
+}
+
 /** Filters the linked PRs/MRs down to those whose review panel isn't already
  * open, so the "+" menu doesn't offer duplicates. */
 function missingBuiltInReviews(
@@ -295,6 +335,7 @@ export function AddPanelMenuItems({
           {t("task:plan")}
         </DropdownMenuItem>
       )}
+      {state.taskId && <CanvasPanelMenuItems taskId={state.taskId} groupId={groupId} />}
       {state.portForwarding && (
         <DropdownMenuCheckboxItem
           checked={state.portForwarding.enabled}

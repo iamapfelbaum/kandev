@@ -158,6 +158,7 @@ type DockviewStore = {
   addFileEditorPanel: (path: string, name: string, opts?: OpenPanelOpts) => void;
   promotePreviewToPinned: (type: PreviewType) => void;
   addBrowserPanel: (url?: string, groupId?: string) => void;
+  addCanvasPanel: (canvasId: string, title: string, groupId?: string) => void;
   /** Focus the existing preview browser, or open one when there is none. */
   focusOrAddBrowserPanel: (groupId?: string) => void;
   openBrowserPanel: (url: string) => void;

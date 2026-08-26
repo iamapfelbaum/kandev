@@ -1,6 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SpaRoutes } from "./spa-routes";
+import { resolveSpaRoute } from "./spa-routes";
 
 vi.mock("./settings-routes", () => new Promise(() => undefined));
 vi.mock("./office-routes", () => new Promise(() => undefined));
@@ -22,5 +23,14 @@ describe("lazy SPA route loading", () => {
     const statuses = screen.getAllByRole("status");
     expect(statuses).toHaveLength(1);
     expect(statuses[0].textContent?.toLowerCase()).toContain(`loading ${routeName}`);
+  });
+});
+
+describe("canvas SPA routes", () => {
+  it("decodes a canvas id without treating it as a task route", () => {
+    expect(resolveSpaRoute("/canvases/canvas%2Fone", new URLSearchParams())).toEqual({
+      kind: "canvas",
+      canvasId: "canvas/one",
+    });
   });
 });
