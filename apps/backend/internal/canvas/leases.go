@@ -2,6 +2,8 @@ package canvas
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"time"
 
@@ -25,16 +27,13 @@ func (s *Service) ListEvents(ctx context.Context, canvasID string, afterRevision
 }
 
 func (s *Service) AcquireMarkdownLease(ctx context.Context, canvasID, blockID, holderID string) (*MarkdownLease, error) {
-	holderID, err := resolveLeaseHolder(ctx, holderID)
+	wireHolderID := strings.TrimSpace(holderID)
+	holderID, err := resolveLeaseHolder(ctx, wireHolderID)
 	if err != nil || holderID == "" {
 		return nil, ErrCanvasValidation
 	}
-	canvas, err := s.GetCanvas(ctx, canvasID)
-	if err != nil {
+	if _, err := s.GetCanvas(ctx, canvasID); err != nil {
 		return nil, err
-	}
-	if !hasMarkdownBlock(canvas.Blocks, blockID) {
-		return nil, ErrCanvasNotFound
 	}
 	s.repo.mu.Lock()
 	defer s.repo.mu.Unlock()
@@ -43,21 +42,34 @@ func (s *Service) AcquireMarkdownLease(ctx context.Context, canvasID, blockID, h
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	canvas, err := scanCanvas(ctx, tx, canvasID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.loadChildren(ctx, tx, canvas); err != nil {
+		return nil, err
+	}
+	if !hasMarkdownBlock(canvas.Blocks, blockID) {
+		return nil, ErrCanvasNotFound
+	}
 	var current MarkdownLease
 	err = tx.GetContext(ctx, &current, tx.Rebind(`
 SELECT canvas_id, block_id, holder_id, expires_at FROM canvas_markdown_leases
 WHERE canvas_id = ? AND block_id = ?`), canvasID, blockID)
 	now := s.repo.nowUTC()
 	if err == nil && current.ExpiresAt.After(now) && current.HolderID != holderID {
-		return nil, ErrLeaseUnavailable
+		return nil, newCanvasConflictError(CanvasBusyCode, ErrLeaseUnavailable, canvas, canvasBlock(canvas, blockID), nil, leaseState(current, now, holderID))
 	}
-	lease := &MarkdownLease{CanvasID: canvasID, BlockID: blockID, HolderID: holderID,
+	if wireHolderID == "" {
+		wireHolderID = holderID
+	}
+	lease := &MarkdownLease{CanvasID: canvasID, BlockID: blockID, HolderID: wireHolderID,
 		ExpiresAt: now.Add(LeaseDuration)}
 	if _, err := tx.ExecContext(ctx, tx.Rebind(`
 INSERT INTO canvas_markdown_leases (canvas_id, block_id, holder_id, expires_at)
 VALUES (?, ?, ?, ?)
 ON CONFLICT (canvas_id, block_id) DO UPDATE SET holder_id = excluded.holder_id,
- expires_at = excluded.expires_at`), lease.CanvasID, lease.BlockID, lease.HolderID, lease.ExpiresAt); err != nil {
+	 expires_at = excluded.expires_at`), lease.CanvasID, lease.BlockID, holderID, lease.ExpiresAt); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -83,21 +95,35 @@ DELETE FROM canvas_markdown_leases WHERE canvas_id = ? AND block_id = ? AND hold
 	return requireOneRow(result, ErrCanvasNotFound)
 }
 
-func requireMarkdownLease(ctx context.Context, tx *sqlx.Tx, canvasID, blockID, holderID string, now time.Time) error {
-	holderID, err := resolveLeaseHolder(ctx, holderID)
-	if err != nil || holderID == "" {
-		return ErrLeaseUnavailable
-	}
+func requireMarkdownLease(ctx context.Context, tx *sqlx.Tx, canvas *Canvas, blockID, holderID string, now time.Time) error {
 	var current MarkdownLease
-	if err := tx.GetContext(ctx, &current, tx.Rebind(`
+	leaseErr := tx.GetContext(ctx, &current, tx.Rebind(`
 SELECT canvas_id, block_id, holder_id, expires_at FROM canvas_markdown_leases
-WHERE canvas_id = ? AND block_id = ?`), canvasID, blockID); err != nil {
-		return ErrLeaseUnavailable
+WHERE canvas_id = ? AND block_id = ?`), canvas.ID, blockID)
+	holderID, holderErr := resolveLeaseHolder(ctx, holderID)
+	if holderErr != nil || holderID == "" || leaseErr != nil {
+		lease := &CanvasLeaseState{Holder: "none"}
+		if leaseErr == nil {
+			lease = leaseState(current, now, holderID)
+		}
+		return newCanvasConflictError(CanvasBusyCode, ErrLeaseUnavailable, canvas, canvasBlock(canvas, blockID), nil, lease)
 	}
 	if !current.ExpiresAt.After(now) || current.HolderID != holderID {
-		return ErrLeaseUnavailable
+		return newCanvasConflictError(CanvasBusyCode, ErrLeaseUnavailable, canvas, canvasBlock(canvas, blockID), nil, leaseState(current, now, holderID))
 	}
 	return nil
+}
+
+func leaseState(current MarkdownLease, now time.Time, holderID string) *CanvasLeaseState {
+	if !current.ExpiresAt.After(now) {
+		return &CanvasLeaseState{Holder: "none"}
+	}
+	holder := "other"
+	if current.HolderID == holderID {
+		holder = "self"
+	}
+	expiresAt := current.ExpiresAt
+	return &CanvasLeaseState{Active: true, Holder: holder, ExpiresAt: &expiresAt}
 }
 
 func resolveLeaseHolder(ctx context.Context, requested string) (string, error) {
@@ -113,7 +139,17 @@ func resolveLeaseHolder(ctx context.Context, requested string) (string, error) {
 		return identity.UserID, nil
 	}
 	if requested != identity.UserID && requested != identity.SessionID && requested != identity.TokenID {
-		return "", ErrLeaseUnavailable
+		if identity.UserID == "" {
+			return "", ErrLeaseUnavailable
+		}
+		scope := identity.UserID
+		if identity.SessionID != "" {
+			scope += "\x00session:" + identity.SessionID
+		} else if identity.TokenID != "" {
+			scope += "\x00token:" + identity.TokenID
+		}
+		digest := sha256.Sum256([]byte(scope + "\x00holder:" + requested))
+		return "auth:" + hex.EncodeToString(digest[:]), nil
 	}
 	return requested, nil
 }

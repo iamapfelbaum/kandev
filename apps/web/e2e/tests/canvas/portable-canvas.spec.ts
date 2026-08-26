@@ -77,6 +77,8 @@ test.describe("Portable workspace canvases", () => {
       await testPage.getByRole("button", { name: /import canvas/i }).click();
       const importDialog = testPage.getByRole("dialog");
       await importDialog.locator('input[type="file"]').setInputFiles(exportPath);
+      await importDialog.getByRole("button", { name: /validate import/i }).click();
+      await expect(importDialog.getByTestId("canvas-import-preview")).toContainText(title);
       await importDialog.getByTestId("canvas-import-submit").click();
       await expect(testPage.getByTestId("canvas-page")).toBeVisible({ timeout: 15_000 });
       importedCanvasId = decodeURIComponent(

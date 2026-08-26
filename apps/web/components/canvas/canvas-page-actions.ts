@@ -7,6 +7,7 @@ import type {
   ApplyCanvasCommandRequest,
   ApplyCanvasCommandResult,
   Canvas,
+  CanvasBlockType,
 } from "@/lib/types/canvas";
 
 type CanvasPageActionsProps = {
@@ -19,7 +20,7 @@ export function useCanvasPageActions({ canvas, apply, refresh }: CanvasPageActio
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
 
-  const addMarkdownBlock = async () => {
+  const addBlock = async (type: CanvasBlockType) => {
     if (!canvas || busy) return;
     setBusy(true);
     try {
@@ -27,12 +28,16 @@ export function useCanvasPageActions({ canvas, apply, refresh }: CanvasPageActio
         command_id: generateUUID(),
         base_revision: canvas.revision,
         action: "block.create",
-        input: { type: "markdown", state: { markdown: "" } },
+        input: { type, state: defaultBlockState(type) },
       });
+    } catch {
+      // useCanvas reports the conflict or validation details to the page.
     } finally {
       setBusy(false);
     }
   };
+
+  const addMarkdownBlock = () => addBlock("markdown");
 
   const download = async () => {
     if (!canvas || busy) return;
@@ -67,5 +72,20 @@ export function useCanvasPageActions({ canvas, apply, refresh }: CanvasPageActio
     }
   };
 
-  return { busy, addMarkdownBlock, download, archive, remove };
+  return { busy, addBlock, addMarkdownBlock, download, archive, remove };
+}
+
+function defaultBlockState(type: CanvasBlockType): Record<string, unknown> {
+  switch (type) {
+    case "markdown":
+      return { markdown: "" };
+    case "checklist":
+      return { items: [] };
+    case "kanban":
+      return { columns: [{ id: "todo", cards: [] }] };
+    case "metrics":
+      return { metrics: [] };
+    case "timeline":
+      return { events: [] };
+  }
 }

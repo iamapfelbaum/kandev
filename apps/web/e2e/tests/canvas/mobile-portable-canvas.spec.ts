@@ -47,6 +47,15 @@ test("keeps canvas settings and the direct canvas route touch-friendly on mobile
         }).length,
     );
     expect(scrollOwnerCount).toBe(1);
+
+    await canvasPage.getByRole("button", { name: /add markdown block/i }).click();
+    const block = canvasPage.getByTestId(/canvas-block-/).first();
+    await expect(block).toBeVisible({ timeout: 15_000 });
+    await canvasPage
+      .getByTestId(/canvas-block-actions-/)
+      .first()
+      .click();
+    await expect(testPage.getByTestId(/canvas-block-action-drawer-/)).toBeVisible();
   } finally {
     await apiClient.rawRequest("DELETE", `/api/v1/canvases/${encodeURIComponent(canvas.id)}`);
   }

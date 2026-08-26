@@ -233,7 +233,69 @@ describe("canvas subscriptions", () => {
     removeHandler();
     release();
   });
+});
 
+describe("canvas subscription recovery", () => {
+  it("advances the applied revision for ordered canvas events", async () => {
+    const { client, socket } = connectClient();
+    const release = client.subscribeCanvas(CANVAS_ID);
+    const request = socket.sent.find((message) => message.action === CANVAS_SUBSCRIBE_ACTION);
+    if (!request) throw new Error(`No ${CANVAS_SUBSCRIBE_ACTION} request was sent`);
+    socket.receive({
+      id: request.id,
+      type: "response",
+      payload: { canvas: { id: CANVAS_ID, revision: 0 }, events: [], recovery: "events" },
+    });
+    await Promise.resolve();
+
+    socket.receive({
+      type: "notification",
+      action: "canvas.event",
+      payload: { canvas_id: CANVAS_ID, revision: 1, action: "canvas.rename" },
+    });
+
+    expect(client.getCanvasSubscriptionState(CANVAS_ID)).toMatchObject({
+      status: "connected",
+      revision: 1,
+      gap: false,
+    });
+    release();
+  });
+
+  it("marks a skipped canvas event as recovering without applying the gap", async () => {
+    const { client, socket } = connectClient();
+    const release = client.subscribeCanvas(CANVAS_ID);
+    const request = socket.sent.find((message) => message.action === CANVAS_SUBSCRIBE_ACTION);
+    if (!request) throw new Error(`No ${CANVAS_SUBSCRIBE_ACTION} request was sent`);
+    socket.receive({
+      id: request.id,
+      type: "response",
+      payload: { canvas: { id: CANVAS_ID, revision: 0 }, events: [], recovery: "events" },
+    });
+    await Promise.resolve();
+
+    socket.receive({
+      type: "notification",
+      action: "canvas.event",
+      payload: { canvas_id: CANVAS_ID, revision: 2, action: "canvas.rename" },
+    });
+
+    expect(client.getCanvasSubscriptionState(CANVAS_ID)).toMatchObject({
+      status: "recovering",
+      revision: 0,
+      gap: true,
+    });
+    client.acknowledgeCanvasRevision(CANVAS_ID, 2);
+    expect(client.getCanvasSubscriptionState(CANVAS_ID)).toMatchObject({
+      status: "connected",
+      revision: 2,
+      gap: false,
+    });
+    release();
+  });
+});
+
+describe("canvas subscription reconnect recovery", () => {
   it("delivers the recovery response after reconnect", async () => {
     vi.useFakeTimers();
     const { client, socket } = connectClient({ enabled: true, initialDelay: 0, maxAttempts: 1 });
@@ -271,6 +333,76 @@ describe("canvas subscriptions", () => {
 
     expect(snapshots).toEqual([1, 4]);
     removeHandler();
+    release();
+  });
+
+  it("sends the latest applied revision on reconnect", async () => {
+    vi.useFakeTimers();
+    const { client, socket } = connectClient({ enabled: true, initialDelay: 0, maxAttempts: 1 });
+    const release = client.subscribeCanvas(CANVAS_ID);
+    const initialRequest = socket.sent.find(
+      (message) => message.action === CANVAS_SUBSCRIBE_ACTION,
+    );
+    if (!initialRequest) throw new Error(`No initial ${CANVAS_SUBSCRIBE_ACTION} request was sent`);
+    expect(initialRequest.payload).toEqual({ canvas_id: CANVAS_ID, after_revision: 0 });
+    socket.receive({
+      id: initialRequest.id,
+      type: "response",
+      payload: { canvas: { id: CANVAS_ID, revision: 7 }, events: [], recovery: "events" },
+    });
+    await Promise.resolve();
+
+    socket.close();
+    vi.runOnlyPendingTimers();
+    const reconnectedSocket = FakeWebSocket.latest();
+    reconnectedSocket.open();
+    const reconnectRequest = reconnectedSocket.sent.find(
+      (message) => message.action === CANVAS_SUBSCRIBE_ACTION,
+    );
+    if (!reconnectRequest)
+      throw new Error(`No reconnect ${CANVAS_SUBSCRIBE_ACTION} request was sent`);
+    expect(reconnectRequest.payload).toEqual({ canvas_id: CANVAS_ID, after_revision: 7 });
+    release();
+  });
+
+  it("exposes a recovery state when the ordered event stream has a gap", async () => {
+    const { client, socket } = connectClient();
+    const states: Array<{ status: string; gap: boolean }> = [];
+    const removeState = client.onCanvasSubscriptionState(CANVAS_ID, (state) => {
+      states.push({ status: state.status, gap: state.gap });
+    });
+    const release = client.subscribeCanvas(CANVAS_ID);
+    const request = socket.sent.find((message) => message.action === CANVAS_SUBSCRIBE_ACTION);
+    if (!request) throw new Error(`No ${CANVAS_SUBSCRIBE_ACTION} request was sent`);
+    socket.receive({
+      id: request.id,
+      type: "response",
+      payload: {
+        canvas: { id: CANVAS_ID, revision: 3 },
+        events: [{ revision: 2 }],
+        recovery: "events",
+      },
+    });
+    await Promise.resolve();
+    expect(states.at(-1)).toEqual({ status: "recovering", gap: true });
+    removeState();
+    release();
+  });
+});
+
+describe("canvas connection state", () => {
+  it("marks active canvases unavailable when the socket disconnects", () => {
+    const { client, socket } = connectClient();
+    const states: string[] = [];
+    const removeState = client.onCanvasSubscriptionState(CANVAS_ID, (state) => {
+      states.push(state.status);
+    });
+    const release = client.subscribeCanvas(CANVAS_ID);
+
+    socket.close();
+
+    expect(states.at(-1)).toBe("error");
+    removeState();
     release();
   });
 });

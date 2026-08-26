@@ -1,5 +1,17 @@
 import type { CanvasBlock, CanvasBlockType } from "@/lib/types/canvas";
 
+export type CanvasItemRecord = {
+  id: string;
+  revision: number;
+  [key: string]: unknown;
+};
+
+export type CanvasKanbanColumn = {
+  id: string;
+  cards: CanvasItemRecord[];
+  [key: string]: unknown;
+};
+
 export function asStateRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -8,6 +20,55 @@ export function asStateRecord(value: unknown): Record<string, unknown> {
 
 export function blockLabelKey(type: CanvasBlockType): string {
   return `canvases:${type}`;
+}
+
+export function blockCollection(block: CanvasBlock, collection: string): CanvasItemRecord[] {
+  const state = asStateRecord(block.state);
+  const value = state[collection];
+  if (!Array.isArray(value)) return [];
+  return value.filter(isCanvasItemRecord);
+}
+
+export function kanbanColumns(block: CanvasBlock): CanvasKanbanColumn[] {
+  const state = asStateRecord(block.state);
+  const value = state.columns;
+  if (!Array.isArray(value)) return [];
+  return value.filter(isCanvasKanbanColumn).map((column) => ({
+    ...column,
+    cards: column.cards.filter(isCanvasItemRecord),
+  }));
+}
+
+export function itemLabel(item: Pick<CanvasItemRecord, "id"> & Record<string, unknown>): string {
+  for (const key of ["label", "title", "name", "text"]) {
+    if (typeof item[key] === "string" && item[key].trim()) return item[key] as string;
+  }
+  return item.id;
+}
+
+export function itemDetail(item: Record<string, unknown>): string | null {
+  for (const key of ["value", "time", "timestamp", "date", "status"]) {
+    const value = item[key];
+    if (typeof value === "string" && value.trim()) return value;
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+  }
+  return null;
+}
+
+function isCanvasItemRecord(value: unknown): value is CanvasItemRecord {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof (value as Record<string, unknown>).id === "string" &&
+    typeof (value as Record<string, unknown>).revision === "number"
+  );
+}
+
+function isCanvasKanbanColumn(value: unknown): value is CanvasKanbanColumn {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.id === "string" && Array.isArray(record.cards);
 }
 
 export function blockText(block: CanvasBlock): string | null {

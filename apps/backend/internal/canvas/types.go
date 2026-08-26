@@ -77,6 +77,65 @@ var (
 	ErrLeaseUnavailable      = errors.New("markdown lease unavailable")
 )
 
+const (
+	CanvasConflictCode = "canvas_conflict"
+	CanvasBusyCode     = "canvas_busy"
+)
+
+// CanvasLeaseState is the safe lease state exposed to a conflicting writer.
+// It never reveals another writer's identifier.
+type CanvasLeaseState struct {
+	Active    bool       `json:"active"`
+	Holder    string     `json:"holder"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
+type CanvasConflictDetails struct {
+	CanvasRevision int64             `json:"canvas_revision"`
+	BlockRevision  int64             `json:"block_revision"`
+	CurrentBlock   *Block            `json:"current_block,omitempty"`
+	CurrentItem    map[string]any    `json:"current_item,omitempty"`
+	Lease          *CanvasLeaseState `json:"lease,omitempty"`
+}
+
+// CanvasConflictError carries the authoritative state needed for recovery.
+type CanvasConflictError struct {
+	Code    string                 `json:"code"`
+	Cause   error                  `json:"-"`
+	Details *CanvasConflictDetails `json:"details,omitempty"`
+}
+
+func (e *CanvasConflictError) Error() string {
+	if e == nil {
+		return "canvas conflict"
+	}
+	if e.Cause != nil {
+		return e.Cause.Error()
+	}
+	return e.Code
+}
+
+func (e *CanvasConflictError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+func newCanvasConflictError(code string, cause error, canvas *Canvas, block *Block, item map[string]any, lease *CanvasLeaseState) *CanvasConflictError {
+	details := &CanvasConflictDetails{CurrentItem: item, Lease: lease}
+	if canvas != nil {
+		details.CanvasRevision = canvas.Revision
+	}
+	if block != nil {
+		blockCopy := *block
+		blockCopy.State = cloneJSON(block.State)
+		details.CurrentBlock = &blockCopy
+		details.BlockRevision = block.BlockRevision
+	}
+	return &CanvasConflictError{Code: code, Cause: cause, Details: details}
+}
+
 type Canvas struct {
 	ID                       string     `json:"id" db:"id"`
 	OwnerUserID              string     `json:"owner_user_id" db:"owner_user_id"`
@@ -174,6 +233,18 @@ type PortableBlock struct {
 	State    json.RawMessage `json:"state"`
 }
 
+type CanvasImportPreview struct {
+	Format        string   `json:"format"`
+	FormatVersion int      `json:"format_version"`
+	SchemaVersion int      `json:"schema_version"`
+	Title         string   `json:"title"`
+	BlockCount    int      `json:"block_count"`
+	BlockTypes    []string `json:"block_types"`
+	SizeBytes     int      `json:"size_bytes"`
+	TaskID        string   `json:"task_id,omitempty"`
+	Independent   bool     `json:"independent_copy"`
+}
+
 func validateTitle(title string) error {
 	title = strings.TrimSpace(title)
 	if title == "" || len([]rune(title)) > MaxTitleLength {
@@ -251,6 +322,7 @@ func validateKanbanState(state map[string]any) error {
 		return err
 	}
 	seenColumns := make(map[string]struct{}, len(columns))
+	seenCards := make(map[string]struct{})
 	for _, rawColumn := range columns {
 		column, ok := rawColumn.(map[string]any)
 		if !ok {
@@ -264,8 +336,12 @@ func validateKanbanState(state map[string]any) error {
 			return fmt.Errorf("%w: duplicate kanban column id %q", ErrCanvasValidation, columnID)
 		}
 		seenColumns[columnID] = struct{}{}
-		if err := validateCollectionState(column, "cards", "kanban card"); err != nil {
+		cards, err := requiredStateCollection(column, "cards")
+		if err != nil {
 			return fmt.Errorf("%w: kanban column cards are required", ErrCanvasValidation)
+		}
+		if err := validateTypedItemsWithSeen(cards, "kanban card", seenCards); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -288,7 +364,10 @@ func requiredStateString(state map[string]any, key, label string) (string, error
 }
 
 func validateTypedItems(items []any, label string) error {
-	seen := make(map[string]struct{}, len(items))
+	return validateTypedItemsWithSeen(items, label, make(map[string]struct{}, len(items)))
+}
+
+func validateTypedItemsWithSeen(items []any, label string, seen map[string]struct{}) error {
 	for _, rawItem := range items {
 		item, ok := rawItem.(map[string]any)
 		if !ok {
@@ -416,7 +495,128 @@ func validateStateString(value string) error {
 	if strings.Contains(lowered, "javascript:") || strings.Contains(lowered, "data:text/html") || containsHTMLTag(value) {
 		return fmt.Errorf("%w: executable or raw HTML content is not allowed", ErrCanvasValidation)
 	}
+	if containsRemoteMarkdownImage(value) {
+		return fmt.Errorf("%w: markdown images cannot load remote resources", ErrCanvasValidation)
+	}
 	return nil
+}
+
+func containsRemoteMarkdownImage(value string) bool {
+	references := markdownReferenceDefinitions(value)
+	for offset := 0; offset < len(value); {
+		marker := strings.Index(value[offset:], "![")
+		if marker < 0 {
+			return false
+		}
+		marker += offset
+		destination, nextOffset, ok := markdownImageDestination(value, marker, references)
+		if !ok {
+			return false
+		}
+		if isRemoteMarkdownDestination(destination) {
+			return true
+		}
+		offset = nextOffset
+	}
+	return false
+}
+
+func markdownImageDestination(value string, marker int, references map[string]string) (string, int, bool) {
+	altEnd := strings.IndexByte(value[marker+2:], ']')
+	if altEnd < 0 {
+		return "", 0, false
+	}
+	altEnd += marker + 2
+	alt := value[marker+2 : altEnd]
+	destinationStart := skipMarkdownWhitespace(value, altEnd+1)
+	if destinationStart >= len(value) {
+		return markdownReferenceDestination(references, alt), len(value), true
+	}
+	if value[destinationStart] == '[' {
+		return markdownReferenceImageDestination(value, alt, destinationStart, references)
+	}
+	if value[destinationStart] != '(' {
+		return markdownReferenceDestination(references, alt), marker + 2, true
+	}
+	return markdownInlineImageDestination(value, destinationStart)
+}
+
+func markdownReferenceImageDestination(
+	value string,
+	alt string,
+	destinationStart int,
+	references map[string]string,
+) (string, int, bool) {
+	referenceEnd := strings.IndexByte(value[destinationStart+1:], ']')
+	if referenceEnd < 0 {
+		return "", 0, false
+	}
+	reference := value[destinationStart+1 : destinationStart+1+referenceEnd]
+	if reference == "" {
+		reference = alt
+	}
+	return markdownReferenceDestination(references, reference), destinationStart + 1 + referenceEnd + 1, true
+}
+
+func markdownInlineImageDestination(value string, destinationStart int) (string, int, bool) {
+	destinationStart = skipMarkdownWhitespace(value, destinationStart+1)
+	destinationEnd := strings.IndexByte(value[destinationStart:], ')')
+	if destinationEnd < 0 {
+		return "", 0, false
+	}
+	destination := strings.TrimSpace(value[destinationStart : destinationStart+destinationEnd])
+	if len(destination) >= 2 && destination[0] == '<' && destination[len(destination)-1] == '>' {
+		destination = strings.TrimSpace(destination[1 : len(destination)-1])
+	}
+	return destination, destinationStart + destinationEnd + 1, true
+}
+
+func skipMarkdownWhitespace(value string, offset int) int {
+	for offset < len(value) && strings.ContainsRune(" \t\n\r", rune(value[offset])) {
+		offset++
+	}
+	return offset
+}
+
+func markdownReferenceDefinitions(value string) map[string]string {
+	references := make(map[string]string)
+	for _, line := range strings.Split(value, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "[") {
+			continue
+		}
+		close := strings.Index(line, "]:")
+		if close < 1 {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(line[1:close]))
+		destination := strings.TrimSpace(line[close+2:])
+		if len(destination) >= 2 && destination[0] == '<' {
+			if end := strings.IndexByte(destination[1:], '>'); end >= 0 {
+				destination = destination[1 : end+1]
+			}
+		} else if fields := strings.Fields(destination); len(fields) > 0 {
+			destination = fields[0]
+		}
+		if key != "" {
+			references[key] = destination
+		}
+	}
+	return references
+}
+
+func markdownReferenceDestination(references map[string]string, reference string) string {
+	key := strings.ToLower(strings.TrimSpace(reference))
+	return references[key]
+}
+
+func isRemoteMarkdownDestination(destination string) bool {
+	loweredDestination := strings.ToLower(strings.TrimSpace(destination))
+	return strings.HasPrefix(loweredDestination, "http://") ||
+		strings.HasPrefix(loweredDestination, "https://") ||
+		strings.HasPrefix(loweredDestination, "//") ||
+		strings.HasPrefix(loweredDestination, "data:") ||
+		strings.HasPrefix(loweredDestination, "blob:")
 }
 
 var itemLabelKeys = map[string]bool{

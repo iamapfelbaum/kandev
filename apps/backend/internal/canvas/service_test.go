@@ -310,6 +310,27 @@ func TestCanvasAccessHidesForeignWorkspace(t *testing.T) {
 	}
 }
 
+func TestCanvasSubscriptionUsesAnEmptyEventArray(t *testing.T) {
+	svc := newCanvasTestService(t)
+	canvas, err := svc.CreateCanvas(context.Background(), CreateCanvasRequest{WorkspaceID: "ws-a", Title: "Empty"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := svc.SubscribeCanvas(context.Background(), canvas.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Events json.RawMessage `json:"events"`
+	}
+	if err := json.Unmarshal(snapshot, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if string(payload.Events) != "[]" {
+		t.Fatalf("empty canvas events = %s, want []", payload.Events)
+	}
+}
+
 func TestPortableCanvasImportPreservesPositionOrder(t *testing.T) {
 	svc := newCanvasTestService(t)
 	ctx := context.Background()

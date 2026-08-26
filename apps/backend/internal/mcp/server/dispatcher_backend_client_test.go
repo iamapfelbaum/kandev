@@ -80,6 +80,24 @@ func TestDispatcherBackendClient_ErrorResponse(t *testing.T) {
 	assert.Contains(t, err.Error(), "boom")
 }
 
+func TestDispatcherBackendClient_PreservesStructuredErrorDetails(t *testing.T) {
+	log := newTestLogger(t)
+	errPayload, err := json.Marshal(map[string]any{
+		"code": "canvas_conflict", "message": "canvas revision conflict",
+		"details": map[string]any{"canvas_revision": 8, "block_revision": 4},
+	})
+	require.NoError(t, err)
+	respMsg := &ws.Message{ID: "x", Action: "canvas.command", Type: ws.MessageTypeError, Payload: errPayload}
+	client := NewDispatcherBackendClient(&fakeDispatcher{resp: respMsg}, log)
+
+	requestErr := client.RequestPayload(context.Background(), "canvas.command", nil, nil)
+	var backendErr *BackendError
+	require.ErrorAs(t, requestErr, &backendErr)
+	assert.Equal(t, "canvas_conflict", backendErr.Code)
+	assert.Equal(t, float64(8), backendErr.Details["canvas_revision"])
+	assert.Contains(t, requestErr.Error(), "canvas_revision")
+}
+
 func TestDispatcherBackendClient_DispatchError(t *testing.T) {
 	log := newTestLogger(t)
 

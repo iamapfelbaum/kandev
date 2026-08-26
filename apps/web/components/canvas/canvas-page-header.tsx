@@ -1,13 +1,6 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  IconArchive,
-  IconArrowLeft,
-  IconDots,
-  IconDownload,
-  IconPlus,
-  IconRestore,
-  IconTrash,
-} from "@tabler/icons-react";
+import { IconArrowLeft, IconPlus } from "@tabler/icons-react";
 import { Button } from "@kandev/ui/button";
 import {
   DropdownMenu,
@@ -15,24 +8,111 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@kandev/ui/dropdown-menu";
+import { MobilePickerSheet } from "@/components/task/mobile/mobile-picker-sheet";
 import Link from "@/components/routing/app-link";
+import { useTouchDrawer } from "@/hooks/use-compact-task-chrome";
 import type { Canvas } from "@/lib/types/canvas";
+import type { CanvasBlockType } from "@/lib/types/canvas";
+import { CanvasPageOverflowActions } from "./canvas-page-overflow-actions";
 
 type CanvasPageHeaderProps = {
   canvas: Canvas;
   embedded: boolean;
   busy: boolean;
-  onAddMarkdownBlock: () => void;
+  readOnly: boolean;
+  onAddBlock: (type: CanvasBlockType) => void;
   onDownload: () => void;
   onArchive: () => void;
   onRemove: () => void;
 };
 
+function AddBlockMenu({
+  busy,
+  archived,
+  onAddBlock,
+}: {
+  busy: boolean;
+  archived: boolean;
+  onAddBlock: (type: CanvasBlockType) => void;
+}) {
+  const { t } = useTranslation();
+  const touch = useTouchDrawer();
+  const [open, setOpen] = useState(false);
+  const blockTypes: CanvasBlockType[] = ["markdown", "checklist", "kanban", "metrics", "timeline"];
+  const selectBlockType = (type: CanvasBlockType) => {
+    onAddBlock(type);
+    setOpen(false);
+  };
+  if (touch) {
+    return (
+      <>
+        <Button
+          type="button"
+          size="sm"
+          className="min-h-11"
+          disabled={busy || archived}
+          data-testid="canvas-add-block"
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          onClick={() => setOpen(true)}
+        >
+          <IconPlus className="h-4 w-4" />
+          {t("canvases:addBlock")}
+        </Button>
+        <MobilePickerSheet
+          open={open}
+          onOpenChange={setOpen}
+          title={t("canvases:addBlock")}
+          contentTestId="canvas-add-block-picker"
+        >
+          <div className="grid gap-1">
+            {blockTypes.map((type) => (
+              <Button
+                key={type}
+                type="button"
+                variant="ghost"
+                className="min-h-11 w-full justify-start"
+                onClick={() => selectBlockType(type)}
+              >
+                {t(`canvases:${type}`)}
+              </Button>
+            ))}
+          </div>
+        </MobilePickerSheet>
+      </>
+    );
+  }
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          size="sm"
+          className="min-h-11 md:min-h-7"
+          disabled={busy || archived}
+          data-testid="canvas-add-block"
+        >
+          <IconPlus className="h-4 w-4" />
+          {t("canvases:addBlock")}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {blockTypes.map((type) => (
+          <DropdownMenuItem key={type} onClick={() => selectBlockType(type)}>
+            {t(`canvases:${type}`)}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function CanvasPageHeader({
   canvas,
   embedded,
   busy,
-  onAddMarkdownBlock,
+  readOnly,
+  onAddBlock,
   onDownload,
   onArchive,
   onRemove,
@@ -67,52 +147,26 @@ export function CanvasPageHeader({
           type="button"
           size="sm"
           className="min-h-11 md:min-h-7"
-          disabled={busy || !!canvas.archived_at}
-          onClick={onAddMarkdownBlock}
+          disabled={busy || readOnly || !!canvas.archived_at}
+          onClick={() => onAddBlock("markdown")}
         >
           <IconPlus className="h-4 w-4" />
           {t("canvases:addMarkdownBlock")}
         </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              className="min-h-11 min-w-11 md:min-h-7 md:min-w-7"
-              aria-label={t("canvases:canvasActions")}
-            >
-              <IconDots className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={onDownload} disabled={busy}>
-              <IconDownload className="mr-2 h-4 w-4" />
-              {t("canvases:exportCanvas")}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onArchive} disabled={busy}>
-              {canvas.archived_at ? (
-                <IconRestore className="mr-2 h-4 w-4" />
-              ) : (
-                <IconArchive className="mr-2 h-4 w-4" />
-              )}
-              {canvas.archived_at ? t("canvases:restoreCanvas") : t("canvases:archiveCanvas")}
-            </DropdownMenuItem>
-            {!embedded && (
-              <DropdownMenuItem
-                onClick={onRemove}
-                disabled={busy}
-                className="text-destructive focus:text-destructive"
-              >
-                <IconTrash className="mr-2 h-4 w-4" />
-                {t("canvases:removeCanvas")}
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem asChild>
-              <Link href={settingsHref}>{t("canvases:taskLinks")}</Link>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <AddBlockMenu
+          busy={busy || readOnly}
+          archived={!!canvas.archived_at}
+          onAddBlock={onAddBlock}
+        />
+        <CanvasPageOverflowActions
+          canvas={canvas}
+          embedded={embedded}
+          busy={busy}
+          settingsHref={settingsHref}
+          onDownload={onDownload}
+          onArchive={onArchive}
+          onRemove={onRemove}
+        />
       </div>
     </header>
   );

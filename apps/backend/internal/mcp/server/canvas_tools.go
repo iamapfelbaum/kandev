@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 
@@ -61,7 +62,7 @@ func (s *Server) listCanvasesHandler() server.ToolHandlerFunc {
 		}
 		var result []canvasdomain.Canvas
 		if err := s.backend.RequestPayload(ctx, ws.ActionCanvasList, payload, &result); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return canvasToolError(err), nil
 		}
 		return canvasToolResult(result)
 	}
@@ -83,7 +84,7 @@ func (s *Server) createCanvasHandler() server.ToolHandlerFunc {
 		}
 		var result canvasdomain.Canvas
 		if err := s.backend.RequestPayload(ctx, ws.ActionCanvasCreate, payload, &result); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return canvasToolError(err), nil
 		}
 		return canvasToolResult(result)
 	}
@@ -101,7 +102,7 @@ func (s *Server) getCanvasHandler() server.ToolHandlerFunc {
 			payload["task_id"] = s.taskID
 		}
 		if err := s.backend.RequestPayload(ctx, ws.ActionCanvasGet, payload, &result); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return canvasToolError(err), nil
 		}
 		return canvasToolResult(result)
 	}
@@ -139,7 +140,7 @@ func (s *Server) applyCanvasActionHandler() server.ToolHandlerFunc {
 		}
 		var result canvasdomain.ApplyCanvasCommandResult
 		if err := s.backend.RequestPayload(ctx, ws.ActionCanvasCommand, payload, &result); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return canvasToolError(err), nil
 		}
 		return canvasToolResult(result)
 	}
@@ -192,4 +193,21 @@ func canvasToolResult(value any) (*mcp.CallToolResult, error) {
 		return nil, err
 	}
 	return mcp.NewToolResultText(string(data)), nil
+}
+
+func canvasToolError(err error) *mcp.CallToolResult {
+	var backendErr *BackendError
+	if !errors.As(err, &backendErr) || backendErr == nil || backendErr.Code == "" {
+		return mcp.NewToolResultError(err.Error())
+	}
+	structured := map[string]any{
+		"code":    backendErr.Code,
+		"message": backendErr.Message,
+	}
+	if len(backendErr.Details) > 0 {
+		structured["details"] = backendErr.Details
+	}
+	result := mcp.NewToolResultStructured(structured, err.Error())
+	result.IsError = true
+	return result
 }

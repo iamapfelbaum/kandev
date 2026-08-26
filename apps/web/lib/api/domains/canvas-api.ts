@@ -4,7 +4,15 @@ import type {
   ApplyCanvasCommandResult,
   Canvas,
   CanvasEvent,
+  CanvasImportPreview,
 } from "@/lib/types/canvas";
+
+export type CanvasMarkdownLease = {
+  canvas_id: string;
+  block_id: string;
+  holder_id: string;
+  expires_at: string;
+};
 
 function workspacePath(workspaceId: string): string {
   return `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/canvases`;
@@ -60,6 +68,24 @@ export async function importCanvas(
 ): Promise<Canvas> {
   const query = taskId ? `?task_id=${encodeURIComponent(taskId)}` : "";
   return fetchJson<Canvas>(`${workspacePath(workspaceId)}/import${query}`, {
+    ...options,
+    init: {
+      method: "POST",
+      body: file,
+      headers: { "Content-Type": "application/vnd.kandev.canvas+json" },
+      ...(options?.init ?? {}),
+    },
+  });
+}
+
+export async function previewCanvasImport(
+  workspaceId: string,
+  file: string,
+  taskId?: string,
+  options?: ApiRequestOptions,
+): Promise<CanvasImportPreview> {
+  const query = taskId ? `?task_id=${encodeURIComponent(taskId)}` : "";
+  return fetchJson<CanvasImportPreview>(`${workspacePath(workspaceId)}/import/preview${query}`, {
     ...options,
     init: {
       method: "POST",
@@ -150,4 +176,35 @@ export async function removeCanvasTaskLink(
 
 export async function exportCanvas(canvasId: string, options?: ApiRequestOptions): Promise<Blob> {
   return fetchBlob(`${canvasPath(canvasId)}/export`, options);
+}
+
+export async function acquireMarkdownLease(
+  canvasId: string,
+  blockId: string,
+  holderId: string,
+  options?: ApiRequestOptions,
+): Promise<CanvasMarkdownLease> {
+  return fetchJson<CanvasMarkdownLease>(
+    `${canvasPath(canvasId)}/blocks/${encodeURIComponent(blockId)}/lease`,
+    {
+      ...options,
+      init: {
+        method: "POST",
+        body: JSON.stringify({ holder_id: holderId }),
+        ...(options?.init ?? {}),
+      },
+    },
+  );
+}
+
+export async function releaseMarkdownLease(
+  canvasId: string,
+  blockId: string,
+  holderId: string,
+  options?: ApiRequestOptions,
+): Promise<void> {
+  return fetchJson<void>(
+    `${canvasPath(canvasId)}/blocks/${encodeURIComponent(blockId)}/lease?holder_id=${encodeURIComponent(holderId)}`,
+    { ...options, init: { method: "DELETE", ...(options?.init ?? {}) } },
+  );
 }

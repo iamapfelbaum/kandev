@@ -35,6 +35,32 @@ export type Canvas = {
   task_links: CanvasTaskLink[];
 };
 
+export type CanvasImportPreview = {
+  format: string;
+  format_version: number;
+  schema_version: number;
+  title: string;
+  block_count: number;
+  block_types: CanvasBlockType[];
+  size_bytes: number;
+  task_id?: string;
+  independent_copy: boolean;
+};
+
+export type CanvasLeaseState = {
+  active: boolean;
+  holder: "self" | "other" | "none";
+  expires_at?: string;
+};
+
+export type CanvasConflictDetails = {
+  canvas_revision: number;
+  block_revision?: number;
+  current_block?: CanvasBlock;
+  current_item?: Record<string, unknown>;
+  lease?: CanvasLeaseState;
+};
+
 export type CanvasEvent = {
   canvas_id: string;
   revision: number;

@@ -67,9 +67,9 @@ export function useWorkspaceCanvases(workspaceId: string | undefined, includeArc
       refresh();
       return canvas;
     },
-    importFile: async (file: string) => {
+    importFile: async (file: string, taskId?: string) => {
       if (!workspaceId) return null;
-      const canvas = await importCanvas(workspaceId, file);
+      const canvas = await importCanvas(workspaceId, file, taskId);
       refresh();
       return canvas;
     },

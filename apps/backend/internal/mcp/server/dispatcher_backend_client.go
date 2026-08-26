@@ -66,14 +66,7 @@ func (c *DispatcherBackendClient) RequestPayload(ctx context.Context, action str
 		return fmt.Errorf("dispatcher returned nil response for %s", action)
 	}
 	if resp.Type == ws.MessageTypeError {
-		var ep struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		}
-		if json.Unmarshal(resp.Payload, &ep) == nil {
-			return fmt.Errorf("backend error [%s]: %s", ep.Code, ep.Message)
-		}
-		return fmt.Errorf("backend error: %s", string(resp.Payload))
+		return parseBackendError(resp.Payload)
 	}
 	if result != nil && len(resp.Payload) > 0 {
 		if err := json.Unmarshal(resp.Payload, result); err != nil {

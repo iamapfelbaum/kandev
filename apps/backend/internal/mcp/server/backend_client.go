@@ -27,6 +27,37 @@ type MCPResponse struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
+// BackendError preserves the structured error returned by the backend bridge.
+// MCP tool handlers include Error() in their tool result, so recovery details
+// remain available to an agent instead of being reduced to a message string.
+type BackendError struct {
+	Code    string
+	Message string
+	Details map[string]interface{}
+}
+
+func (e *BackendError) Error() string {
+	if e == nil {
+		return "backend error"
+	}
+	if len(e.Details) == 0 {
+		return fmt.Sprintf("backend error [%s]: %s", e.Code, e.Message)
+	}
+	details, err := json.Marshal(e.Details)
+	if err != nil {
+		return fmt.Sprintf("backend error [%s]: %s", e.Code, e.Message)
+	}
+	return fmt.Sprintf("backend error [%s]: %s; details: %s", e.Code, e.Message, details)
+}
+
+func parseBackendError(payload []byte) error {
+	var response ws.ErrorPayload
+	if err := json.Unmarshal(payload, &response); err != nil {
+		return fmt.Errorf("backend error: %s", string(payload))
+	}
+	return &BackendError{Code: response.Code, Message: response.Message, Details: response.Details}
+}
+
 // ChannelBackendClient implements BackendClient using channels.
 // It sends MCP requests through a channel that will be read by the agent stream handler,
 // and receives responses through a callback mechanism.
@@ -160,14 +191,7 @@ func (c *ChannelBackendClient) RequestPayload(ctx context.Context, action string
 			zap.String("type", string(resp.Type)),
 			zap.Duration("duration", time.Since(start)))
 		if resp.Type == ws.MessageTypeError {
-			var ep struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			}
-			if json.Unmarshal(resp.Payload, &ep) == nil {
-				return fmt.Errorf("backend error [%s]: %s", ep.Code, ep.Message)
-			}
-			return fmt.Errorf("backend error: %s", string(resp.Payload))
+			return parseBackendError(resp.Payload)
 		}
 		if result != nil && len(resp.Payload) > 0 {
 			if err := json.Unmarshal(resp.Payload, result); err != nil {

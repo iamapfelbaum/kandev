@@ -1,8 +1,13 @@
 export type CanvasSubscriptionAction = "canvas.subscribe" | "canvas.unsubscribe";
-type CanvasSubscriptionSender = (action: CanvasSubscriptionAction, canvasId: string) => void;
+type CanvasSubscriptionSender = (
+  action: CanvasSubscriptionAction,
+  canvasId: string,
+  afterRevision?: number,
+) => void;
 
 export class CanvasSubscriptionRegistry {
   private counts = new Map<string, number>();
+  private revisions = new Map<string, number>();
 
   subscribe(
     canvasId: string,
@@ -11,7 +16,9 @@ export class CanvasSubscriptionRegistry {
   ): () => void {
     const nextCount = (this.counts.get(canvasId) ?? 0) + 1;
     this.counts.set(canvasId, nextCount);
-    if (isConnected() && nextCount === 1) send("canvas.subscribe", canvasId);
+    if (isConnected() && nextCount === 1) {
+      send("canvas.subscribe", canvasId, this.revisions.get(canvasId) ?? 0);
+    }
     return () => this.unsubscribe(canvasId, isConnected, send);
   }
 
@@ -27,6 +34,21 @@ export class CanvasSubscriptionRegistry {
   }
 
   resubscribe(send: CanvasSubscriptionSender): void {
-    this.counts.forEach((_count, canvasId) => send("canvas.subscribe", canvasId));
+    this.counts.forEach((_count, canvasId) =>
+      send("canvas.subscribe", canvasId, this.revisions.get(canvasId) ?? 0),
+    );
+  }
+
+  forEachActive(callback: (canvasId: string) => void): void {
+    this.counts.forEach((_count, canvasId) => callback(canvasId));
+  }
+
+  revision(canvasId: string): number {
+    return this.revisions.get(canvasId) ?? 0;
+  }
+
+  recordRevision(canvasId: string, revision: number): void {
+    if (!Number.isFinite(revision) || revision < 0) return;
+    this.revisions.set(canvasId, Math.max(this.revision(canvasId), revision));
   }
 }

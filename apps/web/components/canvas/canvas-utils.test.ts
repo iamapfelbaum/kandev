@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { blockItems, blockLabelKey, blockText } from "./canvas-utils";
+import {
+  blockItems,
+  blockLabelKey,
+  blockText,
+  blockCollection,
+  kanbanColumns,
+  itemLabel,
+} from "./canvas-utils";
 import type { CanvasBlock } from "@/lib/types/canvas";
 
 function block(state: unknown): CanvasBlock {
@@ -44,6 +51,31 @@ describe("canvas block display helpers", () => {
       { id: "block-1-0", label: "First" },
       { id: "item-2", label: "Second", completed: true },
       { id: "block-1-2", label: "Third", completed: undefined },
+    ]);
+  });
+
+  it("keeps typed collections separate for native block renderers", () => {
+    const checklist = block({
+      items: [{ id: "item-1", label: "Write", revision: 2, completed: true }],
+    });
+    expect(blockCollection(checklist, "items")).toEqual([
+      { id: "item-1", label: "Write", revision: 2, completed: true },
+    ]);
+    expect(itemLabel({ id: "item-1", title: "Fallback title" })).toBe("Fallback title");
+  });
+
+  it("preserves kanban columns and their card ownership", () => {
+    const columns = kanbanColumns(
+      block({
+        columns: [
+          { id: "todo", cards: [{ id: "card-1", title: "Task", revision: 1 }] },
+          { id: "done", cards: [] },
+        ],
+      }),
+    );
+    expect(columns.map((column) => [column.id, column.cards.map((card) => card.id)])).toEqual([
+      ["todo", ["card-1"]],
+      ["done", []],
     ]);
   });
 });

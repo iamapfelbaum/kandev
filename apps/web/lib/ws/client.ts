@@ -1,3 +1,5 @@
+/* eslint-disable max-lines */
+
 import type { BackendMessageMap, BackendMessageType } from "@/lib/types/backend";
 import type { ConnectionStatus } from "@/lib/types/connection";
 import { generateUUID } from "@/lib/utils";
@@ -41,9 +43,53 @@ export type CanvasSubscriptionPayload = {
   canvas: Canvas;
   events: CanvasEvent[];
   recovery: string;
+  gap?: boolean;
 };
 
 type CanvasSubscriptionHandler = (payload: CanvasSubscriptionPayload) => void;
+export type CanvasSubscriptionState = {
+  status: "subscribing" | "connected" | "recovering" | "error";
+  revision: number;
+  recovery: string;
+  gap: boolean;
+};
+type CanvasSubscriptionStateHandler = (state: CanvasSubscriptionState) => void;
+
+export class WebSocketRequestError extends Error {
+  readonly code?: string;
+  readonly details?: Record<string, unknown>;
+
+  constructor(message: string, code?: string, details?: Record<string, unknown>) {
+    super(message);
+    this.name = "WebSocketRequestError";
+    this.code = code;
+    this.details = details;
+  }
+}
+
+function canvasSubscriptionHasGap(
+  payload: CanvasSubscriptionPayload,
+  afterRevision: number,
+): boolean {
+  if (payload.recovery === "snapshot") return false;
+  if (!Number.isInteger(payload.canvas?.revision) || payload.canvas.revision < afterRevision) {
+    return true;
+  }
+  let expectedRevision = afterRevision + 1;
+  for (const event of payload.events ?? []) {
+    if (!Number.isFinite(event.revision) || event.revision !== expectedRevision) return true;
+    expectedRevision += 1;
+  }
+  return expectedRevision - 1 !== payload.canvas.revision;
+}
+
+function canvasSubscriptionStatus(
+  gap: boolean,
+  recovery: string,
+): CanvasSubscriptionState["status"] {
+  if (gap || recovery === "snapshot") return "recovering";
+  return "connected";
+}
 
 type SessionSubscriptionReadiness = {
   promise: Promise<void>;
@@ -94,6 +140,8 @@ export class WebSocketClient {
   private runSubscriptions = new Map<string, number>();
   private canvasSubscriptions = new CanvasSubscriptionRegistry();
   private canvasSubscriptionHandlers = new Map<string, Set<CanvasSubscriptionHandler>>();
+  private canvasSubscriptionState = new Map<string, CanvasSubscriptionState>();
+  private canvasSubscriptionStateHandlers = new Map<string, Set<CanvasSubscriptionStateHandler>>();
   private systemMetricsSubscriptionCount = 0;
 
   constructor(
@@ -378,7 +426,7 @@ export class WebSocketClient {
     return this.canvasSubscriptions.subscribe(
       canvasId,
       () => this.status === "connected",
-      (action, id) => this.sendCanvasSubscription(action, id),
+      (action, id, afterRevision) => this.sendCanvasSubscription(action, id, afterRevision),
     );
   }
 
@@ -386,7 +434,7 @@ export class WebSocketClient {
     this.canvasSubscriptions.unsubscribe(
       canvasId,
       () => this.status === "connected",
-      (action, id) => this.sendCanvasSubscription(action, id),
+      (action, id, afterRevision) => this.sendCanvasSubscription(action, id, afterRevision),
     );
   }
 
@@ -400,6 +448,46 @@ export class WebSocketClient {
       current.delete(handler);
       if (!current.size) this.canvasSubscriptionHandlers.delete(canvasId);
     };
+  }
+
+  onCanvasSubscriptionState(canvasId: string, handler: CanvasSubscriptionStateHandler) {
+    const handlers = this.canvasSubscriptionStateHandlers.get(canvasId) ?? new Set();
+    handlers.add(handler);
+    this.canvasSubscriptionStateHandlers.set(canvasId, handlers);
+    const current = this.canvasSubscriptionState.get(canvasId);
+    if (current) handler(current);
+    return () => {
+      const currentHandlers = this.canvasSubscriptionStateHandlers.get(canvasId);
+      if (!currentHandlers) return;
+      currentHandlers.delete(handler);
+      if (!currentHandlers.size) this.canvasSubscriptionStateHandlers.delete(canvasId);
+    };
+  }
+
+  getCanvasSubscriptionState(canvasId: string): CanvasSubscriptionState {
+    return (
+      this.canvasSubscriptionState.get(canvasId) ?? {
+        status: "connected",
+        revision: this.canvasSubscriptions.revision(canvasId),
+        recovery: "events",
+        gap: false,
+      }
+    );
+  }
+
+  acknowledgeCanvasRevision(canvasId: string, revision: number): void {
+    if (!Number.isFinite(revision) || revision < 0) return;
+    this.canvasSubscriptions.recordRevision(canvasId, revision);
+    const latestRevision = this.canvasSubscriptions.revision(canvasId);
+    const current = this.getCanvasSubscriptionState(canvasId);
+    const status =
+      this.status === "connected" && current.status !== "error" ? "connected" : current.status;
+    this.setCanvasSubscriptionState(canvasId, {
+      ...current,
+      revision: latestRevision,
+      status,
+      gap: false,
+    });
   }
 
   unsubscribeUser() {
@@ -452,6 +540,7 @@ export class WebSocketClient {
 
     const action = (message as { action?: string })?.action as BackendMessageType | undefined;
     if (!action) return;
+    if (action === "canvas.event") this.handleCanvasEvent(message.payload);
     const handlers = this.handlers.get(action);
     this.debugNotification(action, message.payload, handlers?.size ?? 0);
     if (handlers) {
@@ -478,11 +567,60 @@ export class WebSocketClient {
     if (!pending) return;
     clearTimeout(pending.timeout);
     this.pendingRequests.delete(msgId);
+    const errorPayload =
+      typeof payload === "object" && payload !== null
+        ? (payload as { message?: unknown; code?: unknown; details?: unknown })
+        : {};
     const errorMessage =
-      typeof payload === "object" && payload && "message" in payload
-        ? String((payload as { message?: string }).message)
-        : "WebSocket request failed";
-    pending.reject(new Error(errorMessage));
+      typeof errorPayload.message === "string" ? errorPayload.message : "WebSocket request failed";
+    const details =
+      errorPayload.details && typeof errorPayload.details === "object"
+        ? (errorPayload.details as Record<string, unknown>)
+        : undefined;
+    pending.reject(
+      new WebSocketRequestError(
+        errorMessage,
+        typeof errorPayload.code === "string" ? errorPayload.code : undefined,
+        details,
+      ),
+    );
+  }
+
+  private handleCanvasEvent(payload: unknown) {
+    if (!payload || typeof payload !== "object") return;
+    const event = payload as Partial<CanvasEvent>;
+    const revision = event.revision;
+    if (
+      typeof event.canvas_id !== "string" ||
+      typeof revision !== "number" ||
+      !Number.isInteger(revision)
+    )
+      return;
+
+    const state = this.canvasSubscriptionState.get(event.canvas_id);
+    if (!state) return;
+    const currentRevision = this.canvasSubscriptions.revision(event.canvas_id);
+    if (revision <= currentRevision) return;
+
+    if (state.status === "recovering" && state.gap) return;
+    if (revision !== currentRevision + 1) {
+      this.setCanvasSubscriptionState(event.canvas_id, {
+        ...state,
+        status: "recovering",
+        recovery: "events",
+        gap: true,
+      });
+      return;
+    }
+
+    this.canvasSubscriptions.recordRevision(event.canvas_id, revision);
+    this.setCanvasSubscriptionState(event.canvas_id, {
+      ...state,
+      status: "connected",
+      recovery: "events",
+      revision: this.canvasSubscriptions.revision(event.canvas_id),
+      gap: false,
+    });
   }
 
   private handleDisconnect(event: CloseEvent) {
@@ -500,6 +638,11 @@ export class WebSocketClient {
     if (this.intentionalClose) {
       return;
     }
+
+    this.canvasSubscriptions.forEachActive((canvasId) => {
+      const current = this.getCanvasSubscriptionState(canvasId);
+      this.setCanvasSubscriptionState(canvasId, { ...current, status: "error", gap: false });
+    });
 
     // Don't reconnect if reconnect is disabled
     if (!this.reconnectOptions.enabled) {
@@ -639,7 +782,7 @@ export class WebSocketClient {
       this.sendRequest("run.subscribe", { run_id: runId });
     });
     this.canvasSubscriptions.resubscribe((action, canvasId) =>
-      this.sendCanvasSubscription(action, canvasId),
+      this.sendCanvasSubscription(action, canvasId, this.canvasSubscriptions.revision(canvasId)),
     );
     if (this.userSubscriptionCount > 0) {
       this.sendRequest("user.subscribe", {});
@@ -652,16 +795,47 @@ export class WebSocketClient {
   private sendCanvasSubscription(
     action: "canvas.subscribe" | "canvas.unsubscribe",
     canvasId: string,
+    afterRevision = this.canvasSubscriptions.revision(canvasId),
   ) {
     if (action === "canvas.unsubscribe") {
       this.sendRequest(action, { canvas_id: canvasId });
       return;
     }
-    void this.request<CanvasSubscriptionPayload>(action, { canvas_id: canvasId })
+    this.setCanvasSubscriptionState(canvasId, {
+      status: "subscribing",
+      revision: afterRevision,
+      recovery: "events",
+      gap: false,
+    });
+    void this.request<CanvasSubscriptionPayload>(action, {
+      canvas_id: canvasId,
+      after_revision: afterRevision,
+    })
       .then((payload) => {
+        const gap = canvasSubscriptionHasGap(payload, afterRevision);
+        this.canvasSubscriptions.recordRevision(canvasId, payload.canvas.revision);
+        const latestRevision = this.canvasSubscriptions.revision(canvasId);
+        this.setCanvasSubscriptionState(canvasId, {
+          status: canvasSubscriptionStatus(gap, payload.recovery),
+          revision: latestRevision,
+          recovery: payload.recovery,
+          gap,
+        });
         this.canvasSubscriptionHandlers.get(canvasId)?.forEach((handler) => handler(payload));
       })
-      .catch(() => undefined);
+      .catch((error: unknown) => {
+        this.setCanvasSubscriptionState(canvasId, {
+          ...this.getCanvasSubscriptionState(canvasId),
+          status: "error",
+          gap: false,
+        });
+        void error;
+      });
+  }
+
+  private setCanvasSubscriptionState(canvasId: string, state: CanvasSubscriptionState) {
+    this.canvasSubscriptionState.set(canvasId, state);
+    this.canvasSubscriptionStateHandlers.get(canvasId)?.forEach((handler) => handler(state));
   }
 
   private flushQueue() {

@@ -75,7 +75,7 @@ function TaskLinks({
                 type="button"
                 variant="ghost"
                 size="icon-xs"
-                className="min-h-5 min-w-5"
+                className="min-h-11 min-w-11 md:min-h-5 md:min-w-5"
                 aria-label={t("canvases:removeTaskLink")}
                 onClick={() => void onUnlinkTask(link.task_id)}
               >

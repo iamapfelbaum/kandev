@@ -36,6 +36,9 @@ func registerHTTPRoutes(router *gin.Engine, svc *Service) {
 	router.POST("/api/v1/workspaces/:id/canvases/import", func(c *gin.Context) {
 		importCanvasHTTP(c, svc, c.Param("id"), c.Query("task_id"))
 	})
+	router.POST("/api/v1/workspaces/:id/canvases/import/preview", func(c *gin.Context) {
+		previewCanvasImportHTTP(c, svc, c.Param("id"), c.Query("task_id"))
+	})
 	router.GET("/api/v1/canvases/:id", func(c *gin.Context) { getCanvasHTTP(c, svc) })
 	router.GET("/api/v1/canvases/:id/snapshot", func(c *gin.Context) { getCanvasHTTP(c, svc) })
 	router.GET("/api/v1/canvases/:id/export", func(c *gin.Context) { exportCanvasHTTP(c, svc) })
@@ -187,8 +190,8 @@ func exportCanvasHTTP(c *gin.Context, svc *Service) {
 }
 
 func importCanvasHTTP(c *gin.Context, svc *Service, workspaceID, taskID string) {
-	data, err := io.ReadAll(io.LimitReader(c.Request.Body, MaxFileBytes+1))
-	if err != nil || len(data) > MaxFileBytes {
+	data, err := readCanvasImportBody(c)
+	if err != nil {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "canvas file is too large"})
 		return
 	}
@@ -197,6 +200,27 @@ func importCanvasHTTP(c *gin.Context, svc *Service, workspaceID, taskID string) 
 		return
 	}
 	c.JSON(http.StatusCreated, canvas)
+}
+
+func previewCanvasImportHTTP(c *gin.Context, svc *Service, workspaceID, taskID string) {
+	data, err := readCanvasImportBody(c)
+	if err != nil {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "canvas file is too large"})
+		return
+	}
+	preview, err := svc.PreviewCanvasImport(c.Request.Context(), workspaceID, taskID, data)
+	if writeCanvasError(c, err) {
+		return
+	}
+	c.JSON(http.StatusOK, preview)
+}
+
+func readCanvasImportBody(c *gin.Context) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(c.Request.Body, MaxFileBytes+1))
+	if err != nil || len(data) > MaxFileBytes {
+		return nil, errors.New("canvas file is too large")
+	}
+	return data, nil
 }
 
 func acquireLeaseHTTP(c *gin.Context, svc *Service) {
@@ -250,7 +274,13 @@ func writeCanvasError(c *gin.Context, err error) bool {
 	case errors.Is(err, ErrInvalidPortableFile):
 		status = http.StatusBadRequest
 	}
-	c.JSON(status, gin.H{"error": err.Error()})
+	payload := gin.H{"error": err.Error()}
+	if code, details, ok := canvasConflictPayload(err); ok {
+		payload["code"] = code
+		payload["error_code"] = code
+		payload["details"] = details
+	}
+	c.JSON(status, payload)
 	return true
 }
 
@@ -342,7 +372,17 @@ func wsSubscribe(svc *Service) ws.HandlerFunc {
 		if err != nil {
 			return canvasWSError(msg, err)
 		}
-		return ws.NewResponse(msg.ID, msg.Action, map[string]any{"canvas": canvas, "events": events})
+		if events == nil {
+			events = []CanvasEvent{}
+		}
+		recovery := itemCollectionEvents
+		if req.AfterRevision < canvas.CompactedThroughRevision {
+			recovery = "snapshot"
+			events = []CanvasEvent{}
+		}
+		return ws.NewResponse(msg.ID, msg.Action, map[string]any{
+			"canvas": canvas, "events": events, "recovery": recovery,
+		})
 	}
 }
 
@@ -371,6 +411,9 @@ func wsCommand(svc *Service) ws.HandlerFunc {
 }
 
 func canvasWSError(msg *ws.Message, err error) (*ws.Message, error) {
+	if code, details, ok := canvasConflictPayload(err); ok {
+		return ws.NewError(msg.ID, msg.Action, code, err.Error(), details)
+	}
 	code := ws.ErrorCodeInternalError
 	switch {
 	case errors.Is(err, ErrCanvasNotFound) || errors.Is(err, ErrTaskNotFound):
@@ -381,4 +424,19 @@ func canvasWSError(msg *ws.Message, err error) (*ws.Message, error) {
 		code = ws.ErrorCodeConflict
 	}
 	return ws.NewError(msg.ID, msg.Action, code, err.Error(), nil)
+}
+
+func canvasConflictPayload(err error) (string, map[string]interface{}, bool) {
+	var conflict *CanvasConflictError
+	if !errors.As(err, &conflict) || conflict == nil || conflict.Code == "" {
+		return "", nil, false
+	}
+	details := map[string]interface{}{}
+	if conflict.Details != nil {
+		encoded, marshalErr := json.Marshal(conflict.Details)
+		if marshalErr != nil || json.Unmarshal(encoded, &details) != nil {
+			return conflict.Code, nil, true
+		}
+	}
+	return conflict.Code, details, true
 }

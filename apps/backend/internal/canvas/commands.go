@@ -88,6 +88,9 @@ func applyBlockCreate(ctx context.Context, tx *sqlx.Tx, canvas *Canvas, input js
 	if err := validateBlock(payload.Type, payload.State); err != nil {
 		return err
 	}
+	if canvasItemCountWithReplacement(canvas.Blocks, "", payload.State) > MaxItems {
+		return ErrCanvasLimit
+	}
 	if canvasStateBytes(canvas.Blocks)+len(payload.State) > MaxCanvasBytes {
 		return ErrCanvasLimit
 	}
@@ -128,27 +131,11 @@ WHERE canvas_id = ? AND block_id = ?`), canvas.ID, req.TargetID); err != nil {
 		}
 		return err
 	}
-	if payload.Type == "" {
-		payload.Type = current.Type
-	}
-	if err := validateBlock(payload.Type, payload.State); err != nil {
+	if err := validateBlockUpdate(canvas, &current, &payload); err != nil {
 		return err
 	}
-	if canvasStateBytes(canvas.Blocks)-len(current.State)+len(payload.State) > MaxCanvasBytes {
-		return ErrCanvasLimit
-	}
-	if payload.ExpectedBlockRevision != nil {
-		if current.BlockRevision != *payload.ExpectedBlockRevision {
-			return fmt.Errorf("%w: block revision is %d", ErrRevisionConflict, current.BlockRevision)
-		}
-	}
-	if current.Type == BlockTypeMarkdown || payload.Type == BlockTypeMarkdown {
-		if payload.ExpectedBlockRevision == nil {
-			return fmt.Errorf("%w: markdown updates require block revision", ErrRevisionConflict)
-		}
-		if err := requireMarkdownLease(ctx, tx, canvas.ID, req.TargetID, req.LeaseHolderID, now); err != nil {
-			return err
-		}
+	if err := validateMarkdownBlockUpdate(ctx, tx, canvas, &current, &payload, req.LeaseHolderID, now); err != nil {
+		return err
 	}
 	result, err := tx.ExecContext(ctx, tx.Rebind(`
 UPDATE canvas_blocks SET block_type = ?, state_json = ?,
@@ -158,6 +145,47 @@ WHERE canvas_id = ? AND block_id = ?`), payload.Type, payload.State, now, canvas
 		return err
 	}
 	return requireOneRow(result, ErrCanvasNotFound)
+}
+
+func validateBlockUpdate(canvas *Canvas, current *Block, payload *blockCommandInput) error {
+	if payload.Type == "" {
+		payload.Type = current.Type
+	}
+	if err := validateBlock(payload.Type, payload.State); err != nil {
+		return err
+	}
+	if canvasItemCountWithReplacement(canvas.Blocks, current.ID, payload.State) > MaxItems {
+		return ErrCanvasLimit
+	}
+	if canvasStateBytes(canvas.Blocks)-len(current.State)+len(payload.State) > MaxCanvasBytes {
+		return ErrCanvasLimit
+	}
+	if payload.ExpectedBlockRevision != nil {
+		if current.BlockRevision != *payload.ExpectedBlockRevision {
+			cause := fmt.Errorf("%w: block revision is %d", ErrRevisionConflict, current.BlockRevision)
+			return newCanvasConflictError(CanvasConflictCode, cause, canvas, current, nil, nil)
+		}
+	}
+	return nil
+}
+
+func validateMarkdownBlockUpdate(
+	ctx context.Context,
+	tx *sqlx.Tx,
+	canvas *Canvas,
+	current *Block,
+	payload *blockCommandInput,
+	holderID string,
+	now time.Time,
+) error {
+	if current.Type != BlockTypeMarkdown && payload.Type != BlockTypeMarkdown {
+		return nil
+	}
+	if payload.ExpectedBlockRevision == nil {
+		cause := fmt.Errorf("%w: markdown updates require block revision", ErrRevisionConflict)
+		return newCanvasConflictError(CanvasConflictCode, cause, canvas, current, nil, nil)
+	}
+	return requireMarkdownLease(ctx, tx, canvas, current.ID, holderID, now)
 }
 
 func applyBlockDelete(ctx context.Context, tx *sqlx.Tx, canvas *Canvas, req ApplyCanvasCommandRequest) error {
@@ -218,6 +246,24 @@ func canvasStateBytes(blocks []Block) int {
 	total := 0
 	for _, block := range blocks {
 		total += len(block.State)
+	}
+	return total
+}
+
+func canvasItemCountWithReplacement(blocks []Block, replacedID string, replacement json.RawMessage) int {
+	total := 0
+	for _, block := range blocks {
+		if block.ID == replacedID {
+			total += countItems(replacement)
+		} else {
+			total += countItems(block.State)
+		}
+		if total > MaxItems {
+			return total
+		}
+	}
+	if replacedID == "" {
+		total += countItems(replacement)
 	}
 	return total
 }

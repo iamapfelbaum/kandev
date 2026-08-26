@@ -21,12 +21,17 @@ func EncodePortableCanvas(canvas *Canvas) ([]byte, error) {
 	}
 	blocks := make([]PortableBlock, 0, len(canvas.Blocks))
 	stateBytes := 0
+	itemCount := 0
 	for _, block := range canvas.Blocks {
 		if err := validateBlock(block.Type, block.State); err != nil {
 			return nil, err
 		}
 		stateBytes += len(block.State)
 		if stateBytes > MaxCanvasBytes {
+			return nil, ErrCanvasLimit
+		}
+		itemCount += countItems(block.State)
+		if itemCount > MaxItems {
 			return nil, ErrCanvasLimit
 		}
 		blocks = append(blocks, PortableBlock{
@@ -85,6 +90,7 @@ func validatePortableFile(file PortableCanvasFile) error {
 	}
 	seenPositions := make(map[int]bool, len(file.Canvas.Blocks))
 	stateBytes := 0
+	itemCount := 0
 	for _, block := range file.Canvas.Blocks {
 		if seenPositions[block.Position] || block.Position < 0 {
 			return fmt.Errorf("%w: block positions must be unique and non-negative", ErrInvalidPortableFile)
@@ -97,7 +103,8 @@ func validatePortableFile(file PortableCanvasFile) error {
 		if stateBytes > MaxCanvasBytes {
 			return fmt.Errorf("%w: canvas state exceeds %d bytes", ErrInvalidPortableFile, MaxCanvasBytes)
 		}
-		if countItems(block.State) > MaxItems {
+		itemCount += countItems(block.State)
+		if itemCount > MaxItems {
 			return fmt.Errorf("%w: item count exceeds %d", ErrInvalidPortableFile, MaxItems)
 		}
 	}

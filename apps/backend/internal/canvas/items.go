@@ -158,7 +158,7 @@ func validateStructuredCollection(raw map[string]any, expected string) error {
 
 func structuredItemMetadata(raw map[string]any, collection string) map[string]any {
 	output := make(map[string]any)
-	for _, key := range []string{"block_id", "item_id", "expected_item_revision", "expected_block_revision"} {
+	for _, key := range []string{"block_id", "item_id", "expected_item_revision", "expected_block_revision", "destination_column_id"} {
 		if value, ok := raw[key]; ok {
 			output[key] = value
 		}
@@ -217,7 +217,7 @@ func applyItemAction(ctx context.Context, tx *sqlx.Tx, canvas *Canvas, req Apply
 	if err != nil {
 		return err
 	}
-	if err := validateItemBlock(block, payload); err != nil {
+	if err := validateItemBlock(canvas, block, payload); err != nil {
 		return err
 	}
 	state, err := decodeStateObject(block.State)
@@ -262,12 +262,13 @@ WHERE canvas_id = ? AND block_id = ?`), canvasID, blockID); err != nil {
 	return block, nil
 }
 
-func validateItemBlock(block Block, payload itemCommandInput) error {
+func validateItemBlock(canvas *Canvas, block Block, payload itemCommandInput) error {
 	if block.Type == BlockTypeMarkdown {
 		return fmt.Errorf("%w: markdown blocks do not contain structured items", ErrCanvasValidation)
 	}
 	if payload.ExpectedBlockRevision != nil && block.BlockRevision != *payload.ExpectedBlockRevision {
-		return fmt.Errorf("%w: block revision is %d", ErrRevisionConflict, block.BlockRevision)
+		cause := fmt.Errorf("%w: block revision is %d", ErrRevisionConflict, block.BlockRevision)
+		return newCanvasConflictError(CanvasConflictCode, cause, canvas, &block, nil, nil)
 	}
 	expectedCollection := map[string]string{
 		BlockTypeChecklist: itemCollectionItems,
@@ -300,7 +301,7 @@ func applyItemMove(
 	if !ok {
 		return ErrCanvasNotFound
 	}
-	if err := validateExpectedItemRevision(location.item, payload.ExpectedItemRevision, payload.ItemID); err != nil {
+	if err := validateExpectedItemRevision(location.item, payload.ExpectedItemRevision, payload.ItemID, canvas, &block); err != nil {
 		return err
 	}
 	if payload.Collection == itemCollectionCards && payload.DestinationColumnID == "" {
@@ -474,7 +475,7 @@ func applyItemDelete(
 	if !found {
 		return ErrCanvasNotFound
 	}
-	if err := validateExpectedItemRevision(current, payload.ExpectedItemRevision, payload.ItemID); err != nil {
+	if err := validateExpectedItemRevision(current, payload.ExpectedItemRevision, payload.ItemID, canvas, &block); err != nil {
 		return err
 	}
 	deleted := deleteItem(state, payload.Collection, payload.ItemID)
@@ -499,7 +500,7 @@ func applyItemUpsert(
 	}
 	current, found := findItem(state, payload.Collection, itemID)
 	if found {
-		if err := validateExpectedItemRevision(current, payload.ExpectedItemRevision, itemID); err != nil {
+		if err := validateExpectedItemRevision(current, payload.ExpectedItemRevision, itemID, canvas, &block); err != nil {
 			return err
 		}
 		updated := upsertItem(state, payload.Collection, itemID, item, payload.Patch)
@@ -508,25 +509,27 @@ func applyItemUpsert(
 		}
 		return persistItemState(ctx, tx, canvas, block, state, nowTime)
 	}
-	if err := validateNewItemRevision(payload.ExpectedItemRevision, itemID); err != nil {
+	if err := validateNewItemRevision(payload.ExpectedItemRevision, itemID, canvas, &block); err != nil {
 		return err
 	}
-	if err := appendItem(state, payload.Collection, item); err != nil {
+	if err := appendItem(state, payload.Collection, payload.DestinationColumnID, item); err != nil {
 		return err
 	}
 	return persistItemState(ctx, tx, canvas, block, state, nowTime)
 }
 
-func validateExpectedItemRevision(current map[string]any, expected *int64, itemID string) error {
+func validateExpectedItemRevision(current map[string]any, expected *int64, itemID string, canvas *Canvas, block *Block) error {
 	if expected != nil && itemRevision(current) != *expected {
-		return &itemRevisionConflictError{ItemID: itemID, Current: itemRevision(current)}
+		cause := &itemRevisionConflictError{ItemID: itemID, Current: itemRevision(current)}
+		return newCanvasConflictError(CanvasConflictCode, cause, canvas, block, current, nil)
 	}
 	return nil
 }
 
-func validateNewItemRevision(expected *int64, itemID string) error {
+func validateNewItemRevision(expected *int64, itemID string, canvas *Canvas, block *Block) error {
 	if expected != nil && *expected != 0 {
-		return &itemRevisionConflictError{ItemID: itemID, Current: 0}
+		cause := &itemRevisionConflictError{ItemID: itemID, Current: 0}
+		return newCanvasConflictError(CanvasConflictCode, cause, canvas, block, nil, nil)
 	}
 	return nil
 }
@@ -702,7 +705,14 @@ func visitSliceItems(
 	return false
 }
 
-func appendItem(state map[string]any, collection string, item map[string]any) error {
+func appendItem(state map[string]any, collection, destinationColumnID string, item map[string]any) error {
+	if destinationColumnID != "" {
+		if items, set, found := findColumnCollection(state, collection, destinationColumnID); found {
+			set(append(items, item))
+			return nil
+		}
+		return fmt.Errorf("%w: destination column was not found", ErrCanvasValidation)
+	}
 	if appendToCollection(state, collection, item) {
 		return nil
 	}
@@ -786,6 +796,9 @@ func updateBlockState(
 		return fmt.Errorf("%w: invalid item state", ErrCanvasValidation)
 	}
 	if canvasStateBytes(canvas.Blocks)-len(block.State)+len(encoded) > MaxCanvasBytes {
+		return ErrCanvasLimit
+	}
+	if canvasItemCountWithReplacement(canvas.Blocks, block.ID, encoded) > MaxItems {
 		return ErrCanvasLimit
 	}
 	result, err := tx.ExecContext(ctx, tx.Rebind(`

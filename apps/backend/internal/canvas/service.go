@@ -156,6 +156,9 @@ func (s *Service) SubscribeCanvas(ctx context.Context, canvasID string, afterRev
 	if err != nil {
 		return nil, err
 	}
+	if events == nil {
+		events = []CanvasEvent{}
+	}
 	recordCanvasRecovery(recovery)
 	return marshalJSON(map[string]any{"canvas": canvas, "events": events, "recovery": recovery})
 }
@@ -201,20 +204,51 @@ func (s *Service) RenameCanvas(ctx context.Context, canvasID, title string) (*Ca
 }
 
 func (s *Service) SetCanvasArchived(ctx context.Context, canvasID string, archived bool) (*Canvas, error) {
-	canvas, err := s.GetCanvas(ctx, canvasID)
+	if _, err := s.GetCanvas(ctx, canvasID); err != nil {
+		return nil, err
+	}
+	s.repo.mu.Lock()
+	defer s.repo.mu.Unlock()
+	tx, err := s.repo.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	canvas, err := scanCanvas(ctx, tx, canvasID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.loadChildren(ctx, tx, canvas); err != nil {
+		return nil, err
+	}
+	if !archived && canvas.ArchivedAt != nil {
+		active, err := countActiveCanvases(ctx, tx, canvas.WorkspaceID)
+		if err != nil {
+			return nil, err
+		}
+		if active >= MaxActiveCanvases {
+			return nil, fmt.Errorf("%w: a workspace can have at most %d active canvases", ErrCanvasLimit, MaxActiveCanvases)
+		}
 	}
 	var archivedAt *time.Time
 	if archived {
 		now := s.repo.nowUTC()
 		archivedAt = &now
 	}
-	if err := s.repo.SetArchived(ctx, canvasID, archivedAt, s.repo.nowUTC()); err != nil {
+	updatedAt := s.repo.nowUTC()
+	result, err := tx.ExecContext(ctx, tx.Rebind(
+		`UPDATE canvases SET archived_at = ?, updated_at = ? WHERE id = ?`), archivedAt, updatedAt, canvasID)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireOneRow(result, ErrCanvasNotFound); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	canvas.ArchivedAt = archivedAt
-	canvas.UpdatedAt = s.repo.nowUTC()
+	canvas.UpdatedAt = updatedAt
 	return canvas, nil
 }
 
@@ -369,7 +403,20 @@ func (s *Service) checkRevisionAndState(canvas *Canvas, req ApplyCanvasCommandRe
 		return ErrCanvasArchived
 	}
 	if req.BaseRevision != canvas.Revision && !staleStructuredCommandMayApply(req) {
-		return fmt.Errorf("%w: expected %d, current %d", ErrRevisionConflict, req.BaseRevision, canvas.Revision)
+		cause := fmt.Errorf("%w: expected %d, current %d", ErrRevisionConflict, req.BaseRevision, canvas.Revision)
+		return newCanvasConflictError(CanvasConflictCode, cause, canvas, canvasBlock(canvas, req.TargetID), nil, nil)
+	}
+	return nil
+}
+
+func canvasBlock(canvas *Canvas, blockID string) *Block {
+	if canvas == nil || blockID == "" {
+		return nil
+	}
+	for index := range canvas.Blocks {
+		if canvas.Blocks[index].ID == blockID {
+			return &canvas.Blocks[index]
+		}
 	}
 	return nil
 }
@@ -438,6 +485,31 @@ func (s *Service) ImportCanvas(ctx context.Context, workspaceID, taskID string, 
 		return nil, err
 	}
 	return s.repo.GetCanvas(ctx, canvas.ID)
+}
+
+func (s *Service) PreviewCanvasImport(ctx context.Context, workspaceID, taskID string, data []byte) (*CanvasImportPreview, error) {
+	if err := s.authorizeWorkspaceAccess(ctx, workspaceID); err != nil {
+		return nil, err
+	}
+	file, err := DecodePortableCanvas(data)
+	if err != nil {
+		return nil, err
+	}
+	if taskID != "" {
+		if err := s.assertTaskWorkspace(ctx, taskID, workspaceID); err != nil {
+			return nil, err
+		}
+	}
+	blockTypes := make([]string, 0, len(file.Canvas.Blocks))
+	for _, block := range file.Canvas.Blocks {
+		blockTypes = append(blockTypes, block.Type)
+	}
+	return &CanvasImportPreview{
+		Format: PortableFormat, FormatVersion: file.FormatVersion,
+		SchemaVersion: file.Canvas.SchemaVersion, Title: file.Canvas.Title,
+		BlockCount: len(file.Canvas.Blocks), BlockTypes: blockTypes,
+		SizeBytes: len(data), TaskID: taskID, Independent: true,
+	}, nil
 }
 
 func canvasOperationResult(err error) string {
