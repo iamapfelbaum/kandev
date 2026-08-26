@@ -209,6 +209,27 @@ func TestConnectedClientSubscriptionRoundTrips(t *testing.T) {
 	}
 }
 
+type testCanvasSubscriptionProvider struct{}
+
+func (testCanvasSubscriptionProvider) SubscribeCanvas(context.Context, string, int64) ([]byte, error) {
+	return []byte(`{"canvas":{"id":"canvas-1"},"events":[],"recovery":"events"}`), nil
+}
+
+func TestConnectedClientCanvasSubscriptionRoundTrips(t *testing.T) {
+	cc := newConnectedClient(t)
+	cc.hub.SetCanvasSubscriptionProvider(testCanvasSubscriptionProvider{})
+
+	resp := cc.request(t, "canvas-subscribe", ws.ActionCanvasSubscribe, map[string]any{
+		"canvas_id": "canvas-1",
+	})
+	if resp.Type != ws.MessageTypeResponse {
+		t.Fatalf("canvas.subscribe response = %+v, want a success response", resp)
+	}
+	if len(cc.hub.getSubscribersLocked(cc.hub.canvasSubscribers, "canvas-1")) != 1 {
+		t.Fatal("client was not registered for canvas events")
+	}
+}
+
 // A browser disconnect must unwind both pumps and drop the client from the hub,
 // otherwise every closed tab leaks a goroutine pair and a subscriber entry.
 func TestClientPumpsUnwindOnBrowserDisconnect(t *testing.T) {

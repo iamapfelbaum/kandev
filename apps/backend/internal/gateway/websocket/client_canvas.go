@@ -22,12 +22,16 @@ func (c *Client) handleCanvasSubscribe(msg *ws.Message) {
 		c.sendError(msg.ID, msg.Action, ws.ErrorCodeInternalError, "canvas subscriptions unavailable", nil)
 		return
 	}
-	if _, err := provider.SubscribeCanvas(c.dispatchContext(), req.CanvasID, req.AfterRevision); err != nil {
+	// Capture the dispatch context before SubscribeCanvasWithReplay takes the
+	// hub lock. dispatchContext reads that same lock, so resolving it from the
+	// replay callback would deadlock the subscription handler.
+	ctx := c.dispatchContext()
+	if _, err := provider.SubscribeCanvas(ctx, req.CanvasID, req.AfterRevision); err != nil {
 		c.sendError(msg.ID, msg.Action, ws.ErrorCodeNotFound, "canvas not found", nil)
 		return
 	}
 	payload, err := c.hub.SubscribeCanvasWithReplay(c, req.CanvasID, func() ([]byte, error) {
-		return provider.SubscribeCanvas(c.dispatchContext(), req.CanvasID, req.AfterRevision)
+		return provider.SubscribeCanvas(ctx, req.CanvasID, req.AfterRevision)
 	})
 	if err != nil {
 		c.sendError(msg.ID, msg.Action, ws.ErrorCodeNotFound, "canvas not found", nil)
