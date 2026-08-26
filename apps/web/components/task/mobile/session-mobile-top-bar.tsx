@@ -43,6 +43,7 @@ type SessionMobileTopBarProps = {
   repositoryLabel?: string | null;
   sessionId?: string | null;
   baseBranch?: string;
+  pullRequestTarget?: string;
   worktreeBranch?: string | null;
   onMenuClick: () => void;
   showApproveButton?: boolean;
@@ -473,13 +474,38 @@ function MobileTopBarActions({
   );
 }
 
+function useSessionMobileTopBarState(props: SessionMobileTopBarProps) {
+  const [commitDialogOpen, setCommitDialogOpen] = useState(false);
+  const [prDialogOpen, setPrDialogOpen] = useState(false);
+  const [prBranchPushed, setPrBranchPushed] = useState(false);
+  const metrics = useMobileGitMetrics(props.sessionId, props.worktreeBranch, props.baseBranch);
+  const actions = useMobileGitActions(
+    {
+      sessionId: props.sessionId,
+      baseBranch: props.baseBranch,
+      pullRequestTarget: props.pullRequestTarget,
+    },
+    setCommitDialogOpen,
+    setPrDialogOpen,
+    setPrBranchPushed,
+  );
+
+  return {
+    ...metrics,
+    ...actions,
+    commitDialogOpen,
+    setCommitDialogOpen,
+    prDialogOpen,
+    setPrDialogOpen,
+    prBranchPushed,
+    setPrBranchPushed,
+  };
+}
+
 export const SessionMobileTopBar = memo(function SessionMobileTopBar(
   props: SessionMobileTopBarProps,
 ) {
   const { t } = useTranslation();
-  const [commitDialogOpen, setCommitDialogOpen] = useState(false);
-  const [prDialogOpen, setPrDialogOpen] = useState(false);
-  const [prBranchPushed, setPrBranchPushed] = useState(false);
   const {
     commits,
     displayBranch,
@@ -488,8 +514,12 @@ export const SessionMobileTopBar = memo(function SessionMobileTopBar(
     uncommittedCount,
     totalAdditions,
     totalDeletions,
-  } = useMobileGitMetrics(props.sessionId, props.worktreeBranch, props.baseBranch);
-  const {
+    commitDialogOpen,
+    setCommitDialogOpen,
+    prDialogOpen,
+    setPrDialogOpen,
+    prBranchPushed,
+    setPrBranchPushed,
     isGitLoading,
     handlePull,
     handlePush,
@@ -497,13 +527,7 @@ export const SessionMobileTopBar = memo(function SessionMobileTopBar(
     handleMerge,
     handleCommit,
     handleCreatePR,
-  } = useMobileGitActions(
-    props.sessionId,
-    props.baseBranch,
-    setCommitDialogOpen,
-    setPrDialogOpen,
-    setPrBranchPushed,
-  );
+  } = useSessionMobileTopBarState(props);
   return (
     <header className="flex items-center justify-between px-2 py-2 bg-background">
       <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -558,7 +582,7 @@ export const SessionMobileTopBar = memo(function SessionMobileTopBar(
         prDialogOpen={prDialogOpen}
         setPrDialogOpen={setPrDialogOpen}
         displayBranch={displayBranch}
-        baseBranch={props.baseBranch}
+        baseBranch={props.pullRequestTarget ?? props.baseBranch}
         taskTitle={props.taskTitle}
         firstCommitMessage={commits[0]?.commit_message}
         isGitLoading={isGitLoading}

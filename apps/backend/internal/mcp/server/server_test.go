@@ -1027,6 +1027,7 @@ func TestServerModeOffice_ToolCount(t *testing.T) {
 	// 4 plan + 1 interaction + 1 related-tasks + 3 task-documents + 1 rich-output + 1 decisions
 	// + 1 step_complete (ADR 0015) + 4 canvas tools = 16.
 	// (delegate_task_kandev retired in favour of `agentctl kandev task create …`).
+	// (list_task_comments_kandev retired in favour of `agentctl kandev comment list …`).
 	assert.Contains(t, tools, "step_complete_kandev", "office mode must register the ADR 0015 completion signal")
 	assert.Equal(t, 16, len(tools))
 }
