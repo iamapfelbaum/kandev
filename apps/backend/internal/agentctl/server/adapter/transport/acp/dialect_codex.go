@@ -63,7 +63,7 @@ func normalizeCodexPromptUsage(
 // Codex reports these as the broad ACP "execute" kind and puts the actual MCP
 // identity and arguments in rawInput. Require the explicit implementation
 // marker plus the complete envelope so ordinary execute tools remain shells.
-func parseCodexMCPToolCall(meta map[string]any, rawInput any) (mcpToolCallFrame, bool) {
+func parseCodexMCPToolCall(meta map[string]any, _ string, rawInput any) (mcpToolCallFrame, bool) {
 	isMCP, _ := meta["is_mcp_tool_call"].(bool)
 	if !isMCP {
 		return mcpToolCallFrame{}, false

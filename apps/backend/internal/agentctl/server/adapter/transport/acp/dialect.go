@@ -25,7 +25,7 @@ type acpDialect struct {
 	contextWindow        func(map[string]any, []modelInfo, []streams.ConfigOption) (contextWindowSample, bool)
 	normalizePromptUsage func(*streams.PromptUsage, map[string]any) *streams.PromptUsage
 	subagentFrame        func(map[string]any, string, any) (subagentFrame, bool)
-	mcpToolCall          func(map[string]any, any) (mcpToolCallFrame, bool)
+	mcpToolCall          func(map[string]any, string, any) (mcpToolCallFrame, bool)
 	mcpToolResult        func(any) (any, bool)
 }
 
@@ -58,6 +58,8 @@ func newACPDialect(agentID string) acpDialect {
 		return newGrokACPDialect()
 	case codexAgentID:
 		return newCodexACPDialect()
+	case auggieAgentID:
+		return newAuggieACPDialect()
 	}
 	return acpDialect{}
 }
@@ -69,11 +71,11 @@ func (d acpDialect) parseSubagentFrame(meta map[string]any, title string, rawInp
 	return d.subagentFrame(meta, title, rawInput)
 }
 
-func (d acpDialect) parseMCPToolCall(meta map[string]any, rawInput any) (mcpToolCallFrame, bool) {
+func (d acpDialect) parseMCPToolCall(meta map[string]any, title string, rawInput any) (mcpToolCallFrame, bool) {
 	if d.mcpToolCall == nil {
 		return mcpToolCallFrame{}, false
 	}
-	return d.mcpToolCall(meta, rawInput)
+	return d.mcpToolCall(meta, title, rawInput)
 }
 
 func (d acpDialect) normalizeMCPToolResult(rawOutput any) (any, bool) {

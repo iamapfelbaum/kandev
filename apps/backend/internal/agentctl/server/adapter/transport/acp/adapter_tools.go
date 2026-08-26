@@ -129,7 +129,7 @@ func (a *Adapter) convertToolCallUpdate(sessionID string, tc *acp.SessionUpdateT
 	toolKind := string(tc.Kind)
 	toolName := toolKind
 	normalizedPayload := a.normalizer.NormalizeToolCall(toolKind, args)
-	if frame, ok := a.dialect.parseMCPToolCall(tc.Meta, tc.RawInput); ok {
+	if frame, ok := a.dialect.parseMCPToolCall(tc.Meta, tc.Title, tc.RawInput); ok {
 		toolName = frame.name
 		normalizedPayload = streams.NewMCPTool(frame.name, frame.arguments)
 	}
