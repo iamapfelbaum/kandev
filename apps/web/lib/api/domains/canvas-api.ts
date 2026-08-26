@@ -42,9 +42,11 @@ export async function listTaskCanvases(
 export async function createCanvas(
   workspaceId: string,
   title: string,
+  taskId?: string,
   options?: ApiRequestOptions,
 ): Promise<Canvas> {
-  return fetchJson<Canvas>(workspacePath(workspaceId), {
+  const query = taskId ? `?task_id=${encodeURIComponent(taskId)}` : "";
+  return fetchJson<Canvas>(`${workspacePath(workspaceId)}${query}`, {
     ...options,
     init: { method: "POST", body: JSON.stringify({ title }), ...(options?.init ?? {}) },
   });

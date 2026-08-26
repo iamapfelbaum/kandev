@@ -4,6 +4,7 @@ import { generateUUID } from "@/lib/utils";
 import { createDebugLogger, isDebug } from "@/lib/debug/log";
 import { dispatchToPluginWsHandlers } from "@/lib/ws/plugin-bridge";
 import { CanvasSubscriptionRegistry } from "@/lib/ws/canvas-subscriptions";
+import type { Canvas, CanvasEvent } from "@/lib/types/canvas";
 
 const debugDispatch = createDebugLogger("ws:dispatch");
 
@@ -35,6 +36,14 @@ export interface SessionSubscriptionHandle {
   ready: Promise<void>;
   unsubscribe: () => void;
 }
+
+export type CanvasSubscriptionPayload = {
+  canvas: Canvas;
+  events: CanvasEvent[];
+  recovery: string;
+};
+
+type CanvasSubscriptionHandler = (payload: CanvasSubscriptionPayload) => void;
 
 type SessionSubscriptionReadiness = {
   promise: Promise<void>;
@@ -84,6 +93,7 @@ export class WebSocketClient {
   private userSubscriptionCount = 0;
   private runSubscriptions = new Map<string, number>();
   private canvasSubscriptions = new CanvasSubscriptionRegistry();
+  private canvasSubscriptionHandlers = new Map<string, Set<CanvasSubscriptionHandler>>();
   private systemMetricsSubscriptionCount = 0;
 
   constructor(
@@ -380,6 +390,18 @@ export class WebSocketClient {
     );
   }
 
+  onCanvasSubscription(canvasId: string, handler: CanvasSubscriptionHandler) {
+    const handlers = this.canvasSubscriptionHandlers.get(canvasId) ?? new Set();
+    handlers.add(handler);
+    this.canvasSubscriptionHandlers.set(canvasId, handlers);
+    return () => {
+      const current = this.canvasSubscriptionHandlers.get(canvasId);
+      if (!current) return;
+      current.delete(handler);
+      if (!current.size) this.canvasSubscriptionHandlers.delete(canvasId);
+    };
+  }
+
   unsubscribeUser() {
     this.userSubscriptionCount = Math.max(0, this.userSubscriptionCount - 1);
     if (this.status === "connected" && this.userSubscriptionCount === 0) {
@@ -631,7 +653,15 @@ export class WebSocketClient {
     action: "canvas.subscribe" | "canvas.unsubscribe",
     canvasId: string,
   ) {
-    this.sendRequest(action, { canvas_id: canvasId });
+    if (action === "canvas.unsubscribe") {
+      this.sendRequest(action, { canvas_id: canvasId });
+      return;
+    }
+    void this.request<CanvasSubscriptionPayload>(action, { canvas_id: canvasId })
+      .then((payload) => {
+        this.canvasSubscriptionHandlers.get(canvasId)?.forEach((handler) => handler(payload));
+      })
+      .catch(() => undefined);
   }
 
   private flushQueue() {

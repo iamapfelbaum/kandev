@@ -61,9 +61,9 @@ export function useWorkspaceCanvases(workspaceId: string | undefined, includeArc
     loading: loading || (switching && Boolean(workspaceId)),
     error: switching ? null : error,
     refresh,
-    create: async (title: string) => {
+    create: async (title: string, taskId?: string) => {
       if (!workspaceId) return null;
-      const canvas = await createCanvas(workspaceId, title);
+      const canvas = await createCanvas(workspaceId, title, taskId);
       refresh();
       return canvas;
     },

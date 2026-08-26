@@ -24,7 +24,7 @@ import type { DockviewApi } from "dockview-react";
 import { prPanelLabel, prIdentitySlug, prTaskKey } from "@/components/github/pr-utils";
 import { useDockviewStore } from "@/lib/state/dockview-store";
 import { useAppStore } from "@/components/state-provider";
-import { createCanvas, addCanvasTaskLink } from "@/lib/api/domains/canvas-api";
+import { createCanvas } from "@/lib/api/domains/canvas-api";
 import { useTaskCanvases } from "@/hooks/domains/canvas/use-task-canvases";
 import { reviewPanelId } from "@/lib/state/dockview-review-panel-id";
 import { pluginRegistry, usePluginRegistry } from "@/lib/plugins/registry";
@@ -247,8 +247,7 @@ function CanvasPanelMenuItems({ taskId, groupId }: { taskId: string; groupId: st
     if (!workspaceId) return;
     const title = window.prompt(t("canvases:canvasTitle"), t("canvases:canvasTitlePlaceholder"));
     if (!title?.trim()) return;
-    const canvas = await createCanvas(workspaceId, title.trim());
-    await addCanvasTaskLink(canvas.id, taskId);
+    const canvas = await createCanvas(workspaceId, title.trim(), taskId);
     addCanvasPanel(canvas.id, canvas.title, groupId);
   };
 

@@ -330,12 +330,9 @@ export function CanvasSettingsPage({ workspaceId }: { workspaceId: string }) {
   };
 
   const create = async (title: string, taskId: string) => {
-    const canvas = await run(() => state.create(title.trim()));
-    if (!canvas) return false;
     const trimmedTaskId = taskId.trim();
-    if (trimmedTaskId) {
-      await run(() => addCanvasTaskLink(canvas.id, trimmedTaskId).then(state.refresh));
-    }
+    const canvas = await run(() => state.create(title.trim(), trimmedTaskId || undefined));
+    if (!canvas) return false;
     router.push(`/canvases/${encodeURIComponent(canvas.id)}`);
     return true;
   };

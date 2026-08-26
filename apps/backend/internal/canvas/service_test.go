@@ -3,11 +3,14 @@ package canvas
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/kandev/kandev/internal/agentctl/types/streams"
+	"github.com/kandev/kandev/internal/task/repository/repoerrors"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -83,7 +86,7 @@ func TestCanvasCommandsAreRevisionCheckedAndIdempotent(t *testing.T) {
 		Action:       ActionBlockDelete,
 		TargetID:     result.Canvas.Blocks[0].ID,
 	})
-	if !errorsIs(err, ErrRevisionConflict) {
+	if !errors.Is(err, ErrRevisionConflict) {
 		t.Fatalf("expected revision conflict, got %v", err)
 	}
 }
@@ -98,7 +101,7 @@ func TestCanvasTaskLinksMustShareWorkspace(t *testing.T) {
 	if err := svc.AddTaskLink(ctx, canvas.ID, "task-a"); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.AddTaskLink(ctx, canvas.ID, "task-b"); !errorsIs(err, ErrTaskWorkspaceMismatch) {
+	if err := svc.AddTaskLink(ctx, canvas.ID, "task-b"); !errors.Is(err, ErrTaskWorkspaceMismatch) {
 		t.Fatalf("expected cross-workspace link rejection, got %v", err)
 	}
 }
@@ -127,7 +130,7 @@ func TestPortableCanvasRejectsUnknownFieldsAndDoesNotExportInternalIDs(t *testin
 	if strings.Contains(string(exported), result.Canvas.Blocks[0].ID) {
 		t.Fatalf("portable export leaked internal block id: %s", exported)
 	}
-	if _, err := DecodePortableCanvas([]byte(`{"format":"kandev.canvas","format_version":1,"export_id":"x","exported_at":"2026-01-01T00:00:00Z","canvas":{"title":"x","schema_version":1,"blocks":[],"unexpected":true}}`)); !errorsIs(err, ErrInvalidPortableFile) {
+	if _, err := DecodePortableCanvas([]byte(`{"format":"kandev.canvas","format_version":1,"export_id":"x","exported_at":"2026-01-01T00:00:00Z","canvas":{"title":"x","schema_version":1,"blocks":[],"unexpected":true}}`)); !errors.Is(err, ErrInvalidPortableFile) {
 		t.Fatalf("expected unknown portable field rejection, got %v", err)
 	}
 }
@@ -138,8 +141,29 @@ func TestCanvasTitleLimit(t *testing.T) {
 		WorkspaceID: "ws-a",
 		Title:       strings.Repeat("x", MaxTitleLength+1),
 	})
-	if !errorsIs(err, ErrCanvasValidation) {
+	if !errors.Is(err, ErrCanvasValidation) {
 		t.Fatalf("expected title validation error, got %v", err)
+	}
+}
+
+func TestBlockValidationRequiresTypedCollectionsAndItemRevisions(t *testing.T) {
+	tests := []struct {
+		name      string
+		blockType string
+		state     string
+	}{
+		{name: "checklist item object", blockType: BlockTypeChecklist, state: `{"items":["not an item"]}`},
+		{name: "checklist item revision", blockType: BlockTypeChecklist, state: `{"items":[{"id":"item-a","label":"A","revision":1.5}]}`},
+		{name: "kanban columns", blockType: BlockTypeKanban, state: `{"columns":[{"id":"todo"}]}`},
+		{name: "metrics collection", blockType: BlockTypeMetrics, state: `{"items":[]}`},
+		{name: "timeline item id", blockType: BlockTypeTimeline, state: `{"events":[{"label":"Started","revision":1}]}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateBlock(test.blockType, json.RawMessage(test.state)); !errors.Is(err, ErrCanvasValidation) {
+				t.Fatalf("validation error = %v, want canvas validation", err)
+			}
+		})
 	}
 }
 
@@ -182,7 +206,7 @@ func TestStructuredItemCommandsAllowIndependentStaleWriters(t *testing.T) {
 		CommandID: "item-a-stale", BaseRevision: 1, Action: ActionItemUpsert, TargetID: blockID,
 		Input: json.RawMessage(`{"collection":"items","item_id":"item-a","patch":{"completed":false},"expected_item_revision":1}`),
 	})
-	if !errorsIs(err, ErrRevisionConflict) {
+	if !errors.Is(err, ErrRevisionConflict) {
 		t.Fatalf("same-item stale update error = %v, want revision conflict", err)
 	}
 }
@@ -209,7 +233,7 @@ func TestMarkdownCommandsRequireTheCurrentLease(t *testing.T) {
 		CommandID: "markdown-denied", BaseRevision: 1, Action: ActionBlockUpdate, TargetID: blockID,
 		LeaseHolderID: "holder-b", Input: json.RawMessage(`{"expected_block_revision":0,"state":{"markdown":"blocked"}}`),
 	})
-	if !errorsIs(err, ErrLeaseUnavailable) {
+	if !errors.Is(err, ErrLeaseUnavailable) {
 		t.Fatalf("wrong lease error = %v, want lease unavailable", err)
 	}
 	if _, err := svc.ApplyCommand(ctx, canvas.ID, ApplyCanvasCommandRequest{
@@ -268,12 +292,190 @@ func TestCanvasCompactsEventsAndReturnsSnapshotForOldSubscribers(t *testing.T) {
 	}
 }
 
-func errorsIs(err, target error) bool {
-	if err == target {
-		return true
+func TestCanvasAccessHidesForeignWorkspace(t *testing.T) {
+	svc := newCanvasTestService(t)
+	ctx := context.Background()
+	foreign, err := svc.CreateCanvas(ctx, CreateCanvasRequest{WorkspaceID: "ws-b", Title: "Private"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err == nil {
-		return false
+	svc.SetWorkspaceAuthorizer(func(_ context.Context, workspaceID string) error {
+		if workspaceID != "ws-a" {
+			return repoerrors.ErrWorkspaceNotFound
+		}
+		return nil
+	})
+	if _, err := svc.GetCanvas(ctx, foreign.ID); !errors.Is(err, ErrCanvasNotFound) {
+		t.Fatalf("foreign canvas error = %v, want canvas not found", err)
 	}
-	return strings.Contains(err.Error(), target.Error())
+}
+
+func TestPortableCanvasImportPreservesPositionOrder(t *testing.T) {
+	svc := newCanvasTestService(t)
+	ctx := context.Background()
+	source, err := svc.CreateCanvas(ctx, CreateCanvasRequest{WorkspaceID: "ws-a", Title: "Portable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := svc.ApplyCommand(ctx, source.ID, ApplyCanvasCommandRequest{
+		CommandID: "portable-checklist", BaseRevision: 0, Action: ActionBlockCreate,
+		Input: json.RawMessage(`{"type":"checklist","state":{"items":[]}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.ApplyCommand(ctx, source.ID, ApplyCanvasCommandRequest{
+		CommandID: "portable-markdown", BaseRevision: 1, Action: ActionBlockCreate,
+		Input: json.RawMessage(`{"type":"markdown","state":{"markdown":"notes"}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exported, err := svc.ExportCanvas(ctx, source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := DecodePortableCanvas(exported)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file.Canvas.Blocks[0], file.Canvas.Blocks[1] = file.Canvas.Blocks[1], file.Canvas.Blocks[0]
+	shuffled, err := json.Marshal(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported, err := svc.ImportCanvas(ctx, "ws-a", "", shuffled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imported.Blocks) != 2 || imported.Blocks[0].Type != first.Canvas.Blocks[0].Type || imported.Blocks[1].Type != second.Canvas.Blocks[1].Type {
+		t.Fatalf("imported block order = %+v, want checklist then markdown", imported.Blocks)
+	}
+	if imported.Blocks[0].ID == first.Canvas.Blocks[0].ID || imported.Blocks[1].ID == second.Canvas.Blocks[0].ID {
+		t.Fatal("import reused internal block identifiers")
+	}
+}
+
+func TestMarkdownTypeConversionRequiresLease(t *testing.T) {
+	svc := newCanvasTestService(t)
+	ctx := context.Background()
+	canvas, err := svc.CreateCanvas(ctx, CreateCanvasRequest{WorkspaceID: "ws-a", Title: "Lease"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := svc.ApplyCommand(ctx, canvas.ID, ApplyCanvasCommandRequest{
+		CommandID: "lease-markdown", BaseRevision: 0, Action: ActionBlockCreate,
+		Input: json.RawMessage(`{"type":"markdown","state":{"markdown":"notes"}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockID := created.Canvas.Blocks[0].ID
+	if _, err := svc.ApplyCommand(ctx, canvas.ID, ApplyCanvasCommandRequest{
+		CommandID: "lease-conversion-denied", BaseRevision: 1, Action: ActionBlockUpdate,
+		TargetID: blockID, Input: json.RawMessage(`{"type":"checklist","expected_block_revision":0,"state":{"items":[]}}`),
+	}); !errors.Is(err, ErrLeaseUnavailable) {
+		t.Fatalf("markdown conversion error = %v, want lease unavailable", err)
+	}
+}
+
+func TestStructuredItemMoveRelocatesTheItem(t *testing.T) {
+	svc := newCanvasTestService(t)
+	ctx := context.Background()
+	canvas, err := svc.CreateCanvas(ctx, CreateCanvasRequest{WorkspaceID: "ws-a", Title: "Move"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := svc.ApplyCommand(ctx, canvas.ID, ApplyCanvasCommandRequest{
+		CommandID: "move-block", BaseRevision: 0, Action: ActionBlockCreate,
+		Input: json.RawMessage(`{"type":"checklist","state":{"items":[{"id":"a","label":"A","revision":1},{"id":"b","label":"B","revision":1},{"id":"c","label":"C","revision":1}]}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved, err := svc.ApplyCommand(ctx, canvas.ID, ApplyCanvasCommandRequest{
+		CommandID: "move-a", BaseRevision: 1, Action: ActionChecklistMove, TargetID: created.Canvas.Blocks[0].ID,
+		Input: json.RawMessage(`{"item_id":"a","position":2,"expected_item_revision":1}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state struct {
+		Items []struct {
+			ID       string `json:"id"`
+			Revision int64  `json:"revision"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(moved.Canvas.Blocks[0].State, &state); err != nil {
+		t.Fatal(err)
+	}
+	if got := []string{state.Items[0].ID, state.Items[1].ID, state.Items[2].ID}; fmt.Sprint(got) != "[b c a]" {
+		t.Fatalf("moved item order = %v, want [b c a]", got)
+	}
+	if state.Items[2].Revision != 2 {
+		t.Fatalf("moved item revision = %d, want 2", state.Items[2].Revision)
+	}
+}
+
+func TestKanbanMoveChangesTheDestinationColumn(t *testing.T) {
+	svc := newCanvasTestService(t)
+	ctx := context.Background()
+	canvas, err := svc.CreateCanvas(ctx, CreateCanvasRequest{WorkspaceID: "ws-a", Title: "Kanban move"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := svc.ApplyCommand(ctx, canvas.ID, ApplyCanvasCommandRequest{
+		CommandID: "kanban-block", BaseRevision: 0, Action: ActionBlockCreate,
+		Input: json.RawMessage(`{"type":"kanban","state":{"columns":[{"id":"todo","cards":[{"id":"a","title":"A","revision":1}]},{"id":"doing","cards":[{"id":"b","title":"B","revision":1}]}]}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved, err := svc.ApplyCommand(ctx, canvas.ID, ApplyCanvasCommandRequest{
+		CommandID: "kanban-move-a", BaseRevision: 1, Action: ActionKanbanCardMove,
+		TargetID: created.Canvas.Blocks[0].ID,
+		Input:    json.RawMessage(`{"item_id":"a","destination_column_id":"doing","position":0,"expected_item_revision":1}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state struct {
+		Columns []struct {
+			ID    string `json:"id"`
+			Cards []struct {
+				ID       string `json:"id"`
+				Revision int64  `json:"revision"`
+			} `json:"cards"`
+		} `json:"columns"`
+	}
+	if err := json.Unmarshal(moved.Canvas.Blocks[0].State, &state); err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Columns[0].Cards) != 0 || len(state.Columns[1].Cards) != 2 {
+		t.Fatalf("kanban columns after move = %+v", state.Columns)
+	}
+	if state.Columns[1].Cards[0].ID != "a" || state.Columns[1].Cards[0].Revision != 2 {
+		t.Fatalf("moved card = %+v, want card a at revision 2", state.Columns[1].Cards[0])
+	}
+}
+
+func TestCanvasEventsAttributeTrustedMCPSession(t *testing.T) {
+	ctx := streams.WithMCPExecutionContext(context.Background(), streams.MCPExecutionContext{
+		ExecutionID: "execution-1", TaskID: "task-a", SessionID: "session-a",
+	})
+	svc := newCanvasTestService(t)
+	canvas, err := svc.CreateCanvas(ctx, CreateCanvasRequest{WorkspaceID: "ws-a", Title: "Agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.ApplyCommand(ctx, canvas.ID, ApplyCanvasCommandRequest{
+		CommandID: "agent-command", BaseRevision: 0, Action: ActionBlockCreate,
+		Input: json.RawMessage(`{"type":"markdown","state":{"markdown":"agent"}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Event.ActorKind != "agent" || result.Event.ActorID != "session-a" {
+		t.Fatalf("event actor = %s/%s, want agent/session-a", result.Event.ActorKind, result.Event.ActorID)
+	}
 }

@@ -9,6 +9,9 @@ type SentRequest = {
   payload: unknown;
 };
 
+const CANVAS_ID = "canvas-1";
+const CANVAS_SUBSCRIBE_ACTION = "canvas.subscribe";
+
 class FakeWebSocket {
   static readonly OPEN = 1;
   static readonly CLOSED = 3;
@@ -173,9 +176,11 @@ describe("canvas subscriptions", () => {
   it("sends one subscription for multiple consumers and unsubscribes on the last release", () => {
     const { client, socket } = connectClient();
 
-    const first = client.subscribeCanvas("canvas-1");
-    const second = client.subscribeCanvas("canvas-1");
-    expect(socket.sent.filter((message) => message.action === "canvas.subscribe")).toHaveLength(1);
+    const first = client.subscribeCanvas(CANVAS_ID);
+    const second = client.subscribeCanvas(CANVAS_ID);
+    expect(
+      socket.sent.filter((message) => message.action === CANVAS_SUBSCRIBE_ACTION),
+    ).toHaveLength(1);
 
     first();
     expect(socket.sent.filter((message) => message.action === "canvas.unsubscribe")).toHaveLength(
@@ -190,7 +195,7 @@ describe("canvas subscriptions", () => {
   it("re-subscribes active canvases after reconnect", () => {
     vi.useFakeTimers();
     const { client, socket } = connectClient({ enabled: true, initialDelay: 0, maxAttempts: 1 });
-    const release = client.subscribeCanvas("canvas-1");
+    const release = client.subscribeCanvas(CANVAS_ID);
 
     socket.close();
     vi.runOnlyPendingTimers();
@@ -198,8 +203,74 @@ describe("canvas subscriptions", () => {
     reconnectedSocket.open();
 
     expect(
-      reconnectedSocket.sent.filter((message) => message.action === "canvas.subscribe"),
+      reconnectedSocket.sent.filter((message) => message.action === CANVAS_SUBSCRIBE_ACTION),
     ).toHaveLength(1);
+    release();
+  });
+
+  it("delivers the subscription snapshot response to canvas handlers", async () => {
+    const { client, socket } = connectClient();
+    const snapshots: number[] = [];
+    const removeHandler = client.onCanvasSubscription(CANVAS_ID, (payload) => {
+      snapshots.push(payload.canvas.revision);
+    });
+    const release = client.subscribeCanvas(CANVAS_ID);
+    const request = socket.sent.find((message) => message.action === CANVAS_SUBSCRIBE_ACTION);
+    if (!request) throw new Error(`No ${CANVAS_SUBSCRIBE_ACTION} request was sent`);
+
+    socket.receive({
+      id: request.id,
+      type: "response",
+      payload: {
+        canvas: { id: CANVAS_ID, revision: 3 },
+        events: [],
+        recovery: "snapshot",
+      },
+    });
+
+    await Promise.resolve();
+    expect(snapshots).toEqual([3]);
+    removeHandler();
+    release();
+  });
+
+  it("delivers the recovery response after reconnect", async () => {
+    vi.useFakeTimers();
+    const { client, socket } = connectClient({ enabled: true, initialDelay: 0, maxAttempts: 1 });
+    const snapshots: number[] = [];
+    const removeHandler = client.onCanvasSubscription(CANVAS_ID, (payload) => {
+      snapshots.push(payload.canvas.revision);
+    });
+    const release = client.subscribeCanvas(CANVAS_ID);
+    const initialRequest = socket.sent.find(
+      (message) => message.action === CANVAS_SUBSCRIBE_ACTION,
+    );
+    if (!initialRequest) throw new Error(`No initial ${CANVAS_SUBSCRIBE_ACTION} request was sent`);
+    socket.receive({
+      id: initialRequest.id,
+      type: "response",
+      payload: { canvas: { id: CANVAS_ID, revision: 1 }, events: [], recovery: "events" },
+    });
+    await Promise.resolve();
+
+    socket.close();
+    vi.runOnlyPendingTimers();
+    const reconnectedSocket = FakeWebSocket.latest();
+    reconnectedSocket.open();
+    const reconnectRequest = reconnectedSocket.sent.find(
+      (message) => message.action === CANVAS_SUBSCRIBE_ACTION,
+    );
+    if (!reconnectRequest)
+      throw new Error(`No reconnect ${CANVAS_SUBSCRIBE_ACTION} request was sent`);
+    reconnectedSocket.receive({
+      id: reconnectRequest.id,
+      type: "response",
+      payload: { canvas: { id: CANVAS_ID, revision: 4 }, events: [], recovery: "events" },
+    });
+    await Promise.resolve();
+
+    expect(snapshots).toEqual([1, 4]);
+    removeHandler();
     release();
   });
 });

@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 
+	"github.com/kandev/kandev/internal/agentctl/types/streams"
 	"github.com/kandev/kandev/internal/auth/authn"
 	"github.com/kandev/kandev/internal/common/logger"
 	"github.com/kandev/kandev/internal/task/repository/repoerrors"
@@ -50,20 +52,13 @@ func (s *Service) CreateCanvas(ctx context.Context, req CreateCanvasRequest) (*C
 	if err := s.authorizeWorkspaceAccess(ctx, req.WorkspaceID); err != nil {
 		return nil, err
 	}
-	canvases, err := s.repo.ListCanvases(ctx, req.WorkspaceID, false)
-	if err != nil {
-		return nil, err
-	}
-	if len(canvases) >= MaxActiveCanvases {
-		return nil, fmt.Errorf("%w: a workspace can have at most %d active canvases", ErrCanvasLimit, MaxActiveCanvases)
-	}
 	now := s.repo.nowUTC()
 	canvas := &Canvas{
 		ID: newID(), OwnerUserID: callerID(ctx), WorkspaceID: req.WorkspaceID,
 		Title: strings.TrimSpace(req.Title), SchemaVersion: CanvasSchemaVersion,
 		Blocks: []Block{}, TaskLinks: []TaskLink{}, CreatedAt: now, UpdatedAt: now,
 	}
-	if err := s.repo.CreateCanvas(ctx, canvas); err != nil {
+	if err := s.createCanvasRecord(ctx, canvas, ""); err != nil {
 		return nil, err
 	}
 	return canvas, nil
@@ -73,15 +68,53 @@ func (s *Service) CreateCanvasForTask(ctx context.Context, req CreateCanvasReque
 	if err := s.assertTaskWorkspace(ctx, taskID, req.WorkspaceID); err != nil {
 		return nil, err
 	}
-	canvas, err := s.CreateCanvas(ctx, req)
-	if err != nil {
+	if err := validateTitle(req.Title); err != nil {
 		return nil, err
 	}
-	if err := s.AddTaskLink(ctx, canvas.ID, taskID); err != nil {
-		_ = s.repo.DeleteCanvas(ctx, canvas.ID)
+	if err := s.authorizeWorkspaceAccess(ctx, req.WorkspaceID); err != nil {
+		return nil, err
+	}
+	now := s.repo.nowUTC()
+	canvas := &Canvas{
+		ID: newID(), OwnerUserID: callerID(ctx), WorkspaceID: req.WorkspaceID,
+		Title: strings.TrimSpace(req.Title), SchemaVersion: CanvasSchemaVersion,
+		Blocks: []Block{}, TaskLinks: []TaskLink{}, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.createCanvasRecord(ctx, canvas, taskID); err != nil {
 		return nil, err
 	}
 	return s.repo.GetCanvas(ctx, canvas.ID)
+}
+
+func (s *Service) createCanvasRecord(ctx context.Context, canvas *Canvas, taskID string) error {
+	s.repo.mu.Lock()
+	defer s.repo.mu.Unlock()
+	tx, err := s.repo.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	active, err := countActiveCanvases(ctx, tx, canvas.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	if active >= MaxActiveCanvases {
+		return fmt.Errorf("%w: a workspace can have at most %d active canvases", ErrCanvasLimit, MaxActiveCanvases)
+	}
+	if err := insertCanvas(ctx, tx, canvas); err != nil {
+		return err
+	}
+	if taskID != "" {
+		link := TaskLink{CanvasID: canvas.ID, TaskID: taskID, LinkedBy: callerID(ctx), CreatedAt: canvas.CreatedAt}
+		if _, err := tx.ExecContext(ctx, tx.Rebind(`
+INSERT INTO canvas_task_links (canvas_id, task_id, linked_by, created_at) VALUES (?, ?, ?, ?)`),
+			link.CanvasID, link.TaskID, link.LinkedBy, link.CreatedAt); err != nil {
+			return err
+		}
+		canvas.TaskLinks = []TaskLink{link}
+	}
+	return tx.Commit()
 }
 
 func (s *Service) ListCanvases(ctx context.Context, workspaceID string, includeArchived bool) ([]*Canvas, error) {
@@ -302,7 +335,7 @@ func (s *Service) applyNewCommand(
 	}
 	event := &CanvasEvent{
 		CanvasID: canvasID, Revision: canvas.Revision, CommandID: req.CommandID,
-		ActorKind: actorKind(ctx), ActorID: callerID(ctx), Action: req.Action,
+		ActorKind: actorKind(ctx), ActorID: actorID(ctx), Action: req.Action,
 		TargetID: req.TargetID, Payload: cloneJSON(req.Input), CreatedAt: s.repo.nowUTC(),
 	}
 	if err := insertEvent(ctx, tx, event); err != nil {
@@ -394,13 +427,6 @@ func (s *Service) ImportCanvas(ctx context.Context, workspaceID, taskID string, 
 			return nil, err
 		}
 	}
-	active, err := s.repo.ListCanvases(ctx, workspaceID, false)
-	if err != nil {
-		return nil, err
-	}
-	if len(active) >= MaxActiveCanvases {
-		return nil, ErrCanvasLimit
-	}
 	now := s.repo.nowUTC()
 	canvas = &Canvas{
 		ID: newID(), OwnerUserID: callerID(ctx), WorkspaceID: workspaceID,
@@ -447,10 +473,21 @@ func (s *Service) createImported(ctx context.Context, canvas *Canvas, blocks []P
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	active, err := countActiveCanvases(ctx, tx, canvas.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	if active >= MaxActiveCanvases {
+		return fmt.Errorf("%w: a workspace can have at most %d active canvases", ErrCanvasLimit, MaxActiveCanvases)
+	}
 	if err := insertCanvas(ctx, tx, canvas); err != nil {
 		return err
 	}
-	for position, portable := range blocks {
+	orderedBlocks := append([]PortableBlock(nil), blocks...)
+	sort.SliceStable(orderedBlocks, func(i, j int) bool {
+		return orderedBlocks[i].Position < orderedBlocks[j].Position
+	})
+	for position, portable := range orderedBlocks {
 		block := Block{ID: newID(), CanvasID: canvas.ID, Type: portable.Type,
 			Position: position, State: cloneJSON(portable.State), CreatedAt: canvas.CreatedAt,
 			UpdatedAt: canvas.UpdatedAt}
@@ -506,11 +543,21 @@ func callerID(ctx context.Context) string {
 }
 
 func actorKind(ctx context.Context) string {
+	if _, ok := streams.MCPExecutionContextFromContext(ctx); ok {
+		return "agent"
+	}
 	identity, ok := authn.IdentityFromContext(ctx)
 	if !ok || identity.Synthetic {
 		return "system"
 	}
 	return "user"
+}
+
+func actorID(ctx context.Context) string {
+	if execution, ok := streams.MCPExecutionContextFromContext(ctx); ok {
+		return execution.SessionID
+	}
+	return callerID(ctx)
 }
 
 func cloneJSON(data json.RawMessage) json.RawMessage {

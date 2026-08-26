@@ -28,7 +28,7 @@ func registerHTTPRoutes(router *gin.Engine, svc *Service) {
 		importCanvasHTTP(c, svc, c.Query("workspace_id"), c.Query("task_id"))
 	})
 	router.POST("/api/v1/workspaces/:id/canvases", func(c *gin.Context) {
-		createCanvasHTTP(c, svc, c.Param("id"))
+		createCanvasHTTP(c, svc, c.Param("id"), c.Query("task_id"))
 	})
 	router.GET("/api/v1/workspaces/:id/canvases", func(c *gin.Context) {
 		listCanvasesHTTP(c, svc, c.Param("id"))
@@ -76,14 +76,20 @@ func listCanvasesHTTP(c *gin.Context, svc *Service, workspaceID string) {
 	c.JSON(http.StatusOK, gin.H{"canvases": items})
 }
 
-func createCanvasHTTP(c *gin.Context, svc *Service, workspaceID string) {
+func createCanvasHTTP(c *gin.Context, svc *Service, workspaceID, taskID string) {
 	var req CreateCanvasRequest
 	if err := decodeBody(c, &req, MaxCommandBytes); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid canvas payload"})
 		return
 	}
 	req.WorkspaceID = workspaceID
-	canvas, err := svc.CreateCanvas(c.Request.Context(), req)
+	var canvas *Canvas
+	var err error
+	if taskID != "" {
+		canvas, err = svc.CreateCanvasForTask(c.Request.Context(), req, taskID)
+	} else {
+		canvas, err = svc.CreateCanvas(c.Request.Context(), req)
+	}
 	if writeCanvasError(c, err) {
 		return
 	}

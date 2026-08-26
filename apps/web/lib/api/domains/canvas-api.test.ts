@@ -49,12 +49,17 @@ describe("canvas API routes", () => {
 
   it("uses workspace routes for creation and import", async () => {
     await createCanvas(WORKSPACE_ID, "Project canvas");
+    await createCanvas(WORKSPACE_ID, "Task canvas", TASK_ID);
     await importCanvas(WORKSPACE_ID, '{"title":"Imported"}', TASK_ID);
 
     expect(mocks.fetchJson.mock.calls[0]?.[1]).toMatchObject({
       init: { method: "POST", body: JSON.stringify({ title: "Project canvas" }) },
     });
-    expect(mocks.fetchJson.mock.calls[1]).toMatchObject({
+    expect(mocks.fetchJson.mock.calls[1]?.[0]).toBe(`${WORKSPACE_CANVAS_PATH}?task_id=task%2Fone`);
+    expect(mocks.fetchJson.mock.calls[1]?.[1]).toMatchObject({
+      init: { method: "POST", body: JSON.stringify({ title: "Task canvas" }) },
+    });
+    expect(mocks.fetchJson.mock.calls[2]).toMatchObject({
       0: `${WORKSPACE_CANVAS_PATH}/import?task_id=task%2Fone`,
       1: {
         init: {

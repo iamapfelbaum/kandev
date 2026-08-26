@@ -3,6 +3,8 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"math"
 
 	canvasdomain "github.com/kandev/kandev/internal/canvas"
 	ws "github.com/kandev/kandev/pkg/websocket"
@@ -123,9 +125,13 @@ func (s *Server) applyCanvasActionHandler() server.ToolHandlerFunc {
 		if input == nil {
 			input = map[string]any{}
 		}
+		baseRevision, err := canvasRevision(req)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		payload := map[string]any{
 			"canvas_id": canvasID, "command_id": commandID,
-			"base_revision": int64(req.GetFloat("base_revision", 0)),
+			"base_revision": baseRevision,
 			"action":        action, "target_id": req.GetString("target_id", ""), "input": input,
 		}
 		if s.taskID != "" {
@@ -137,6 +143,47 @@ func (s *Server) applyCanvasActionHandler() server.ToolHandlerFunc {
 		}
 		return canvasToolResult(result)
 	}
+}
+
+func canvasRevision(req mcp.CallToolRequest) (int64, error) {
+	value, ok := req.GetArguments()["base_revision"]
+	if !ok {
+		return 0, fmt.Errorf("base_revision is required")
+	}
+	switch number := value.(type) {
+	case int:
+		return checkedCanvasRevision(int64(number))
+	case int64:
+		return checkedCanvasRevision(number)
+	case json.Number:
+		parsed, err := number.Int64()
+		if err != nil {
+			return 0, invalidCanvasRevision()
+		}
+		return checkedCanvasRevision(parsed)
+	case float64:
+		return checkedCanvasFloatRevision(number)
+	default:
+		return 0, invalidCanvasRevision()
+	}
+}
+
+func checkedCanvasRevision(revision int64) (int64, error) {
+	if revision < 0 {
+		return 0, invalidCanvasRevision()
+	}
+	return revision, nil
+}
+
+func checkedCanvasFloatRevision(revision float64) (int64, error) {
+	if math.IsNaN(revision) || math.IsInf(revision, 0) || revision < 0 || math.Trunc(revision) != revision || revision >= float64(1<<63) {
+		return 0, invalidCanvasRevision()
+	}
+	return int64(revision), nil
+}
+
+func invalidCanvasRevision() error {
+	return fmt.Errorf("base_revision must be a non-negative integer")
 }
 
 func canvasToolResult(value any) (*mcp.CallToolResult, error) {

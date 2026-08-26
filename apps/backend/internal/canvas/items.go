@@ -25,6 +25,8 @@ type itemCommandInput struct {
 	Item                  map[string]any `json:"item,omitempty"`
 	Patch                 map[string]any `json:"patch,omitempty"`
 	Collection            string         `json:"collection,omitempty"`
+	Position              *int           `json:"position,omitempty"`
+	DestinationColumnID   string         `json:"destination_column_id,omitempty"`
 	ExpectedItemRevision  *int64         `json:"expected_item_revision,omitempty"`
 	ExpectedBlockRevision *int64         `json:"expected_block_revision,omitempty"`
 }
@@ -43,24 +45,25 @@ func (e *itemRevisionConflictError) Unwrap() error { return ErrRevisionConflict 
 type structuredItemActionSpec struct {
 	operation  string
 	collection string
+	move       bool
 }
 
 var structuredItemActions = map[string]structuredItemActionSpec{
 	ActionChecklistAdd:     {operation: ActionItemUpsert, collection: itemCollectionItems},
 	ActionChecklistEdit:    {operation: ActionItemUpsert, collection: itemCollectionItems},
 	ActionChecklistToggle:  {operation: ActionItemUpsert, collection: itemCollectionItems},
-	ActionChecklistMove:    {operation: ActionItemUpsert, collection: itemCollectionItems},
+	ActionChecklistMove:    {operation: ActionItemMove, collection: itemCollectionItems, move: true},
 	ActionChecklistRemove:  {operation: ActionItemDelete, collection: itemCollectionItems},
 	ActionKanbanCardAdd:    {operation: ActionItemUpsert, collection: itemCollectionCards},
 	ActionKanbanCardEdit:   {operation: ActionItemUpsert, collection: itemCollectionCards},
-	ActionKanbanCardMove:   {operation: ActionItemUpsert, collection: itemCollectionCards},
+	ActionKanbanCardMove:   {operation: ActionItemMove, collection: itemCollectionCards, move: true},
 	ActionKanbanCardRemove: {operation: ActionItemDelete, collection: itemCollectionCards},
 	ActionMetricsSet:       {operation: ActionItemUpsert, collection: itemCollectionMetrics},
 	ActionMetricsRemove:    {operation: ActionItemDelete, collection: itemCollectionMetrics},
-	ActionMetricsReorder:   {operation: ActionItemUpsert, collection: itemCollectionMetrics},
+	ActionMetricsReorder:   {operation: ActionItemMove, collection: itemCollectionMetrics, move: true},
 	ActionTimelineAdd:      {operation: ActionItemUpsert, collection: itemCollectionEvents},
 	ActionTimelineEdit:     {operation: ActionItemUpsert, collection: itemCollectionEvents},
-	ActionTimelineMove:     {operation: ActionItemUpsert, collection: itemCollectionEvents},
+	ActionTimelineMove:     {operation: ActionItemMove, collection: itemCollectionEvents, move: true},
 	ActionTimelineRemove:   {operation: ActionItemDelete, collection: itemCollectionEvents},
 }
 
@@ -85,12 +88,19 @@ func normalizeStructuredItemCommand(req ApplyCanvasCommandRequest) (ApplyCanvasC
 		return req, err
 	}
 	output := structuredItemMetadata(raw, spec.collection)
+	if spec.move {
+		if err := addStructuredMovePayload(output, raw, spec.collection); err != nil {
+			return req, err
+		}
+	}
 	if spec.operation == ActionItemDelete {
 		if err := requireStructuredItemID(output); err != nil {
 			return req, err
 		}
-	} else if err := addStructuredUpsertPayload(output, raw); err != nil {
-		return req, err
+	} else if !spec.move {
+		if err := addStructuredUpsertPayload(output, raw); err != nil {
+			return req, err
+		}
 	}
 	req.Action = spec.operation
 	input, err := json.Marshal(output)
@@ -99,6 +109,35 @@ func normalizeStructuredItemCommand(req ApplyCanvasCommandRequest) (ApplyCanvasC
 	}
 	req.Input = input
 	return req, nil
+}
+
+func addStructuredMovePayload(output, raw map[string]any, collection string) error {
+	if err := requireStructuredItemID(output); err != nil {
+		return err
+	}
+	position, ok := firstStructuredValue(raw, "position", "to_index", "index")
+	if !ok {
+		return fmt.Errorf("%w: position is required", ErrCanvasValidation)
+	}
+	output["position"] = position
+	if destination, ok := firstStructuredValue(raw, "destination_column_id", "column_id"); ok {
+		output["destination_column_id"] = destination
+	}
+	if collection == itemCollectionCards {
+		if _, ok := output["destination_column_id"]; !ok {
+			return fmt.Errorf("%w: destination_column_id is required", ErrCanvasValidation)
+		}
+	}
+	return nil
+}
+
+func firstStructuredValue(raw map[string]any, keys ...string) (any, bool) {
+	for _, key := range keys {
+		if value, ok := raw[key]; ok {
+			return value, true
+		}
+	}
+	return nil, false
 }
 
 func decodeStructuredItemInput(input json.RawMessage) (map[string]any, error) {
@@ -162,7 +201,7 @@ func addStructuredUpsertPayload(output, raw map[string]any) error {
 
 func isStructuredItemControlField(key string) bool {
 	switch key {
-	case "block_id", "item_id", "expected_item_revision", "expected_block_revision", "collection", "item", "patch":
+	case "block_id", "item_id", "expected_item_revision", "expected_block_revision", "collection", "item", "patch", "position", "to_index", "index", "destination_column_id", "column_id":
 		return true
 	default:
 		return false
@@ -188,6 +227,9 @@ func applyItemAction(ctx context.Context, tx *sqlx.Tx, canvas *Canvas, req Apply
 
 	if req.Action == ActionItemDelete {
 		return applyItemDelete(ctx, tx, canvas, block, state, payload, nowTime)
+	}
+	if req.Action == ActionItemMove {
+		return applyItemMove(ctx, tx, canvas, block, state, payload, nowTime)
 	}
 	return applyItemUpsert(ctx, tx, canvas, block, state, payload, nowTime)
 }
@@ -227,7 +269,193 @@ func validateItemBlock(block Block, payload itemCommandInput) error {
 	if payload.ExpectedBlockRevision != nil && block.BlockRevision != *payload.ExpectedBlockRevision {
 		return fmt.Errorf("%w: block revision is %d", ErrRevisionConflict, block.BlockRevision)
 	}
+	expectedCollection := map[string]string{
+		BlockTypeChecklist: itemCollectionItems,
+		BlockTypeKanban:    itemCollectionCards,
+		BlockTypeMetrics:   itemCollectionMetrics,
+		BlockTypeTimeline:  itemCollectionEvents,
+	}[block.Type]
+	if expectedCollection == "" || payload.Collection != expectedCollection {
+		return fmt.Errorf("%w: collection %q does not belong to block type %q", ErrCanvasValidation, payload.Collection, block.Type)
+	}
 	return nil
+}
+
+func applyItemMove(
+	ctx context.Context,
+	tx *sqlx.Tx,
+	canvas *Canvas,
+	block Block,
+	state map[string]any,
+	payload itemCommandInput,
+	nowTime time.Time,
+) error {
+	if payload.ItemID == "" {
+		return fmt.Errorf("%w: item_id is required", ErrCanvasValidation)
+	}
+	if payload.Position == nil || *payload.Position < 0 {
+		return fmt.Errorf("%w: position must be a non-negative integer", ErrCanvasValidation)
+	}
+	location, ok := locateItem(state, payload.Collection, payload.ItemID)
+	if !ok {
+		return ErrCanvasNotFound
+	}
+	if err := validateExpectedItemRevision(location.item, payload.ExpectedItemRevision, payload.ItemID); err != nil {
+		return err
+	}
+	if payload.Collection == itemCollectionCards && payload.DestinationColumnID == "" {
+		return fmt.Errorf("%w: destination_column_id is required", ErrCanvasValidation)
+	}
+	if payload.Collection != itemCollectionCards && payload.DestinationColumnID != "" {
+		return fmt.Errorf("%w: destination_column_id is only valid for kanban cards", ErrCanvasValidation)
+	}
+	destination := location
+	if payload.DestinationColumnID != "" {
+		items, set, found := findColumnCollection(state, payload.Collection, payload.DestinationColumnID)
+		if !found {
+			return fmt.Errorf("%w: destination column was not found", ErrCanvasValidation)
+		}
+		destination = itemLocation{items: items, set: set, ownerID: payload.DestinationColumnID}
+	}
+	sameCollection := payload.DestinationColumnID == "" || location.ownerID == payload.DestinationColumnID
+	if err := moveItem(location, destination, *payload.Position, sameCollection); err != nil {
+		return err
+	}
+	location.item["revision"] = itemRevision(location.item) + 1
+	return persistItemState(ctx, tx, canvas, block, state, nowTime)
+}
+
+type itemLocation struct {
+	items   []any
+	index   int
+	item    map[string]any
+	set     func([]any)
+	ownerID string
+}
+
+func moveItem(source, destination itemLocation, position int, sameCollection bool) error {
+	if sameCollection {
+		// A same-column move removes the item before validating its destination.
+		items := append([]any(nil), source.items...)
+		moved := items[source.index]
+		items = append(items[:source.index], items[source.index+1:]...)
+		if position > len(items) {
+			return fmt.Errorf("%w: position is out of range", ErrCanvasValidation)
+		}
+		items = insertItemAt(items, position, moved)
+		source.set(items)
+		return nil
+	}
+	if position > len(destination.items) {
+		return fmt.Errorf("%w: position is out of range", ErrCanvasValidation)
+	}
+	sourceItems := append([]any(nil), source.items...)
+	moved := sourceItems[source.index]
+	sourceItems = append(sourceItems[:source.index], sourceItems[source.index+1:]...)
+	destinationItems := append([]any(nil), destination.items...)
+	destinationItems = insertItemAt(destinationItems, position, moved)
+	source.set(sourceItems)
+	destination.set(destinationItems)
+	return nil
+}
+
+func insertItemAt(items []any, position int, item any) []any {
+	items = append(items, nil)
+	copy(items[position+1:], items[position:])
+	items[position] = item
+	return items
+}
+
+func locateItem(state map[string]any, collection, itemID string) (itemLocation, bool) {
+	return locateItemValue(state, collection, itemID, "")
+}
+
+func locateItemValue(value any, collection, itemID, ownerID string) (itemLocation, bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		return locateItemInMap(typed, collection, itemID, ownerID)
+	case []any:
+		return locateItemInSlice(typed, collection, itemID, ownerID)
+	}
+	return itemLocation{}, false
+}
+
+func locateItemInMap(values map[string]any, collection, itemID, ownerID string) (itemLocation, bool) {
+	currentOwner := itemCollectionOwner(values, ownerID)
+	if location, ok := locateItemInMapCollections(values, collection, itemID, currentOwner); ok {
+		return location, true
+	}
+	for _, key := range sortedKeys(values) {
+		if location, ok := locateItemValue(values[key], collection, itemID, currentOwner); ok {
+			return location, true
+		}
+	}
+	return itemLocation{}, false
+}
+
+func itemCollectionOwner(values map[string]any, ownerID string) string {
+	id, hasID := values["id"].(string)
+	if hasID && strings.TrimSpace(id) != "" {
+		if _, hasCards := values["cards"].([]any); hasCards {
+			return id
+		}
+	}
+	return ownerID
+}
+
+func locateItemInMapCollections(values map[string]any, collection, itemID, ownerID string) (itemLocation, bool) {
+	for _, key := range sortedKeys(values) {
+		items, ok := values[key].([]any)
+		if !ok || !matchesCollection(key, collection) {
+			continue
+		}
+		for index, rawItem := range items {
+			item, ok := rawItem.(map[string]any)
+			if ok && item["id"] == itemID {
+				return itemLocation{
+					items: items, index: index, item: item, ownerID: ownerID,
+					set: func(next []any) { values[key] = next },
+				}, true
+			}
+		}
+	}
+	return itemLocation{}, false
+}
+
+func locateItemInSlice(values []any, collection, itemID, ownerID string) (itemLocation, bool) {
+	for _, child := range values {
+		if location, ok := locateItemValue(child, collection, itemID, ownerID); ok {
+			return location, true
+		}
+	}
+	return itemLocation{}, false
+}
+
+func findColumnCollection(state map[string]any, collection, columnID string) ([]any, func([]any), bool) {
+	return findColumnCollectionValue(state, collection, columnID)
+}
+
+func findColumnCollectionValue(value any, collection, columnID string) ([]any, func([]any), bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		if id, ok := typed["id"].(string); ok && id == columnID {
+			if items, ok := typed[collection].([]any); ok {
+				return items, func(next []any) { typed[collection] = next }, true
+			}
+		}
+		for _, key := range sortedKeys(typed) {
+			if items, set, ok := findColumnCollectionValue(typed[key], collection, columnID); ok {
+				return items, set, true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if items, set, ok := findColumnCollectionValue(child, collection, columnID); ok {
+				return items, set, true
+			}
+		}
+	}
+	return nil, nil, false
 }
 
 func applyItemDelete(
@@ -249,7 +477,7 @@ func applyItemDelete(
 	if err := validateExpectedItemRevision(current, payload.ExpectedItemRevision, payload.ItemID); err != nil {
 		return err
 	}
-	deleted, _ := deleteItem(state, payload.Collection, payload.ItemID, nil)
+	deleted := deleteItem(state, payload.Collection, payload.ItemID)
 	if !deleted {
 		return ErrCanvasNotFound
 	}
@@ -274,7 +502,7 @@ func applyItemUpsert(
 		if err := validateExpectedItemRevision(current, payload.ExpectedItemRevision, itemID); err != nil {
 			return err
 		}
-		updated, _ := upsertItem(state, payload.Collection, itemID, item, payload.Patch, nil)
+		updated := upsertItem(state, payload.Collection, itemID, item, payload.Patch)
 		if !updated {
 			return ErrCanvasNotFound
 		}
@@ -311,7 +539,7 @@ func persistItemState(
 	state map[string]any,
 	nowTime time.Time,
 ) error {
-	if err := validateStateAfterItemChange(state); err != nil {
+	if err := validateStateAfterItemChange(block.Type, state); err != nil {
 		return err
 	}
 	return updateBlockState(ctx, tx, canvas, block, state, nowTime)
@@ -349,6 +577,7 @@ func itemForUpsert(payload itemCommandInput) (map[string]any, string, error) {
 		itemID = newID()
 	}
 	copyItem["id"] = itemID
+	copyItem["revision"] = int64(1)
 	return copyItem, itemID, nil
 }
 
@@ -356,14 +585,10 @@ func upsertItem(
 	state map[string]any,
 	collection, itemID string,
 	item, patch map[string]any,
-	expectedRevision *int64,
-) (updated, found bool) {
-	found = visitItem(state, collection, itemID, func(current map[string]any) map[string]any {
-		found = true
+) bool {
+	updated := false
+	visitItem(state, collection, itemID, func(current map[string]any) map[string]any {
 		currentRevision := itemRevision(current)
-		if expectedRevision != nil && currentRevision != *expectedRevision {
-			return current
-		}
 		result := item
 		if patch != nil {
 			result = mergeItem(current, patch)
@@ -373,20 +598,16 @@ func upsertItem(
 		updated = true
 		return result
 	})
-	return updated, found
+	return updated
 }
 
-func deleteItem(state map[string]any, collection, itemID string, expectedRevision *int64) (bool, bool) {
+func deleteItem(state map[string]any, collection, itemID string) bool {
 	var deleted bool
-	found := visitItem(state, collection, itemID, func(current map[string]any) map[string]any {
-		currentRevision := itemRevision(current)
-		if expectedRevision != nil && currentRevision != *expectedRevision {
-			return current
-		}
+	visitItem(state, collection, itemID, func(current map[string]any) map[string]any {
 		deleted = true
 		return nil
 	})
-	return deleted, found
+	return deleted
 }
 
 func findItem(state map[string]any, collection, itemID string) (map[string]any, bool) {
@@ -544,12 +765,12 @@ func itemRevision(item map[string]any) int64 {
 	}
 }
 
-func validateStateAfterItemChange(state map[string]any) error {
+func validateStateAfterItemChange(blockType string, state map[string]any) error {
 	encoded, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("%w: invalid item state", ErrCanvasValidation)
 	}
-	return validateBlockStateSizeAndContent(encoded)
+	return validateBlockStateSizeAndContent(blockType, encoded)
 }
 
 func updateBlockState(
@@ -576,11 +797,11 @@ WHERE canvas_id = ? AND block_id = ?`), encoded, now, canvas.ID, block.ID)
 	return requireOneRow(result, ErrCanvasNotFound)
 }
 
-func validateBlockStateSizeAndContent(state json.RawMessage) error {
+func validateBlockStateSizeAndContent(blockType string, state json.RawMessage) error {
 	if len(state) > MaxCanvasBytes {
 		return ErrCanvasLimit
 	}
-	return validateBlock(BlockTypeChecklist, state)
+	return validateBlock(blockType, state)
 }
 
 func validItemCollection(collection string) bool {

@@ -22,12 +22,17 @@ func (c *Client) handleCanvasSubscribe(msg *ws.Message) {
 		c.sendError(msg.ID, msg.Action, ws.ErrorCodeInternalError, "canvas subscriptions unavailable", nil)
 		return
 	}
-	payload, err := provider.SubscribeCanvas(c.dispatchContext(), req.CanvasID, req.AfterRevision)
+	if _, err := provider.SubscribeCanvas(c.dispatchContext(), req.CanvasID, req.AfterRevision); err != nil {
+		c.sendError(msg.ID, msg.Action, ws.ErrorCodeNotFound, "canvas not found", nil)
+		return
+	}
+	payload, err := c.hub.SubscribeCanvasWithReplay(c, req.CanvasID, func() ([]byte, error) {
+		return provider.SubscribeCanvas(c.dispatchContext(), req.CanvasID, req.AfterRevision)
+	})
 	if err != nil {
 		c.sendError(msg.ID, msg.Action, ws.ErrorCodeNotFound, "canvas not found", nil)
 		return
 	}
-	c.hub.SubscribeToCanvas(c, req.CanvasID)
 	response, err := ws.NewResponse(msg.ID, msg.Action, json.RawMessage(payload))
 	if err != nil {
 		c.sendError(msg.ID, msg.Action, ws.ErrorCodeInternalError, "failed to encode canvas snapshot", nil)

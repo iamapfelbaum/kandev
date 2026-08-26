@@ -13,6 +13,14 @@ export function useCanvas(canvasId: string) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);
+  const canvasRevisionRef = useRef(0);
+
+  const setCanvasSnapshot = useCallback((next: Canvas | null) => {
+    if (next && next.revision < canvasRevisionRef.current) return false;
+    canvasRevisionRef.current = next?.revision ?? 0;
+    setCanvas(next);
+    return true;
+  }, []);
 
   const refresh = useCallback(async () => {
     const requestId = ++requestRef.current;
@@ -20,22 +28,30 @@ export function useCanvas(canvasId: string) {
     try {
       const next = await getCanvas(canvasId, { cache: "no-store" });
       if (requestRef.current !== requestId) return next;
-      setCanvas(next);
+      setCanvasSnapshot(next);
       setError(null);
       return next;
     } catch (err: unknown) {
       if (requestRef.current === requestId) {
-        setCanvas(null);
+        if (canvasRevisionRef.current === 0) setCanvasSnapshot(null);
         setError(err instanceof Error ? err.message : t("canvases:canvasNotFound"));
       }
       return null;
     } finally {
       if (requestRef.current === requestId) setLoading(false);
     }
-  }, [canvasId]);
+  }, [canvasId, setCanvasSnapshot]);
 
   useEffect(() => {
     const client = getWebSocketClient();
+    setCanvas(null);
+    setError(null);
+    canvasRevisionRef.current = 0;
+    const unsubscribeSnapshot = client?.onCanvasSubscription(canvasId, (payload) => {
+      if (payload.canvas?.id !== canvasId) return;
+      setCanvasSnapshot(payload.canvas);
+      setError(null);
+    });
     const unsubscribeEvent = client?.on("canvas.event", (message) => {
       if (message.payload.canvas_id !== canvasId) return;
       void refresh();
@@ -44,19 +60,20 @@ export function useCanvas(canvasId: string) {
     void refresh();
     return () => {
       unsubscribeEvent?.();
+      unsubscribeSnapshot?.();
       unsubscribeCanvas?.();
     };
-  }, [canvasId, refresh]);
+  }, [canvasId, refresh, setCanvasSnapshot]);
 
   const apply = useCallback(
     async (command: ApplyCanvasCommandRequest): Promise<ApplyCanvasCommandResult | null> => {
       if (!canvas) return null;
       const result = await applyCanvasCommand(canvas.id, command);
-      setCanvas(result.canvas);
+      setCanvasSnapshot(result.canvas);
       setError(null);
       return result;
     },
-    [canvas],
+    [canvas, setCanvasSnapshot],
   );
 
   return { canvas, loading, error, refresh, apply };

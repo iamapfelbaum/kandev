@@ -34,7 +34,7 @@ func applyCommand(ctx context.Context, tx *sqlx.Tx, canvas *Canvas, req ApplyCan
 		err = applyBlockCreate(ctx, tx, canvas, req.Input, now)
 	case ActionBlockUpdate:
 		err = applyBlockUpdate(ctx, tx, canvas, req, now)
-	case ActionItemUpsert, ActionItemDelete:
+	case ActionItemUpsert, ActionItemDelete, ActionItemMove:
 		err = applyItemAction(ctx, tx, canvas, req, now)
 	case ActionBlockDelete:
 		err = applyBlockDelete(ctx, tx, canvas, req)
@@ -142,7 +142,7 @@ WHERE canvas_id = ? AND block_id = ?`), canvas.ID, req.TargetID); err != nil {
 			return fmt.Errorf("%w: block revision is %d", ErrRevisionConflict, current.BlockRevision)
 		}
 	}
-	if current.Type == BlockTypeMarkdown && payload.Type == BlockTypeMarkdown {
+	if current.Type == BlockTypeMarkdown || payload.Type == BlockTypeMarkdown {
 		if payload.ExpectedBlockRevision == nil {
 			return fmt.Errorf("%w: markdown updates require block revision", ErrRevisionConflict)
 		}

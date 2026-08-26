@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -40,6 +41,7 @@ const (
 	ActionBlockReorder  = "block.reorder"
 	ActionItemUpsert    = "item.upsert"
 	ActionItemDelete    = "item.delete"
+	ActionItemMove      = "item.move"
 	ActionCanvasCompact = "canvas.compact"
 )
 
@@ -199,10 +201,159 @@ func validateBlock(blockType string, state json.RawMessage) error {
 	if err := validateStateValue(value); err != nil {
 		return err
 	}
+	if err := validateTypedBlockState(blockType, value); err != nil {
+		return err
+	}
 	if countItems(state) > MaxItems {
 		return fmt.Errorf("%w: item count exceeds %d", ErrCanvasLimit, MaxItems)
 	}
 	return nil
+}
+
+func validateTypedBlockState(blockType string, value any) error {
+	state, ok := value.(map[string]any)
+	if !ok {
+		return fmt.Errorf("%w: block state must be a JSON object", ErrCanvasValidation)
+	}
+	switch blockType {
+	case BlockTypeMarkdown:
+		return validateMarkdownState(state)
+	case BlockTypeChecklist:
+		return validateCollectionState(state, "items", "checklist")
+	case BlockTypeKanban:
+		return validateKanbanState(state)
+	case BlockTypeMetrics:
+		return validateCollectionState(state, "metrics", "metric")
+	case BlockTypeTimeline:
+		return validateCollectionState(state, "events", "timeline event")
+	}
+	return nil
+}
+
+func validateMarkdownState(state map[string]any) error {
+	if _, ok := state["markdown"].(string); !ok {
+		return fmt.Errorf("%w: markdown state requires a markdown string", ErrCanvasValidation)
+	}
+	return nil
+}
+
+func validateCollectionState(state map[string]any, key, label string) error {
+	items, err := requiredStateCollection(state, key)
+	if err != nil {
+		return err
+	}
+	return validateTypedItems(items, label)
+}
+
+func validateKanbanState(state map[string]any) error {
+	columns, err := requiredStateCollection(state, "columns")
+	if err != nil {
+		return err
+	}
+	seenColumns := make(map[string]struct{}, len(columns))
+	for _, rawColumn := range columns {
+		column, ok := rawColumn.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%w: kanban columns must be objects", ErrCanvasValidation)
+		}
+		columnID, err := requiredStateString(column, "id", "kanban column")
+		if err != nil {
+			return err
+		}
+		if _, exists := seenColumns[columnID]; exists {
+			return fmt.Errorf("%w: duplicate kanban column id %q", ErrCanvasValidation, columnID)
+		}
+		seenColumns[columnID] = struct{}{}
+		if err := validateCollectionState(column, "cards", "kanban card"); err != nil {
+			return fmt.Errorf("%w: kanban column cards are required", ErrCanvasValidation)
+		}
+	}
+	return nil
+}
+
+func requiredStateCollection(state map[string]any, key string) ([]any, error) {
+	items, ok := state[key].([]any)
+	if !ok {
+		return nil, fmt.Errorf("%w: state requires a %s collection", ErrCanvasValidation, key)
+	}
+	return items, nil
+}
+
+func requiredStateString(state map[string]any, key, label string) (string, error) {
+	value, ok := state[key].(string)
+	if !ok || strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("%w: %s requires a non-empty %s", ErrCanvasValidation, label, key)
+	}
+	return value, nil
+}
+
+func validateTypedItems(items []any, label string) error {
+	seen := make(map[string]struct{}, len(items))
+	for _, rawItem := range items {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%w: %s must be an object", ErrCanvasValidation, label)
+		}
+		id, ok := item["id"].(string)
+		if !ok || strings.TrimSpace(id) == "" {
+			return fmt.Errorf("%w: %s requires a stable id", ErrCanvasValidation, label)
+		}
+		if _, exists := seen[id]; exists {
+			return fmt.Errorf("%w: duplicate %s id %q", ErrCanvasValidation, label, id)
+		}
+		seen[id] = struct{}{}
+		revision, ok := stateInteger(item["revision"])
+		if !ok || revision < 1 {
+			return fmt.Errorf("%w: %s revision must be a positive integer", ErrCanvasValidation, label)
+		}
+		if err := validateTypedItemFields(item, label); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateTypedItemFields(item map[string]any, label string) error {
+	for key, value := range item {
+		switch key {
+		case "id", "revision":
+			continue
+		case "label", "name", "title", "status", "unit", "timestamp", "time", "created_at", "updated_at":
+			if _, ok := value.(string); !ok {
+				return fmt.Errorf("%w: %s field %q must be a string", ErrCanvasValidation, label, key)
+			}
+		case "completed", "done":
+			if _, ok := value.(bool); !ok {
+				return fmt.Errorf("%w: %s field %q must be a boolean", ErrCanvasValidation, label, key)
+			}
+		case "value":
+			switch value.(type) {
+			case string, bool, float64, json.Number:
+			default:
+				return fmt.Errorf("%w: %s field %q must be a scalar", ErrCanvasValidation, label, key)
+			}
+		}
+	}
+	return nil
+}
+
+func stateInteger(value any) (int64, bool) {
+	switch number := value.(type) {
+	case json.Number:
+		parsed, err := number.Int64()
+		return parsed, err == nil
+	case float64:
+		if math.IsNaN(number) || math.IsInf(number, 0) || number < -float64(1<<63) || number >= float64(1<<63) || math.Trunc(number) != number {
+			return 0, false
+		}
+		return int64(number), true
+	case int64:
+		return number, true
+	case int:
+		return int64(number), true
+	default:
+		return 0, false
+	}
 }
 
 var forbiddenStateKeys = map[string]bool{

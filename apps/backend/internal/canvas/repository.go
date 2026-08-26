@@ -166,6 +166,20 @@ func (r *Repository) ListCanvases(ctx context.Context, workspaceID string, inclu
 	return rows, nil
 }
 
+// CountActiveCanvases returns the number of non-archived canvases in a workspace.
+// Callers that need the count to remain consistent with an insert must use the
+// same transaction and repository lock as the insert.
+func (r *Repository) CountActiveCanvases(ctx context.Context, workspaceID string) (int, error) {
+	return countActiveCanvases(ctx, r.ro, workspaceID)
+}
+
+func countActiveCanvases(ctx context.Context, db queryer, workspaceID string) (int, error) {
+	var count int
+	err := db.GetContext(ctx, &count, db.Rebind(
+		`SELECT COUNT(*) FROM canvases WHERE workspace_id = ? AND archived_at IS NULL`), workspaceID)
+	return count, err
+}
+
 func (r *Repository) UpdateTitle(ctx context.Context, canvasID, title string, updatedAt time.Time) error {
 	result, err := r.db.ExecContext(ctx, r.db.Rebind(
 		`UPDATE canvases SET title = ?, updated_at = ? WHERE id = ?`), title, updatedAt, canvasID)
