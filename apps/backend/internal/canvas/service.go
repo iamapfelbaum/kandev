@@ -22,6 +22,8 @@ type WorkspaceAuthorizer func(context.Context, string) error
 type TaskWorkspaceResolver func(context.Context, string) (string, error)
 type EventPublisher func(string, *CanvasEvent)
 
+const canvasRecoverySnapshot = "snapshot"
+
 type Service struct {
 	repo                 *Repository
 	authorizeWorkspace   WorkspaceAuthorizer
@@ -148,7 +150,7 @@ func (s *Service) SubscribeCanvas(ctx context.Context, canvasID string, afterRev
 	}
 	recovery := "events"
 	if afterRevision < canvas.CompactedThroughRevision {
-		recovery = "snapshot"
+		recovery = canvasRecoverySnapshot
 		recordCanvasRecovery(recovery)
 		return marshalJSON(map[string]any{"canvas": canvas, "events": []CanvasEvent{}, "recovery": recovery})
 	}
