@@ -30,9 +30,8 @@ plugin security boundaries.
 
 ### Requirements
 
-
-
 - [Plugin-Contributed Agent Tools](requirements/agent-tools.md)
+- [Isolated plugin web-application contributions](requirements/isolated-web-app-contributions.md)
 - [Plugin Authoring Experience](requirements/authoring-experience.md)
 - [Plugin Marketplace](requirements/marketplace.md)
 - [Plugin nav items in the sidebar footer icon row](requirements/plugin-nav-sidebar-footer.md)
@@ -43,9 +42,8 @@ plugin security boundaries.
 
 ### System design
 
-
-
 - [Plugin Marketplace](system-design/marketplace.md)
+- [Isolated plugin web-application contributions](system-design/isolated-web-app-contributions.md)
 - [Plugin nav items in the sidebar footer icon row System Design Part 1](system-design/plugin-nav-sidebar-footer-01.md)
 - [Plugin nav items in the sidebar footer icon row System Design Part 2](system-design/plugin-nav-sidebar-footer-02.md)
 - [Plugin nav items in the sidebar footer icon row System Design Part 3](system-design/plugin-nav-sidebar-footer-03.md)
@@ -64,4 +62,6 @@ canonical requirement and system-design documents above.
 ## Related systems
 
 - [UI](../ui/README.md): renders plugin contributions.
+- [Canvases](../canvases/README.md): binds isolated web applications to task
+  and workspace canvas lifecycles.
 - [Integrations](../integrations/README.md): supplies external connections.
