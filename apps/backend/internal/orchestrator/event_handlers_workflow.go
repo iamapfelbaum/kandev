@@ -727,9 +727,13 @@ func (s *Service) handleTaskQueuePromoted(ctx context.Context, data watcher.Task
 	}
 	session, sessionErr := s.repo.GetActiveTaskSessionByTaskID(ctx, task.ID)
 	if sessionErr != nil {
-		s.logger.Warn("task.queue_promoted: failed to load active session",
-			zap.String("task_id", task.ID), zap.Error(sessionErr))
-		return
+		if errors.Is(sessionErr, models.ErrTaskSessionNotFound) {
+			session = nil
+		} else {
+			s.logger.Warn("task.queue_promoted: failed to load active session",
+				zap.String("task_id", task.ID), zap.Error(sessionErr))
+			return
+		}
 	}
 	if !s.claimTaskEventMetadata(ctx, task, models.MetaKeyQueuePromotionPending) {
 		return

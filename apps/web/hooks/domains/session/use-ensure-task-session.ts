@@ -10,6 +10,8 @@ export type EnsureTaskInput = {
   workflowStepId?: string | null;
   /** Snake_case workflow_id from the HTTP Task type. */
   workflowId?: string | null;
+  /** Destination step while the task waits for WIP capacity. */
+  queuedForStepId?: string | null;
 } | null;
 
 export type KanbanStepLike = {
@@ -139,6 +141,7 @@ export function useEnsureTaskSession(
 ): UseEnsureTaskSessionResult {
   const enabled = opts?.enabled ?? true;
   const taskId = task?.id ?? null;
+  const queuedForStepId = task?.queuedForStepId ?? null;
   const { sessions, isLoaded, loadSessions } = useTaskSessions(taskId);
 
   const [status, setStatus] = useState<EnsureTaskSessionStatus>("idle");
@@ -181,6 +184,7 @@ export function useEnsureTaskSession(
   /* eslint-disable react-hooks/set-state-in-effect -- ensuring a session is a side effect; status mirrors that external work */
   useEffect(() => {
     if (!enabled || !taskId || !isLoaded) return;
+    if (queuedForStepId) return;
     if (sessions.length > 0) return;
     // Wait for the workflow steps to resolve before deciding the gate. This
     // branch does NOT latch, so a later steps hydration re-runs the effect
@@ -218,6 +222,7 @@ export function useEnsureTaskSession(
   }, [
     enabled,
     taskId,
+    queuedForStepId,
     isLoaded,
     loadSessions,
     sessions.length,

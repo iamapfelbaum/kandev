@@ -283,6 +283,7 @@ function useTaskPageData(
     id: task?.id,
     workflowStepId: task?.workflow_step_id,
     workflowId: task?.workflow_id,
+    queuedForStepId: task?.queued_for_step_id,
   });
   const initialSessionId = sessionId ?? agent.taskSessionId ?? null;
   const effectiveSessionId = validatedActiveSessionId ?? initialSessionId;

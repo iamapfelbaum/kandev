@@ -17,7 +17,7 @@ type EnsureSessionResponse struct {
 	SessionID      string `json:"session_id,omitempty"`
 	State          string `json:"state"`
 	AgentProfileID string `json:"agent_profile_id,omitempty"`
-	Source         string `json:"source"`                   // existing_primary | existing_newest | created_prepare | created_start | skipped_terminal_pr
+	Source         string `json:"source"`                   // existing_primary | existing_newest | created_prepare | created_start | skipped_terminal_pr | skipped_wip_queue
 	NewlyCreated   bool   `json:"newly_created"`            // true when a new session was created by this call
 	WorkspacePath  string `json:"workspace_path,omitempty"` // effective workspace path (for quick-chat sessions without worktrees)
 }
@@ -58,7 +58,9 @@ func acquireEnsureLock(taskID string) func() {
 // a task: it returns the existing primary (or newest) session if any, otherwise
 // resolves the agent profile from the task's full context and creates a session
 // via prepare (workspace-only) or start (with agent), gated by the task's
-// workflow step.
+// workflow step. A task still waiting for WIP capacity returns a successful
+// no-session response so opening its task view cannot allocate resources before
+// queue promotion.
 //
 // When opts.EnsureExecution is true and the session already exists, the method
 // also verifies that the agent process (agentctl) is running and resumes it if
@@ -80,16 +82,24 @@ func (s *Service) EnsureSession(ctx context.Context, taskID string, opts ...Ensu
 		o = opts[0]
 	}
 
+	task, err := s.repo.GetTask(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("task not found: %w", err)
+	}
+	if task.QueuedForStepID != "" {
+		return &EnsureSessionResponse{
+			Success:      true,
+			TaskID:       taskID,
+			Source:       "skipped_wip_queue",
+			NewlyCreated: false,
+		}, nil
+	}
+
 	if existing := s.findExistingSession(ctx, taskID); existing != nil {
 		if o.EnsureExecution {
 			s.tryEnsureExecution(ctx, existing.SessionID)
 		}
 		return existing, nil
-	}
-
-	task, err := s.repo.GetTask(ctx, taskID)
-	if err != nil {
-		return nil, fmt.Errorf("task not found: %w", err)
 	}
 
 	agentProfileID, step := s.resolveTaskAgentProfile(ctx, task)

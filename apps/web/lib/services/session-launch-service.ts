@@ -69,7 +69,8 @@ export type EnsureSessionResponse = {
     | "existing_newest"
     | "created_prepare"
     | "created_start"
-    | "skipped_terminal_pr";
+    | "skipped_terminal_pr"
+    | "skipped_wip_queue";
   newly_created: boolean;
   workspace_path?: string;
 };

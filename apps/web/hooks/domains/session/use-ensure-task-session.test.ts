@@ -122,6 +122,24 @@ describe("useEnsureTaskSession", () => {
     expect(mockEnsureTaskSession).not.toHaveBeenCalled();
   });
 
+  it("waits for a queued task to be promoted before ensuring a session", () => {
+    const queuedTask: { id: string; queuedForStepId?: string } = {
+      id: "task-1",
+      queuedForStepId: "step-1",
+    };
+    const { rerender } = renderHook(
+      ({ task }: { task: { id: string; queuedForStepId?: string } }) => useEnsureTaskSession(task),
+      { initialProps: { task: queuedTask } },
+    );
+
+    expect(mockEnsureTaskSession).not.toHaveBeenCalled();
+
+    rerender({ task: { id: "task-1" } });
+
+    expect(mockEnsureTaskSession).toHaveBeenCalledTimes(1);
+    expect(mockEnsureTaskSession).toHaveBeenCalledWith("task-1", undefined);
+  });
+
   it("is idempotent across re-renders for the same task", () => {
     const { rerender } = renderHook(() => useEnsureTaskSession(TASK));
     rerender();
