@@ -1,7 +1,7 @@
 ---
 id: "01-canvas-release-gate"
 title: "Canvas release gate"
-status: pending
+status: done
 wave: 1
 depends_on:
   - "00-baseline-transition"
@@ -80,4 +80,8 @@ package.
 
 ## Results
 
-Pending.
+Completed on 2026-08-27. Added the single `features.canvases` identity to the
+backend config and registry, all shipped profile defaults, the frontend
+defaults, and the startup environment audit. The flag is experimental,
+high-risk, mutable, and restart-required. Focused runtimeflags, config,
+profiles, backendapp, and frontend contract tests pass.

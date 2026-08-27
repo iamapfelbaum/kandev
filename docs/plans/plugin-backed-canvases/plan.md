@@ -1,6 +1,6 @@
 ---
 created: 2026-08-26
-status: draft
+status: in_progress
 requirements:
   - REQ-PLUGINS-ISOLATED-WEB-APPS-001
   - REQ-PLUGINS-ISOLATED-WEB-APPS-002
@@ -231,8 +231,8 @@ mapping clear.
 
 ## Work orders
 
-- [ ] [Task 00: Move to the plugin-backed baseline](task-00-baseline-transition.md)
-- [ ] [Task 01: Canvas release gate](task-01-canvas-release-gate.md)
+- [x] [Task 00: Move to the plugin-backed baseline](task-00-baseline-transition.md)
+- [x] [Task 01: Canvas release gate](task-01-canvas-release-gate.md)
 - [ ] [Task 02: Plugin web-app package foundation](task-02-plugin-web-app-package-foundation.md)
 - [ ] [Task 03: Isolated browser runtime](task-03-isolated-browser-runtime.md)
 - [ ] [Task 04: Browser application protocol](task-04-browser-data-state.md)
@@ -250,7 +250,16 @@ dependency order only. They do not authorize implementation subagents.
 
 ## Verification results
 
-Pending.
+- Task 00 passed on 2026-08-27. `feature/plugin-backed-canvases` is based on
+  `origin/main`, carries only the 26-file documentation package, and has no
+  non-docs diff. Specification lint and diff checks pass. PR #3061 is closed
+  as superseded by the plugin-backed web-application design.
+- Task 01 passed on 2026-08-27. The typed `features.canvases` release gate is
+  registered as a restart-required, experimental, high-risk flag, and its
+  backend, profile, frontend, and startup-catalog contracts are covered by
+  focused tests. The exact backend verification passes with the internal
+  configuration-file environment cleared, and the frontend contract test
+  passes.
 
 ## Risks
 

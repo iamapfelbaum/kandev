@@ -54,6 +54,13 @@ features:
     dev:  "false"
     e2e:  "false"
 
+  # Agent-authored plugin web applications. Off in every shipped profile until
+  # the isolated runtime and lifecycle are ready for opt-in use.
+  KANDEV_FEATURES_CANVASES:
+    prod: "false"
+    dev:  "false"
+    e2e:  "false"
+
   # Dynamic agent profiles and provider-error routing. Off in every shipped
   # profile until the complete guarded implementation is ready.
   KANDEV_FEATURES_DYNAMIC_AGENT_ROUTING:

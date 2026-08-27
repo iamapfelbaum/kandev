@@ -1,7 +1,7 @@
 ---
 id: "00-baseline-transition"
 title: "Move to the plugin-backed baseline"
-status: pending
+status: done
 wave: 0
 depends_on: []
 plan: "plan.md"
@@ -95,4 +95,9 @@ None.
 
 ## Results
 
-Pending.
+Completed on 2026-08-27. Created `feature/plugin-backed-canvases` from
+`origin/main` at `144106c72c`, transferred the 26-file design package in
+`5915850495fd5bd69f15f6361167adeedf2ee9b3`, and verified that the branch diff
+contains only `docs/**`. Specification lint and `git diff --check` pass. PR
+#3061 was commented and closed as superseded by
+`docs/decisions/2026-08-26-plugin-backed-web-app-canvases.md`.
