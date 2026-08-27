@@ -130,7 +130,7 @@ func gatewayAuthPolicy(
 }
 
 // runSubscriptionCheck resolves a run's owning workspace (via its agent
-// profile) and defers to the task service's workspace visibility rule.
+// profile) and defers to the task service's workspace reach rule.
 // Unlike WorkspaceOwner (which runs on every workspace broadcast), this
 // runs once per run.subscribe — a rare control message — so it is not
 // cached.

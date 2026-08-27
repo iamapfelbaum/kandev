@@ -12,19 +12,20 @@ type OrgRole string
 
 const (
 	// OrgRoleAdmin manages users, org settings, and shared configuration. It
-	// is NOT a visibility role: an admin reaches org-visible workspaces like
-	// anyone else and never reaches a private workspace they are not in.
+	// is NOT a reach role: an admin reaches a workspace the same way anyone
+	// else does, through the unit tree, and never reaches one sitting in
+	// someone's personal unit.
 	OrgRoleAdmin OrgRole = "admin"
 	// OrgRoleMember is a regular contributor.
 	OrgRoleMember OrgRole = "member"
 	// OrgRoleGuest holds no org scopes and reaches only workspaces they are an
-	// explicit member of, including none of the org-visible ones.
+	// explicit member of, never one reached through the unit tree.
 	OrgRoleGuest OrgRole = "guest"
 )
 
 // WorkspaceRole is the per-workspace role, held either by an explicit
-// workspace_members row or derived from the org role on an org-visible
-// workspace.
+// workspace_members row or inherited from membership of a unit above the one
+// the workspace sits in. Where both apply the stronger of the two wins.
 type WorkspaceRole string
 
 const (

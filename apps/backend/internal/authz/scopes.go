@@ -62,7 +62,7 @@ var registry = []Definition{
 	{ScopeUnitManage, KindOrg, "Create, rename, move, and delete organization units, and place workspaces in them"},
 
 	{ScopeWorkspaceRead, KindWorkspace, "See the workspace, its board, tasks, and transcripts"},
-	{ScopeWorkspaceManage, KindWorkspace, "Rename the workspace, change its defaults and visibility, delete it"},
+	{ScopeWorkspaceManage, KindWorkspace, "Rename the workspace, change its defaults, move it between units, delete it"},
 	{ScopeTaskWrite, KindWorkspace, "Create, edit, move, assign, archive, and delete tasks"},
 	{ScopeSessionPrompt, KindWorkspace, "Start or resume a session and message an agent"},
 	{ScopeSessionControl, KindWorkspace, "Stop or cancel a running agent"},

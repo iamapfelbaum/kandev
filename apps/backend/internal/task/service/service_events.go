@@ -810,18 +810,22 @@ func (s *Service) publishWorkspaceEvent(ctx context.Context, eventType string, w
 		"default_environment_id":          workspace.DefaultEnvironmentID,
 		"default_agent_profile_id":        workspace.DefaultAgentProfileID,
 		"default_config_agent_profile_id": workspace.DefaultConfigAgentProfileID,
-		"created_at":                      workspace.CreatedAt.Format(time.RFC3339),
-		"updated_at":                      workspace.UpdatedAt.Format(time.RFC3339),
+		// Placement is reach: moving a workspace between units is what grants
+		// and withdraws access now, so an access-changed event that omitted it
+		// would tell clients something changed without telling them what.
+		"unit_id":    workspace.UnitID,
+		"created_at": workspace.CreatedAt.Format(time.RFC3339),
+		"updated_at": workspace.UpdatedAt.Format(time.RFC3339),
 	}
 
 	s.publishEventToBus(ctx, eventType, "workspace", workspace.ID, data)
 }
 
 // publishWorkspaceAccessChanged tells open clients that who-can-reach-this
-// changed (visibility, membership, ownership) so they re-evaluate access
+// changed (unit placement, membership, ownership) so they re-evaluate access
 // without a reload. It rides the existing workspace-updated event: the payload
-// already carries owner and visibility, and a client that lost access is
-// dropped from the workspace's subscriber set on the next broadcast.
+// carries owner and unit_id, and a client that lost access is dropped from the
+// workspace's subscriber set on the next broadcast.
 func (s *Service) publishWorkspaceAccessChanged(ctx context.Context, workspace *models.Workspace) {
 	s.publishWorkspaceEvent(ctx, events.WorkspaceUpdated, workspace)
 }

@@ -15,7 +15,8 @@ import (
 // Reach and permission are two questions, answered in that order:
 //
 //   - Reach ("can this caller see the workspace at all") comes from the owner,
-//     an explicit workspace_members row, or the workspace's visibility. A
+//     an explicit workspace_members row, or membership of a unit above the
+//     one the workspace sits in. A
 //     caller who cannot reach a workspace gets the *NotFound sentinels — a
 //     foreign workspace is indistinguishable from a nonexistent one.
 //   - Permission ("may they do this particular thing") comes from

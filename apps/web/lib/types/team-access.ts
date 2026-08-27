@@ -1,6 +1,6 @@
 /**
- * Team access: workspace visibility, membership, and the caller's resolved
- * scopes.
+ * Team access: workspace unit placement, membership, and the caller's
+ * resolved scopes.
  *
  * Scope strings are compared with `===` against the values the backend
  * registry emits, so they must never be translated or reformatted.

@@ -1,7 +1,7 @@
 package sqlite
 
-// Team-access schema evolution: workspace visibility, workspace membership,
-// and the human task assignee.
+// Team-access schema evolution: workspace org and unit placement, workspace
+// membership, and the human task assignee.
 //
 // The governing rule for this migration is that an upgrade must never widen
 // access. Every pre-existing workspace lands on 'private', which reproduces

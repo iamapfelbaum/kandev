@@ -266,7 +266,6 @@ const infraSchemaDDL = `
 		description TEXT DEFAULT '',
 		owner_id TEXT DEFAULT '',
 		org_id TEXT NOT NULL DEFAULT '',
-		visibility TEXT NOT NULL DEFAULT 'private',
 		default_executor_id TEXT DEFAULT '',
 		default_environment_id TEXT DEFAULT '',
 		default_agent_profile_id TEXT DEFAULT '',
