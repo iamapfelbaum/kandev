@@ -96,6 +96,7 @@ type Service struct {
 	userState        *state.UserStore
 	instances        *instances.Store
 	webArtifacts     *webapp.ArtifactStore
+	webRuntime       *webapp.Runtime
 	userStateCleanup userStateCleanupStore
 	eventBus         bus.EventBus
 	log              *logger.Logger
@@ -411,6 +412,20 @@ func (s *Service) WebArtifacts() *webapp.ArtifactStore {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.webArtifacts
+}
+
+// SetWebRuntime attaches the capability-bound static web-app runtime. The
+// backend registers its route only when the canvas release gate is enabled.
+func (s *Service) SetWebRuntime(runtime *webapp.Runtime) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.webRuntime = runtime
+}
+
+func (s *Service) WebRuntime() *webapp.Runtime {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.webRuntime
 }
 
 // SetSecrets wires the secret vault Provide was constructed with.

@@ -1,7 +1,7 @@
 ---
 id: "03-isolated-browser-runtime"
 title: "Isolated browser runtime"
-status: pending
+status: done
 wave: 3
 depends_on:
   - "02-plugin-web-app-package-foundation"
@@ -106,4 +106,15 @@ cd apps && pnpm --filter @kandev/desktop typecheck
 
 ## Results
 
-Pending.
+- Added digest-only, user and release-bound runtime capabilities with expiry,
+  renewal, revocation, and stale-binding validation.
+- Added immutable artifact serving with safe MIME selection, no-store and
+  isolation headers, opaque-origin CORS handling, response CSP sandboxing,
+  and normalized HTTPS network policy.
+- Added the responsive `WebAppFrame` host with the required opaque iframe
+  sandbox and mobile safe-area behavior, plus the desktop loopback `frame-src`
+  policy and Tauri ancestor support.
+- Verification passed for the backend runtime packages, the new frontend
+  component, i18n catalogs, and desktop TypeScript. The broad plugin frontend
+  suite reached 258 passing tests but reported one existing Monaco command
+  registration race as an unhandled error.

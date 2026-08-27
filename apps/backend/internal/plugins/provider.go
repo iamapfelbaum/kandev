@@ -97,6 +97,7 @@ func Provide(cfg *config.Config, dbPool *db.Pool, secrets SecretVault, eventBus 
 	svc.SetState(stateStore)
 	svc.SetUserState(userStateStore)
 	svc.SetWebAppStorage(instanceStore, artifactStore)
+	svc.SetWebRuntime(webapp.NewRuntime(webapp.NewTokenManager(nil), artifactStore, nil, nil))
 	svc.SetSecrets(secrets)
 	svc.SetPluginsDir(dir)
 

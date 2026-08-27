@@ -234,7 +234,7 @@ mapping clear.
 - [x] [Task 00: Move to the plugin-backed baseline](task-00-baseline-transition.md)
 - [x] [Task 01: Canvas release gate](task-01-canvas-release-gate.md)
 - [x] [Task 02: Plugin web-app package foundation](task-02-plugin-web-app-package-foundation.md)
-- [ ] [Task 03: Isolated browser runtime](task-03-isolated-browser-runtime.md)
+- [x] [Task 03: Isolated browser runtime](task-03-isolated-browser-runtime.md)
 - [ ] [Task 04: Browser application protocol](task-04-browser-data-state.md)
 - [ ] [Task 05: Live event transport](task-05-live-event-transport.md)
 - [ ] [Task 06: Canvas lifecycle](task-06-canvas-lifecycle.md)
@@ -264,6 +264,12 @@ dependency order only. They do not authorize implementation subagents.
   immutable artifacts, scoped plugin-instance/release/grant storage, atomic
   count and byte admission, cleanup inventory, and startup artifact
   reconciliation are implemented. The work-order backend verification passes.
+- Task 03 passed on 2026-08-27. Capability-bound immutable runtime serving,
+  opaque response and iframe isolation, normalized CSP network policy, browser
+  and Tauri framing rules, and responsive host-frame lifecycle coverage are
+  implemented. Backend, focused frontend, i18n, and desktop type checks pass;
+  the broad plugin frontend suite reports one pre-existing Monaco command
+  registration race after all 258 tests pass.
 
 ## Risks
 

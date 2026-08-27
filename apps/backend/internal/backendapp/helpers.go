@@ -1322,6 +1322,9 @@ func registerSecondaryRoutes(
 			p.services.Plugins.SetAuthLoginBridge(pluginSSOBridge{auth: p.authSvc})
 		}
 		plugins.RegisterRoutes(p.router, p.services.Plugins, p.services.Plugins.Deliverer(), p.log)
+		if p.features.Canvases {
+			plugins.RegisterWebAppRuntimeRoutes(p.router, p.services.Plugins.WebRuntime())
+		}
 		p.log.Debug("Registered Plugins handlers (HTTP)")
 	}
 
