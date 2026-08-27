@@ -1,7 +1,7 @@
 ---
 id: "05-live-event-transport"
 title: "Live event transport"
-status: pending
+status: completed
 wave: 5
 depends_on:
   - "04-browser-data-state"
@@ -84,4 +84,9 @@ cd apps/backend && go test ./internal/plugins/webapp/... ./internal/events/... .
 
 ## Results
 
-Pending.
+Completed on 2026-08-28. Added the bounded per-instance SSE hub with process
+generations, monotonic cursors, replay and resync signals, heartbeat flushing,
+per-user and per-instance stream limits, slow-consumer handling, and context
+cancellation cleanup. The plugin service projects scoped Kandev bus events
+into the hub and rechecks capability authority while filtering delivery.
+Focused web-app and plugin tests pass.

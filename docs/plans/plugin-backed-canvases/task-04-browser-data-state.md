@@ -1,7 +1,7 @@
 ---
 id: "04-browser-data-state"
 title: "Browser application protocol"
-status: pending
+status: completed
 wave: 4
 depends_on:
   - "03-isolated-browser-runtime"
@@ -91,4 +91,8 @@ cd apps/backend && go test ./internal/plugins/... ./pkg/pluginsdk/...
 
 ## Results
 
-Pending.
+Completed on 2026-08-28. Added the relative versioned browser protocol for
+context, task and workflow data, workflow steps, task messages, actions, and
+revisioned instance state. Requests use authenticated capability bindings,
+bounded bodies and responses, cancellation deadlines, stable errors, and
+optimistic `If-Match` revisions. Focused and package-wide plugin tests pass.

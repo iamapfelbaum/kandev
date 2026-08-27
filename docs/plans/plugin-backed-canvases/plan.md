@@ -235,8 +235,8 @@ mapping clear.
 - [x] [Task 01: Canvas release gate](task-01-canvas-release-gate.md)
 - [x] [Task 02: Plugin web-app package foundation](task-02-plugin-web-app-package-foundation.md)
 - [x] [Task 03: Isolated browser runtime](task-03-isolated-browser-runtime.md)
-- [ ] [Task 04: Browser application protocol](task-04-browser-data-state.md)
-- [ ] [Task 05: Live event transport](task-05-live-event-transport.md)
+- [x] [Task 04: Browser application protocol](task-04-browser-data-state.md)
+- [x] [Task 05: Live event transport](task-05-live-event-transport.md)
 - [ ] [Task 06: Canvas lifecycle](task-06-canvas-lifecycle.md)
 - [ ] [Task 07: Task canvas host surfaces](task-07-canvas-host-task-surfaces.md)
 - [ ] [Task 08: Agent canvas authoring](task-08-agent-canvas-authoring.md)
@@ -270,6 +270,14 @@ dependency order only. They do not authorize implementation subagents.
   implemented. Backend, focused frontend, i18n, and desktop type checks pass;
   the broad plugin frontend suite reports one pre-existing Monaco command
   registration race after all 258 tests pass.
+- Task 04 passed on 2026-08-28. Relative browser data, task-message,
+  workflow-step, action, and revisioned state routes are authorized by the
+  capability binding and reuse the existing Host services. The exact backend
+  verification passes with 871 tests in 12 packages.
+- Task 05 passed on 2026-08-28. Bounded SSE replay, heartbeat, generation,
+  resync, stream admission, cancellation, and event-bus projection are
+  implemented. The web-app event package has 23 focused tests, and the exact
+  plugin verification passes.
 
 ## Risks
 
