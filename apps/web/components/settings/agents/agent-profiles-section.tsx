@@ -19,6 +19,7 @@ import { useToast } from "@/components/toast-provider";
 import { AgentProfileDeleteConfirmation } from "@/components/settings/agent-profile-delete-dialog";
 import { deleteAgentProfileAction } from "@/app/actions/agents";
 import { useProfileDuplicate } from "@/hooks/domains/settings/use-profile-duplicate";
+import { useIsAdmin } from "@/hooks/domains/auth/use-is-admin";
 import { useResponsiveBreakpoint } from "@/hooks/use-responsive-breakpoint";
 import { useRouter } from "@/lib/routing/client-router";
 import { toAgentProfileOption } from "@/lib/state/slices/settings/types";
@@ -205,7 +206,47 @@ function ProfileRowDeleteConfirmation({
 }
 
 /** One saved profile as a fully clickable row — shared by the Agents index and the agent page. */
+/**
+ * The row's write controls, in the variant the pointer calls for.
+ *
+ * Duplicating and deleting a profile are both org.config.manage writes, so a
+ * caller without that scope gets none of them. The row itself stays: seeing
+ * which profiles exist is a read, and the task dialog offers the same list.
+ */
+function ProfileRowActionsSlot({
+  profile,
+  canManage,
+  hidden,
+  isFullDesktop,
+  deleteAnchorRef,
+  onDuplicate,
+  onConfirmDelete,
+}: {
+  profile: AgentProfile;
+  canManage: boolean;
+  hidden: boolean;
+  isFullDesktop: boolean;
+  deleteAnchorRef: RefObject<HTMLButtonElement | null>;
+  onDuplicate: () => void;
+  onConfirmDelete: () => void;
+}) {
+  const Actions = isFullDesktop ? ProfileRowInlineActions : ProfileRowActions;
+  return (
+    <div className="relative z-10 flex shrink-0 items-center gap-1">
+      {canManage && !hidden && (
+        <Actions
+          profile={profile}
+          deleteAnchorRef={deleteAnchorRef}
+          onDuplicate={onDuplicate}
+          onConfirmDelete={onConfirmDelete}
+        />
+      )}
+    </div>
+  );
+}
+
 export function ProfileRow({ agent, profile }: { agent: Agent; profile: AgentProfile }) {
+  const canManage = useIsAdmin();
   const { t } = useTranslation();
   const { toast } = useToast();
   const router = useRouter();
@@ -291,24 +332,15 @@ export function ProfileRow({ agent, profile }: { agent: Agent; profile: AgentPro
             </div>
           )}
         </div>
-        <div className="relative z-10 flex shrink-0 items-center gap-1">
-          {!(confirmOpen && !isFinePointer) &&
-            (isFullDesktop ? (
-              <ProfileRowInlineActions
-                profile={profile}
-                deleteAnchorRef={deleteAnchorRef}
-                onDuplicate={() => void handleDuplicate(agent, profile)}
-                onConfirmDelete={() => setConfirmOpen(true)}
-              />
-            ) : (
-              <ProfileRowActions
-                profile={profile}
-                deleteAnchorRef={deleteAnchorRef}
-                onDuplicate={() => void handleDuplicate(agent, profile)}
-                onConfirmDelete={() => setConfirmOpen(true)}
-              />
-            ))}
-        </div>
+        <ProfileRowActionsSlot
+          profile={profile}
+          canManage={canManage}
+          hidden={confirmOpen && !isFinePointer}
+          isFullDesktop={isFullDesktop}
+          deleteAnchorRef={deleteAnchorRef}
+          onDuplicate={() => void handleDuplicate(agent, profile)}
+          onConfirmDelete={() => setConfirmOpen(true)}
+        />
         <ProfileRowDeleteConfirmation {...confirmationProps} placement="inline" />
       </CardContent>
       <ProfileRowDeleteConfirmation {...confirmationProps} placement="popover" />
