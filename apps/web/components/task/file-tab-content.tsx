@@ -9,6 +9,8 @@ import { getFileCategory, isMarkdownFile } from "@/lib/utils/file-types";
 import { getSessionWorkspacePath } from "@/lib/session-workspace-path";
 import { FileViewerExternalLink } from "./file-viewer-header";
 import { getFileTabKey } from "./task-center-panel-file-tabs";
+import { defaultMarkdownFileMode, type MarkdownFileMode } from "./markdown-file-mode";
+import { MarkdownFileEditor } from "./markdown-file-editor";
 
 function resolveTabCategory(tab: OpenFileTab): "image" | "binary" | "text" {
   if (!tab.isBinary) return "text";
@@ -24,7 +26,7 @@ export function FileTabContent({
   onFileChange,
   onFileSave,
   onFileDelete,
-  onToggleMarkdownPreview,
+  onMarkdownModeChange,
 }: {
   tab: OpenFileTab;
   activeSession: {
@@ -38,7 +40,7 @@ export function FileTabContent({
   onFileChange: (path: string, content: string, repo?: string) => void;
   onFileSave: (path: string, repo?: string) => void;
   onFileDelete: (path: string, repo?: string) => void;
-  onToggleMarkdownPreview?: () => void;
+  onMarkdownModeChange?: (mode: MarkdownFileMode) => void;
 }) {
   const category = resolveTabCategory(tab);
   const workspacePath = getSessionWorkspacePath(activeSession);
@@ -69,26 +71,44 @@ export function FileTabContent({
           headerActions={externalLink}
         />
       )}
-      {category === "text" && (
-        <FileEditorContent
-          path={tab.path}
-          content={tab.content}
-          originalContent={tab.originalContent}
-          isDirty={tab.isDirty}
-          isSaving={isSaving}
-          sessionId={activeSessionId || undefined}
-          taskId={taskId}
-          repositoryId={activeSession?.repository_id ?? undefined}
-          worktreePath={workspacePath}
-          repo={tab.repo}
-          enableComments={!!activeSessionId}
-          markdownPreview={isMarkdownFile(tab.path) ? tab.markdownPreview : false}
-          onToggleMarkdownPreview={onToggleMarkdownPreview}
-          onChange={(newContent) => onFileChange(tab.path, newContent, tab.repo)}
-          onSave={() => onFileSave(tab.path, tab.repo)}
-          onDelete={() => onFileDelete(tab.path, tab.repo)}
-        />
-      )}
+      {category === "text" &&
+        (isMarkdownFile(tab.path) ? (
+          <MarkdownFileEditor
+            path={tab.path}
+            content={tab.content}
+            originalContent={tab.originalContent}
+            isDirty={tab.isDirty}
+            isSaving={isSaving}
+            sessionId={activeSessionId}
+            taskId={taskId}
+            repositoryId={activeSession?.repository_id}
+            worktreePath={workspacePath}
+            repo={tab.repo}
+            enableComments={!!activeSessionId}
+            mode={tab.markdownMode ?? defaultMarkdownFileMode(tab.path) ?? "source"}
+            onModeChange={onMarkdownModeChange ?? (() => undefined)}
+            onChange={(newContent) => onFileChange(tab.path, newContent, tab.repo)}
+            onSave={() => onFileSave(tab.path, tab.repo)}
+            onDelete={() => onFileDelete(tab.path, tab.repo)}
+          />
+        ) : (
+          <FileEditorContent
+            path={tab.path}
+            content={tab.content}
+            originalContent={tab.originalContent}
+            isDirty={tab.isDirty}
+            isSaving={isSaving}
+            sessionId={activeSessionId || undefined}
+            taskId={taskId}
+            repositoryId={activeSession?.repository_id ?? undefined}
+            worktreePath={workspacePath}
+            repo={tab.repo}
+            enableComments={!!activeSessionId}
+            onChange={(newContent) => onFileChange(tab.path, newContent, tab.repo)}
+            onSave={() => onFileSave(tab.path, tab.repo)}
+            onDelete={() => onFileDelete(tab.path, tab.repo)}
+          />
+        ))}
     </TabsContent>
   );
 }

@@ -1,5 +1,15 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const getWebSocketClientMock = vi.hoisted(() => vi.fn(() => ({})));
+const updateFileContentMock = vi.hoisted(() => vi.fn());
+const MOBILE_EDIT_CONTENT = "# mobile edit";
+const MOBILE_MARKDOWN_PATH = "README.md";
+const MOBILE_MARKDOWN_CONTENT = "# README";
+const TRUE_VALUE = true;
+const SELECTED_ATTRIBUTE = String(TRUE_VALUE);
+const EDITABLE_ATTRIBUTE = "data-editable";
+const FILE_CONTENT_TEST_ID = "file-content";
 
 const state = {
   taskSessions: {
@@ -20,6 +30,18 @@ vi.mock("@/components/state-provider", () => ({
   useAppStore: (selector: (value: typeof state) => unknown) => selector(state),
 }));
 
+vi.mock("@/components/toast-provider", () => ({
+  useToast: () => ({ toast: vi.fn() }),
+}));
+
+vi.mock("@/lib/ws/connection", () => ({
+  getWebSocketClient: getWebSocketClientMock,
+}));
+
+vi.mock("@/lib/ws/workspace-files", () => ({
+  updateFileContent: (...args: unknown[]) => updateFileContentMock(...args),
+}));
+
 vi.mock("@/components/editors/external-vcs-file-link", () => ({
   ExternalVcsFileLink: (props: Record<string, unknown>) => (
     <span data-testid="external-vcs-file-link-props" data-props={JSON.stringify(props)} />
@@ -28,7 +50,37 @@ vi.mock("@/components/editors/external-vcs-file-link", () => ({
 }));
 
 vi.mock("../file-viewer-content", () => ({
-  FileViewerContent: () => <span data-testid="file-content" />,
+  FileViewerContent: ({
+    editable,
+    onChange,
+  }: {
+    editable?: boolean;
+    onChange?: (content: string) => void;
+  }) => (
+    <div data-testid="file-content" data-editable={String(editable)}>
+      <button type="button" onClick={() => onChange?.(MOBILE_EDIT_CONTENT)}>
+        Change mobile source
+      </button>
+    </div>
+  ),
+}));
+vi.mock("@/components/editors/markdown/hybrid-markdown-editor", () => ({
+  HybridMarkdownEditor: ({
+    onChange,
+    onSourceFallback,
+  }: {
+    onChange: (content: string) => void;
+    onSourceFallback?: () => void;
+  }) => (
+    <div data-testid="mobile-hybrid-editor">
+      <button type="button" onClick={() => onChange("# hybrid mobile edit")}>
+        Change mobile hybrid
+      </button>
+      <button type="button" onClick={() => onSourceFallback?.()}>
+        Fallback to source
+      </button>
+    </div>
+  ),
 }));
 vi.mock("../markdown-preview-content", () => ({
   MarkdownPreviewContent: () => <span data-testid="markdown-preview" />,
@@ -55,7 +107,7 @@ describe("MobileFileViewerPanel workspace path", () => {
           originalContent: "",
           originalHash: "hash",
           isDirty: false,
-          isBinary: true,
+          isBinary: TRUE_VALUE,
         }}
         sessionId="session-1"
         onClose={vi.fn()}
@@ -64,6 +116,156 @@ describe("MobileFileViewerPanel workspace path", () => {
 
     expect(screen.getByTestId("binary-viewer").getAttribute("data-worktree-path")).toBe(
       "/tmp/task-root",
+    );
+  });
+});
+
+// eslint-disable-next-line max-lines-per-function -- this fixture covers the complete mobile editor workflow.
+describe("MobileFileViewerPanel Markdown editing", () => {
+  it("opens a Markdown file in Source mode with an editable mobile surface", () => {
+    render(
+      <MobileFileViewerPanel
+        file={{
+          path: MOBILE_MARKDOWN_PATH,
+          name: MOBILE_MARKDOWN_PATH,
+          content: MOBILE_MARKDOWN_CONTENT,
+          originalContent: MOBILE_MARKDOWN_CONTENT,
+          originalHash: "hash",
+          isDirty: false,
+          markdownMode: "source",
+        }}
+        sessionId="session-1"
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId(FILE_CONTENT_TEST_ID).getAttribute(EDITABLE_ATTRIBUTE)).toBe(
+      SELECTED_ATTRIBUTE,
+    );
+    expect(screen.getByTestId("mobile-markdown-mode-source")).toBeTruthy();
+  });
+
+  it("switches between mobile Source and Edit while keeping changes in the file buffer", () => {
+    const onFileChange = vi.fn();
+    render(
+      <MobileFileViewerPanel
+        file={{
+          path: MOBILE_MARKDOWN_PATH,
+          name: MOBILE_MARKDOWN_PATH,
+          content: MOBILE_MARKDOWN_CONTENT,
+          originalContent: MOBILE_MARKDOWN_CONTENT,
+          originalHash: "hash",
+          isDirty: false,
+          markdownMode: "source",
+        }}
+        sessionId="session-1"
+        onClose={vi.fn()}
+        onFileChange={onFileChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("mobile-markdown-mode-edit"));
+    expect(screen.getByTestId("mobile-hybrid-editor")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Change mobile hybrid" }));
+    expect(onFileChange).toHaveBeenCalledWith("# hybrid mobile edit");
+    expect((screen.getByTestId("mobile-file-save") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("saves the canonical mobile buffer and clears the dirty state", async () => {
+    updateFileContentMock.mockResolvedValue({
+      path: MOBILE_MARKDOWN_PATH,
+      success: TRUE_VALUE,
+      new_hash: "saved-hash",
+    });
+    const onFileSaved = vi.fn();
+    render(
+      <MobileFileViewerPanel
+        file={{
+          path: MOBILE_MARKDOWN_PATH,
+          name: MOBILE_MARKDOWN_PATH,
+          content: MOBILE_MARKDOWN_CONTENT,
+          originalContent: MOBILE_MARKDOWN_CONTENT,
+          originalHash: "hash",
+          isDirty: false,
+          markdownMode: "source",
+        }}
+        sessionId="session-1"
+        onClose={vi.fn()}
+        onFileSaved={onFileSaved}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Change mobile source" }));
+    fireEvent.click(screen.getByTestId("mobile-file-save"));
+
+    await waitFor(() =>
+      expect(updateFileContentMock).toHaveBeenCalledWith(
+        {},
+        "session-1",
+        expect.objectContaining({
+          path: MOBILE_MARKDOWN_PATH,
+          originalHash: "hash",
+          desiredContent: MOBILE_EDIT_CONTENT,
+        }),
+      ),
+    );
+    await waitFor(() =>
+      expect((screen.getByTestId("mobile-file-save") as HTMLButtonElement).disabled).toBe(
+        TRUE_VALUE,
+      ),
+    );
+    expect(onFileSaved).toHaveBeenCalledWith({
+      content: MOBILE_EDIT_CONTENT,
+      originalContent: MOBILE_EDIT_CONTENT,
+      originalHash: "saved-hash",
+    });
+  });
+
+  it("keeps Preview available for MDX but does not expose Edit", () => {
+    render(
+      <MobileFileViewerPanel
+        file={{
+          path: "README.mdx",
+          name: "README.mdx",
+          content: MOBILE_MARKDOWN_CONTENT,
+          originalContent: MOBILE_MARKDOWN_CONTENT,
+          originalHash: "hash",
+          isDirty: false,
+          markdownMode: "preview",
+        }}
+        sessionId="session-1"
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("mobile-markdown-mode-preview")).toBeTruthy();
+    expect(screen.getByTestId("mobile-markdown-mode-source")).toBeTruthy();
+    expect(screen.queryByTestId("mobile-markdown-mode-edit")).toBeNull();
+  });
+
+  it("falls back to editable Source mode when the hybrid editor reports an error", () => {
+    render(
+      <MobileFileViewerPanel
+        file={{
+          path: MOBILE_MARKDOWN_PATH,
+          name: MOBILE_MARKDOWN_PATH,
+          content: MOBILE_MARKDOWN_CONTENT,
+          originalContent: MOBILE_MARKDOWN_CONTENT,
+          originalHash: "hash",
+          isDirty: false,
+          markdownMode: "edit",
+        }}
+        sessionId="session-1"
+        onClose={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Fallback to source" }));
+    expect(screen.getByTestId(FILE_CONTENT_TEST_ID).getAttribute(EDITABLE_ATTRIBUTE)).toBe(
+      SELECTED_ATTRIBUTE,
+    );
+    expect(screen.getByTestId("mobile-markdown-mode-source").getAttribute("aria-pressed")).toBe(
+      SELECTED_ATTRIBUTE,
     );
   });
 });
@@ -103,10 +305,10 @@ describe("MobileFileViewerPanel external file action", () => {
     render(
       <MobileFileViewerPanel
         file={{
-          path: "README.md",
-          name: "README.md",
-          content: "# README",
-          originalContent: "# README",
+          path: MOBILE_MARKDOWN_PATH,
+          name: MOBILE_MARKDOWN_PATH,
+          content: MOBILE_MARKDOWN_CONTENT,
+          originalContent: MOBILE_MARKDOWN_CONTENT,
           originalHash: "hash",
           isDirty: false,
         }}
@@ -117,18 +319,18 @@ describe("MobileFileViewerPanel external file action", () => {
     );
 
     expect(screen.getByTestId("markdown-preview")).toBeTruthy();
-    expect(screen.queryByTestId("file-content")).toBeNull();
+    expect(screen.queryByTestId(FILE_CONTENT_TEST_ID)).toBeNull();
   });
 
   it("resets preview mode when the same path is opened from another repository", () => {
     const { rerender } = render(
       <MobileFileViewerPanel
         file={{
-          path: "README.md",
-          name: "README.md",
+          path: MOBILE_MARKDOWN_PATH,
+          name: MOBILE_MARKDOWN_PATH,
           repo: "frontend",
-          content: "# README",
-          originalContent: "# README",
+          content: MOBILE_MARKDOWN_CONTENT,
+          originalContent: MOBILE_MARKDOWN_CONTENT,
           originalHash: "hash",
           isDirty: false,
         }}
@@ -143,11 +345,11 @@ describe("MobileFileViewerPanel external file action", () => {
     rerender(
       <MobileFileViewerPanel
         file={{
-          path: "README.md",
-          name: "README.md",
+          path: MOBILE_MARKDOWN_PATH,
+          name: MOBILE_MARKDOWN_PATH,
           repo: "backend",
-          content: "# README",
-          originalContent: "# README",
+          content: MOBILE_MARKDOWN_CONTENT,
+          originalContent: MOBILE_MARKDOWN_CONTENT,
           originalHash: "hash",
           isDirty: false,
         }}
@@ -156,7 +358,7 @@ describe("MobileFileViewerPanel external file action", () => {
       />,
     );
 
-    expect(screen.getByTestId("file-content")).toBeTruthy();
+    expect(screen.getByTestId(FILE_CONTENT_TEST_ID)).toBeTruthy();
     expect(screen.queryByTestId("markdown-preview")).toBeNull();
   });
 });

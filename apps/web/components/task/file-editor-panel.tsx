@@ -19,6 +19,8 @@ import { buildRepoScopedItemId } from "@/lib/state/dockview-panel-actions";
 import { FileViewerExternalLink } from "./file-viewer-header";
 import { getSessionWorkspacePath } from "@/lib/session-workspace-path";
 import { useTranslation } from "react-i18next";
+import { MarkdownFileEditor } from "./markdown-file-editor";
+import { defaultMarkdownFileMode } from "./markdown-file-mode";
 
 type FileCategory = "image" | "binary" | "text";
 
@@ -148,6 +150,7 @@ function useFileLoader({
           originalHash: hash,
           isDirty: false,
           isBinary: response.is_binary,
+          markdownMode: defaultMarkdownFileMode(path),
         };
         setFileState(fileKey, state);
       })
@@ -249,9 +252,7 @@ function useFileEditorBuffer(fileKey: string) {
   );
   const isBinary = useDockviewStore((s) => s.openFiles.get(fileKey)?.isBinary ?? false);
   const originalContent = useDockviewStore((s) => s.openFiles.get(fileKey)?.originalContent ?? "");
-  const markdownPreview = useDockviewStore(
-    (s) => s.openFiles.get(fileKey)?.markdownPreview ?? false,
-  );
+  const markdownMode = useDockviewStore((s) => s.openFiles.get(fileKey)?.markdownMode);
   return {
     hasFile,
     content,
@@ -259,7 +260,7 @@ function useFileEditorBuffer(fileKey: string) {
     hasRemoteUpdate,
     isBinary,
     originalContent,
-    markdownPreview,
+    markdownMode,
   };
 }
 
@@ -278,6 +279,100 @@ function LoadingFilePanel() {
   );
 }
 
+type TextFilePanelProps = {
+  path: string;
+  content: string;
+  originalContent: string;
+  isDirty: boolean;
+  hasRemoteUpdate: boolean;
+  vcsDiff?: string;
+  isSaving: boolean;
+  sessionId: string | null;
+  taskId: string | null;
+  repositoryId?: string;
+  worktreePath?: string;
+  repo?: string;
+  mode: "preview" | "edit" | "source";
+  onMarkdownModeChange: (mode: "preview" | "edit" | "source") => void;
+  onChange: (content: string) => void;
+  onSave: () => void;
+  onReloadFromAgent: () => void;
+  onDelete: () => void;
+};
+
+function TextFilePanel({
+  path,
+  content,
+  originalContent,
+  isDirty,
+  hasRemoteUpdate,
+  vcsDiff,
+  isSaving,
+  sessionId,
+  taskId,
+  repositoryId,
+  worktreePath,
+  repo,
+  mode,
+  onMarkdownModeChange,
+  onChange,
+  onSave,
+  onReloadFromAgent,
+  onDelete,
+}: TextFilePanelProps) {
+  const isMarkdown = isMarkdownFile(path);
+  return (
+    <PanelRoot>
+      <PanelBody padding={false} scroll={false}>
+        {isMarkdown ? (
+          <MarkdownFileEditor
+            path={path}
+            content={content}
+            originalContent={originalContent}
+            isDirty={isDirty}
+            hasRemoteUpdate={hasRemoteUpdate}
+            vcsDiff={vcsDiff}
+            isSaving={isSaving}
+            sessionId={sessionId}
+            taskId={taskId}
+            repositoryId={repositoryId}
+            worktreePath={worktreePath}
+            repo={repo}
+            enableComments={!!sessionId}
+            mode={mode}
+            onModeChange={onMarkdownModeChange}
+            onChange={onChange}
+            onSave={onSave}
+            onReloadFromAgent={onReloadFromAgent}
+            onDelete={onDelete}
+            onSourceFallback={() => onMarkdownModeChange("source")}
+          />
+        ) : (
+          <FileEditorContent
+            path={path}
+            content={content}
+            originalContent={originalContent}
+            isDirty={isDirty}
+            hasRemoteUpdate={hasRemoteUpdate}
+            vcsDiff={vcsDiff}
+            isSaving={isSaving}
+            sessionId={sessionId || undefined}
+            taskId={taskId}
+            repositoryId={repositoryId}
+            worktreePath={worktreePath}
+            repo={repo}
+            enableComments={!!sessionId}
+            onChange={onChange}
+            onSave={onSave}
+            onReloadFromAgent={onReloadFromAgent}
+            onDelete={onDelete}
+          />
+        )}
+      </PanelBody>
+    </PanelRoot>
+  );
+}
+
 export const FileEditorPanel = memo(function FileEditorPanel({
   panelId,
   params,
@@ -286,7 +381,7 @@ export const FileEditorPanel = memo(function FileEditorPanel({
   const repo = params.repo as string | undefined;
   const fileKey = buildRepoScopedItemId(path, repo);
 
-  const { hasFile, content, isDirty, hasRemoteUpdate, isBinary, originalContent, markdownPreview } =
+  const { hasFile, content, isDirty, hasRemoteUpdate, isBinary, originalContent, markdownMode } =
     useFileEditorBuffer(fileKey);
   const setFileState = useDockviewStore((s) => s.setFileState);
   const updateFileState = useDockviewStore((s) => s.updateFileState);
@@ -321,9 +416,10 @@ export const FileEditorPanel = memo(function FileEditorPanel({
     [applyRemoteUpdate, path, repo],
   );
   const onDelete = useCallback(() => deleteFile(path, repo), [deleteFile, path, repo]);
-  const onToggleMarkdownPreview = useCallback(
-    () => updateFileState(fileKey, { markdownPreview: !markdownPreview }),
-    [updateFileState, fileKey, markdownPreview],
+  const onMarkdownModeChange = useCallback(
+    (nextMode: "preview" | "edit" | "source") =>
+      updateFileState(fileKey, { markdownMode: nextMode }),
+    [updateFileState, fileKey],
   );
 
   if (!hasFile) {
@@ -348,33 +444,26 @@ export const FileEditorPanel = memo(function FileEditorPanel({
     );
   }
 
-  const isMarkdown = isMarkdownFile(path);
-
   return (
-    <PanelRoot>
-      <PanelBody padding={false} scroll={false}>
-        <FileEditorContent
-          path={path}
-          content={content}
-          originalContent={originalContent}
-          isDirty={isDirty}
-          hasRemoteUpdate={hasRemoteUpdate}
-          vcsDiff={vcsDiff}
-          isSaving={savingFiles.has(fileKey)}
-          sessionId={activeSessionId || undefined}
-          taskId={activeTaskId}
-          repositoryId={repositoryId}
-          worktreePath={worktreePath}
-          repo={repo}
-          enableComments={!!activeSessionId}
-          markdownPreview={isMarkdown ? markdownPreview : false}
-          onToggleMarkdownPreview={isMarkdown ? onToggleMarkdownPreview : undefined}
-          onChange={onChange}
-          onSave={onSave}
-          onReloadFromAgent={onReloadFromAgent}
-          onDelete={onDelete}
-        />
-      </PanelBody>
-    </PanelRoot>
+    <TextFilePanel
+      path={path}
+      content={content}
+      originalContent={originalContent}
+      isDirty={isDirty}
+      hasRemoteUpdate={hasRemoteUpdate}
+      vcsDiff={vcsDiff}
+      isSaving={savingFiles.has(fileKey)}
+      sessionId={activeSessionId}
+      taskId={activeTaskId}
+      repositoryId={repositoryId}
+      worktreePath={worktreePath}
+      repo={repo}
+      mode={markdownMode ?? defaultMarkdownFileMode(path) ?? "source"}
+      onMarkdownModeChange={onMarkdownModeChange}
+      onChange={onChange}
+      onSave={onSave}
+      onReloadFromAgent={onReloadFromAgent}
+      onDelete={onDelete}
+    />
   );
 });

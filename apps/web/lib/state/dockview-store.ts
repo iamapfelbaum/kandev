@@ -53,6 +53,7 @@ import { buildExtraPanelActions } from "./dockview-extra-panel-actions";
 import { preserveChatScrollDuringLayout } from "./dockview-scroll-preserve";
 import { measureDockviewContainer } from "./dockview-measure";
 import { panelPortalManager } from "@/lib/layout/panel-portal-manager";
+import type { MarkdownFileMode } from "@/lib/types/workspace-files";
 import { createDebugLogger, isDebug } from "@/lib/debug/log";
 import {
   snapshotColumnWidths,
@@ -97,7 +98,7 @@ export type FileEditorState = {
   hasRemoteUpdate?: boolean;
   remoteContent?: string;
   remoteOriginalHash?: string;
-  markdownPreview?: boolean;
+  markdownMode?: MarkdownFileMode;
 };
 
 /** Direction relative to a reference panel or group. */
