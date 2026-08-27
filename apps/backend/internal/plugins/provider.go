@@ -97,6 +97,7 @@ func Provide(cfg *config.Config, dbPool *db.Pool, secrets SecretVault, eventBus 
 	}
 
 	svc := NewService(pluginStore, registry, eventBus, log)
+	svc.subscribeWebAppEvents()
 	svc.warnLoadedWebhookAccessIssues()
 	svc.SetState(stateStore)
 	svc.SetUserState(userStateStore)
@@ -125,6 +126,7 @@ func Provide(cfg *config.Config, dbPool *db.Pool, secrets SecretVault, eventBus 
 	svc.SetRuntime(rt)
 
 	cleanup := func() error {
+		svc.closeWebAppEvents()
 		rt.StopAll()
 		return nil
 	}

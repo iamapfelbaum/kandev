@@ -56,11 +56,30 @@ func (s *Service) handleWebAppProtocol(w http.ResponseWriter, r *http.Request, _
 		s.handleWebAppData(ctx, w, r, s.webAppHost(binding), binding, parts)
 	case "state":
 		s.handleWebAppState(ctx, w, r, binding, parts)
+	case "events":
+		s.handleWebAppEvents(w, r, binding, parts)
 	case "actions":
 		s.handleWebAppAction(w, r, binding, parts)
 	default:
 		writeWebAppError(w, http.StatusNotFound, "not_found")
 	}
+}
+
+func (s *Service) handleWebAppEvents(w http.ResponseWriter, r *http.Request, binding webapp.CapabilityBinding, parts []string) {
+	if r.Method != http.MethodGet || len(parts) != 2 {
+		writeWebAppError(w, http.StatusMethodNotAllowed, "method_not_allowed")
+		return
+	}
+	hub := s.WebAppEventHub()
+	if hub == nil {
+		writeWebAppError(w, http.StatusServiceUnavailable, webAppRuntimeUnavailable)
+		return
+	}
+	hub.Serve(w, r, webapp.EventSubscriptionRequest{
+		InstanceID: binding.InstanceID,
+		UserID:     binding.UserID,
+		Filter:     s.webAppEventFilter(binding),
+	})
 }
 
 func splitWebAppProtocolPath(path string) ([]string, bool) {

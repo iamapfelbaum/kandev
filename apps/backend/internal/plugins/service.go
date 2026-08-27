@@ -89,18 +89,20 @@ type Service struct {
 	// directory belongs to an install still waiting for it.
 	extractingPaths map[string]int
 
-	pluginsDir       string
-	store            store.Store
-	registry         *Registry
-	state            *state.Store
-	userState        *state.UserStore
-	instances        *instances.Store
-	instanceState    *state.InstanceStore
-	webArtifacts     *webapp.ArtifactStore
-	webRuntime       *webapp.Runtime
-	userStateCleanup userStateCleanupStore
-	eventBus         bus.EventBus
-	log              *logger.Logger
+	pluginsDir        string
+	store             store.Store
+	registry          *Registry
+	state             *state.Store
+	userState         *state.UserStore
+	instances         *instances.Store
+	instanceState     *state.InstanceStore
+	webArtifacts      *webapp.ArtifactStore
+	webRuntime        *webapp.Runtime
+	eventHub          *webapp.EventHub
+	eventSubscription bus.Subscription
+	userStateCleanup  userStateCleanupStore
+	eventBus          bus.EventBus
+	log               *logger.Logger
 
 	deliverer                Deliverer
 	agentToolCatalogListener AgentToolCatalogListener
@@ -201,6 +203,7 @@ func NewService(pluginStore store.Store, registry *Registry, eventBus bus.EventB
 		lifecycleLocks:      newKeyedMutex(),
 		dispatchLocks:       newKeyedRWMutex(),
 		agentToolGeneration: uuid.NewString(),
+		eventHub:            webapp.NewEventHub(),
 	}
 }
 
@@ -445,6 +448,27 @@ func (s *Service) WebRuntime() *webapp.Runtime {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.webRuntime
+}
+
+// SetWebAppEventHub replaces the in-process public event transport. It is
+// primarily useful for deterministic tests; production creates the hub in
+// NewService and forwards the shared Kandev event bus into it.
+func (s *Service) SetWebAppEventHub(hub *webapp.EventHub) {
+	s.mu.Lock()
+	previous := s.eventHub
+	s.eventHub = hub
+	s.mu.Unlock()
+	if previous != nil && previous != hub {
+		previous.Close()
+	}
+}
+
+// WebAppEventHub returns the bounded SSE transport for capability-bound web
+// applications.
+func (s *Service) WebAppEventHub() *webapp.EventHub {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.eventHub
 }
 
 // SetSecrets wires the secret vault Provide was constructed with.
