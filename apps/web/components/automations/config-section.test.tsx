@@ -92,6 +92,8 @@ vi.mock("@/hooks/domains/workspace/use-repositories", () => ({
 
 vi.mock("@/app/actions/workspaces", () => ({
   discoverRepositoriesAction: vi.fn().mockResolvedValue({ repositories: [] }),
+  getRepositoryDiscoveryAction: vi.fn().mockResolvedValue({ repositories: [] }),
+  refreshRepositoryDiscoveryAction: vi.fn().mockResolvedValue({ repositories: [] }),
 }));
 
 vi.mock("@/components/task-create-dialog-options", () => ({

@@ -13,7 +13,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@kandev/ui/dialog";
-import type { LocalRepository } from "@/lib/types/http";
+import type { DesktopDiscoveryRoot, LocalRepository } from "@/lib/types/http";
+import { RepositoryDiscoveryRootControls } from "./repository-discovery-root-controls";
 
 export type ManualValidation = {
   status: "idle" | "loading" | "success" | "error";
@@ -38,6 +39,13 @@ type DiscoverRepoDialogProps = {
   isValidating: boolean;
   canSave: boolean;
   onConfirm: () => void;
+  desktopRuntime: boolean;
+  discoveryRoots: DesktopDiscoveryRoot[];
+  homeConfirmationRequired: boolean;
+  onChooseDiscoveryRoot: (path: string) => void;
+  onRefreshDiscovery: () => void;
+  onReconnectDiscoveryRoot: (oldPath: string, newPath: string) => void;
+  onRemoveDiscoveryRoot: (path: string) => void;
 };
 
 function RepoListContent({
@@ -80,6 +88,51 @@ function RepoListContent({
   );
 }
 
+function ManualRepositoryPath({
+  manualRepoPath,
+  onManualRepoPathChange,
+  manualValidation,
+  onValidateManualPath,
+  isValidating,
+}: Pick<
+  DiscoverRepoDialogProps,
+  | "manualRepoPath"
+  | "onManualRepoPathChange"
+  | "manualValidation"
+  | "onValidateManualPath"
+  | "isValidating"
+>) {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-2">
+      <Label>{t("workspaces:manualPath")}</Label>
+      <div className="flex items-center gap-2">
+        {/* An absolute filesystem path is the value shape this field
+            expects, not prose — left in English deliberately. */}
+        <Input
+          placeholder="/absolute/path/to/repository"
+          value={manualRepoPath}
+          onChange={(e) => onManualRepoPathChange(e.target.value)}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          onClick={onValidateManualPath}
+          disabled={!manualRepoPath.trim() || isValidating}
+        >
+          {isValidating ? t("workspaces:checking") : t("workspaces:validate")}
+        </Button>
+      </div>
+      {manualValidation.status === "error" && (
+        <p className="text-xs text-destructive">{manualValidation.message}</p>
+      )}
+      {manualValidation.status === "success" && (
+        <p className="text-xs text-emerald-500">{manualValidation.message}</p>
+      )}
+    </div>
+  );
+}
+
 export function DiscoverRepoDialog({
   open,
   onOpenChange,
@@ -96,6 +149,13 @@ export function DiscoverRepoDialog({
   isValidating,
   canSave,
   onConfirm,
+  desktopRuntime,
+  discoveryRoots,
+  homeConfirmationRequired,
+  onChooseDiscoveryRoot,
+  onRefreshDiscovery,
+  onReconnectDiscoveryRoot,
+  onRemoveDiscoveryRoot,
 }: DiscoverRepoDialogProps) {
   const { t } = useTranslation();
   return (
@@ -106,8 +166,31 @@ export function DiscoverRepoDialog({
           <DialogDescription>{t("workspaces:discoverRepositoryDescription")}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
+          {desktopRuntime && (
+            <RepositoryDiscoveryRootControls
+              isLoading={isLoading}
+              discoveryRoots={discoveryRoots}
+              homeConfirmationRequired={homeConfirmationRequired}
+              onChooseDiscoveryRoot={onChooseDiscoveryRoot}
+              onRefreshDiscovery={onRefreshDiscovery}
+              onReconnectDiscoveryRoot={onReconnectDiscoveryRoot}
+              onRemoveDiscoveryRoot={onRemoveDiscoveryRoot}
+            />
+          )}
           <div className="space-y-2">
-            <Label>{t("workspaces:discoveredRepositories")}</Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label>{t("workspaces:discoveredRepositories")}</Label>
+              {!desktopRuntime && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  onClick={onRefreshDiscovery}
+                >
+                  {t("workspaces:refreshRepositories")}
+                </Button>
+              )}
+            </div>
             <Input
               placeholder={t("workspaces:filterRepositories")}
               value={repoSearch}
@@ -122,32 +205,13 @@ export function DiscoverRepoDialog({
               />
             </div>
           </div>
-          <div className="space-y-2">
-            <Label>{t("workspaces:manualPath")}</Label>
-            <div className="flex items-center gap-2">
-              {/* An absolute filesystem path is the value shape this field
-                  expects, not prose — left in English deliberately. */}
-              <Input
-                placeholder="/absolute/path/to/repository"
-                value={manualRepoPath}
-                onChange={(e) => onManualRepoPathChange(e.target.value)}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                onClick={onValidateManualPath}
-                disabled={!manualRepoPath.trim() || isValidating}
-              >
-                {isValidating ? t("workspaces:checking") : t("workspaces:validate")}
-              </Button>
-            </div>
-            {manualValidation.status === "error" && (
-              <p className="text-xs text-destructive">{manualValidation.message}</p>
-            )}
-            {manualValidation.status === "success" && (
-              <p className="text-xs text-emerald-500">{manualValidation.message}</p>
-            )}
-          </div>
+          <ManualRepositoryPath
+            manualRepoPath={manualRepoPath}
+            onManualRepoPathChange={onManualRepoPathChange}
+            manualValidation={manualValidation}
+            onValidateManualPath={onValidateManualPath}
+            isValidating={isValidating}
+          />
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

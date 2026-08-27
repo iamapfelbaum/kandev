@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 
+	"github.com/kandev/kandev/internal/common/fsdiagnostics"
 	"github.com/kandev/kandev/internal/common/logger"
 	"github.com/kandev/kandev/internal/events/bus"
 	"github.com/kandev/kandev/internal/secrets"
@@ -280,6 +282,7 @@ type Repos struct {
 	Sessions          repository.SessionRepository
 	GitSnapshots      repository.GitSnapshotRepository
 	RepoEntities      repository.RepositoryEntityRepository
+	DiscoveryRoots    repository.DesktopDiscoveryRootRepository
 	RepositorySets    repository.RepositorySetRepository
 	BranchPolicies    repository.RepositoryBranchPolicyRepository
 	RepositoryCleanup repository.RepositoryCleanupRepository
@@ -307,6 +310,7 @@ type Service struct {
 	sessions                        repository.SessionRepository
 	gitSnapshots                    repository.GitSnapshotRepository
 	repoEntities                    repository.RepositoryEntityRepository
+	desktopRootStore                repository.DesktopDiscoveryRootRepository
 	repositorySets                  repository.RepositorySetRepository
 	branchPolicies                  repository.RepositoryBranchPolicyRepository
 	repositoryCleanup               repository.RepositoryCleanupRepository
@@ -326,6 +330,12 @@ type Service struct {
 	eventBus                        bus.EventBus
 	logger                          *logger.Logger
 	discoveryConfig                 RepositoryDiscoveryConfig
+	discoveryCacheMu                sync.Mutex
+	discoveryCache                  map[string]discoveryCacheEntry
+	discoveryFlights                map[string]*discoveryFlight
+	discoveryNow                    func() time.Time
+	discoveryScanRoot               func(context.Context, string, int) ([]LocalRepository, error)
+	filesystemWarnings              *fsdiagnostics.WarningLimiter
 	worktreeCleanup                 WorktreeCleanup
 	executionStopper                TaskExecutionStopper
 	clarificationCanceller          TerminalClarificationCanceller
@@ -454,6 +464,7 @@ func NewService(repos Repos, eventBus bus.EventBus, log *logger.Logger, discover
 		sessions:              repos.Sessions,
 		gitSnapshots:          repos.GitSnapshots,
 		repoEntities:          repos.RepoEntities,
+		desktopRootStore:      repos.DiscoveryRoots,
 		repositorySets:        repos.RepositorySets,
 		branchPolicies:        repos.BranchPolicies,
 		repositoryCleanup:     repos.RepositoryCleanup,
@@ -469,6 +480,11 @@ func NewService(repos Repos, eventBus bus.EventBus, log *logger.Logger, discover
 		eventBus:              eventBus,
 		logger:                log,
 		discoveryConfig:       discoveryConfig,
+		discoveryCache:        make(map[string]discoveryCacheEntry),
+		discoveryFlights:      make(map[string]*discoveryFlight),
+		discoveryNow:          time.Now,
+		discoveryScanRoot:     scanRootForRepos,
+		filesystemWarnings:    fsdiagnostics.NewWarningLimiter(0),
 		branchFetcher:         newBranchFetcher(log.Zap()),
 		lastTaskActivity:      make(map[string]v1.ForegroundActivity),
 		lastTaskSubagentCount: make(map[string]int),

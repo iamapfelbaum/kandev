@@ -224,6 +224,15 @@ export async function discoverRepositoriesAction(
   );
 }
 
+export {
+  getRepositoryDiscoveryAction,
+  refreshRepositoryDiscoveryAction,
+  listDesktopDiscoveryRootsAction,
+  addDesktopDiscoveryRootAction,
+  reconnectDesktopDiscoveryRootAction,
+  removeDesktopDiscoveryRootAction,
+} from "./repository-discovery";
+
 export async function validateRepositoryPathAction(
   workspaceId: string,
   path: string,

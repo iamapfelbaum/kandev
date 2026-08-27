@@ -78,6 +78,9 @@ func (m *Manager) buildWorkspaceTrackerGraph(
 }
 
 func (m *Manager) configureTracker(tracker *WorkspaceTracker, repositoryName string, roots []string) {
+	if m.cfg != nil {
+		tracker.SetDiagnosticIdentity(m.cfg.TaskID, m.cfg.SessionID)
+	}
 	tracker.SetAllowedSourceRoots(roots)
 	if !tracker.IsSubmodule() {
 		tracker.SetBaseBranch(lookupBaseBranch(m.getBaseBranches(), repositoryName))

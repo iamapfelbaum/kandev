@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/kandev/kandev/internal/common/logger"
@@ -52,6 +54,213 @@ func TestDiscoverLocalRepositoriesSkipsIgnoredRoots(t *testing.T) {
 		if path != expected[i] {
 			t.Fatalf("expected repo %q, got %q", expected[i], path)
 		}
+	}
+}
+
+func TestMacOSHomeDiscoverySkipsProtectedChildrenButScansExplicitRoot(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	for _, name := range []string{"Desktop", "Documents", "Downloads"} {
+		if err := os.MkdirAll(filepath.Join(home, name), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+		if !shouldSkipMacOSHomeChild(home, filepath.Join(home, name), home, "darwin") {
+			t.Fatalf("protected child %s was not skipped", name)
+		}
+	}
+	if shouldSkipMacOSHomeChild(home, filepath.Join(home, "Code"), home, "darwin") {
+		t.Fatal("ordinary Home child was skipped")
+	}
+	if shouldSkipMacOSHomeChild(
+		filepath.Join(home, "Documents"),
+		filepath.Join(home, "Documents", "project"),
+		home,
+		"darwin",
+	) {
+		t.Fatal("an explicitly selected protected root was skipped")
+	}
+}
+
+func TestDesktopDiscoveryWithoutRootDoesNotScanHome(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatalf("create home: %v", err)
+	}
+	makeRepo(t, filepath.Join(home, "project"))
+	t.Setenv("HOME", home)
+
+	svc := newDiscoveryService(t, home)
+	svc.discoveryConfig = RepositoryDiscoveryConfig{DesktopRuntime: true, MaxDepth: 6}
+	var scanCalls int
+	svc.discoveryScanRoot = func(context.Context, string, int) ([]LocalRepository, error) {
+		scanCalls++
+		return nil, nil
+	}
+
+	result, err := svc.GetLocalRepositoryDiscovery(context.Background(), "")
+	if err != nil {
+		t.Fatalf("get desktop discovery snapshot: %v", err)
+	}
+	if len(result.Roots) != 0 || len(result.Repositories) != 0 {
+		t.Fatalf("unconfigured desktop discovery returned filesystem data: %+v", result)
+	}
+	if _, err := svc.RefreshLocalRepositoryDiscovery(context.Background(), ""); err != nil {
+		t.Fatalf("refresh unconfigured desktop discovery: %v", err)
+	}
+	if scanCalls != 0 {
+		t.Fatalf("unconfigured desktop discovery scanned Home %d time(s)", scanCalls)
+	}
+}
+
+func TestDesktopDiscoveryRootPersistsAcrossServiceRestart(t *testing.T) {
+	root := t.TempDir()
+	makeRepo(t, filepath.Join(root, "project"))
+	svc, _, repo := createTestService(t)
+	config := RepositoryDiscoveryConfig{DesktopRuntime: true, MaxDepth: 6}
+	svc.discoveryConfig = config
+	svc.desktopRootStore = repo
+
+	selected, err := svc.AddDesktopDiscoveryRoot(context.Background(), root)
+	if err != nil {
+		t.Fatalf("add desktop discovery root: %v", err)
+	}
+	if selected.Path != filepath.Clean(root) || selected.State != models.DesktopDiscoveryRootConnected {
+		t.Fatalf("selected root = %+v", selected)
+	}
+
+	restarted := NewService(Repos{DiscoveryRoots: repo}, NewMockEventBus(), svc.logger, config)
+	roots, err := restarted.ListDesktopDiscoveryRoots(context.Background())
+	if err != nil {
+		t.Fatalf("list roots after restart: %v", err)
+	}
+	if len(roots) != 1 || roots[0].Path != filepath.Clean(root) {
+		t.Fatalf("persisted roots = %+v", roots)
+	}
+	result, err := restarted.RefreshLocalRepositoryDiscovery(context.Background(), "")
+	if err != nil {
+		t.Fatalf("refresh after restart: %v", err)
+	}
+	if len(result.Repositories) != 1 || result.Repositories[0].Path != filepath.Join(root, "project") {
+		t.Fatalf("repositories after restart = %+v", result.Repositories)
+	}
+}
+
+func TestDesktopDiscoveryRefreshSharesOneScan(t *testing.T) {
+	root := t.TempDir()
+	svc := newDiscoveryService(t, root)
+	svc.discoveryConfig = RepositoryDiscoveryConfig{Roots: []string{root}, MaxDepth: 6}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var callsMu sync.Mutex
+	calls := 0
+	svc.discoveryScanRoot = func(context.Context, string, int) ([]LocalRepository, error) {
+		callsMu.Lock()
+		calls++
+		callsMu.Unlock()
+		close(started)
+		<-release
+		return []LocalRepository{{Path: filepath.Join(root, "project"), Name: "project"}}, nil
+	}
+
+	results := make(chan RepositoryDiscoveryResult, 2)
+	errs := make(chan error, 2)
+	go func() {
+		result, err := svc.RefreshLocalRepositoryDiscovery(context.Background(), "")
+		results <- result
+		errs <- err
+	}()
+	<-started
+	secondReturned := make(chan struct{})
+	go func() {
+		result, err := svc.RefreshLocalRepositoryDiscovery(context.Background(), "")
+		results <- result
+		errs <- err
+		close(secondReturned)
+	}()
+	select {
+	case <-secondReturned:
+		t.Fatal("second refresh completed before the shared scan was released")
+	case <-time.After(10 * time.Millisecond):
+	}
+	close(release)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatalf("shared refresh error: %v", err)
+		}
+		result := <-results
+		if len(result.Repositories) != 1 {
+			t.Fatalf("shared refresh repositories = %+v", result.Repositories)
+		}
+	}
+	callsMu.Lock()
+	defer callsMu.Unlock()
+	if calls != 1 {
+		t.Fatalf("discovery scan calls = %d, want 1", calls)
+	}
+}
+
+func TestDesktopDiscoveryFailurePreservesCachedRepositories(t *testing.T) {
+	root := t.TempDir()
+	repositoryPath := filepath.Join(root, "project")
+	makeRepo(t, repositoryPath)
+	svc := newDiscoveryService(t, root)
+	svc.discoveryConfig = RepositoryDiscoveryConfig{DesktopRuntime: true, MaxDepth: 6}
+	var fail bool
+	svc.discoveryScanRoot = func(context.Context, string, int) ([]LocalRepository, error) {
+		if fail {
+			return nil, os.ErrPermission
+		}
+		return []LocalRepository{{Path: repositoryPath, Name: "project"}}, nil
+	}
+
+	if _, err := svc.AddDesktopDiscoveryRoot(context.Background(), root); err != nil {
+		t.Fatalf("seed desktop discovery cache: %v", err)
+	}
+	fail = true
+	result, err := svc.RefreshLocalRepositoryDiscovery(context.Background(), "")
+	if err != nil {
+		t.Fatalf("partial discovery refresh: %v", err)
+	}
+	if len(result.Repositories) != 1 || result.Repositories[0].Path != repositoryPath {
+		t.Fatalf("cached repositories were not preserved: %+v", result.Repositories)
+	}
+	if len(result.FailedRoots) != 1 || result.FailedRoots[0] != root {
+		t.Fatalf("failed roots = %+v", result.FailedRoots)
+	}
+	roots, err := svc.ListDesktopDiscoveryRoots(context.Background())
+	if err != nil {
+		t.Fatalf("list failed root: %v", err)
+	}
+	if roots[0].State != models.DesktopDiscoveryRootReconnectRequired || roots[0].LastFailureCode != "permission_denied" {
+		t.Fatalf("failed root state = %+v", roots[0])
+	}
+}
+
+func TestDesktopDiscoveryMigrationCanRequireHomeConfirmation(t *testing.T) {
+	svc, _, repo := createTestService(t)
+	if err := repo.SetDesktopDiscoveryMigration(context.Background(), &models.DesktopDiscoveryMigration{
+		HomeConfirmationRequired: true,
+	}); err != nil {
+		t.Fatalf("set migration state: %v", err)
+	}
+	svc.discoveryConfig = RepositoryDiscoveryConfig{DesktopRuntime: true}
+	svc.desktopRootStore = repo
+
+	result, err := svc.GetLocalRepositoryDiscovery(context.Background(), "")
+	if err != nil {
+		t.Fatalf("get migration snapshot: %v", err)
+	}
+	if !result.HomeConfirmationRequired || len(result.Roots) != 0 {
+		t.Fatalf("migration snapshot = %+v", result)
+	}
+	if _, err := svc.AddDesktopDiscoveryRoot(context.Background(), t.TempDir()); err != nil {
+		t.Fatalf("select root while migration is pending: %v", err)
+	}
+	result, err = svc.GetLocalRepositoryDiscovery(context.Background(), "")
+	if err != nil {
+		t.Fatalf("get cleared migration snapshot: %v", err)
+	}
+	if result.HomeConfirmationRequired {
+		t.Fatal("root selection did not clear Home confirmation")
 	}
 }
 
@@ -668,18 +877,19 @@ func newDiscoveryService(t *testing.T, root string) *Service {
 	log, _ := logger.NewLogger(logger.LoggingConfig{Level: "error", Format: "json", OutputPath: "stdout"})
 	eventBus := bus.NewMemoryEventBus(log)
 	return NewService(Repos{
-		Workspaces:   repo,
-		Tasks:        repo,
-		TaskRepos:    repo,
-		Workflows:    repo,
-		Messages:     repo,
-		Turns:        repo,
-		Sessions:     repo,
-		GitSnapshots: repo,
-		RepoEntities: repo,
-		Executors:    repo,
-		Environments: repo,
-		Reviews:      repo,
+		Workspaces:     repo,
+		Tasks:          repo,
+		TaskRepos:      repo,
+		Workflows:      repo,
+		Messages:       repo,
+		Turns:          repo,
+		Sessions:       repo,
+		GitSnapshots:   repo,
+		RepoEntities:   repo,
+		DiscoveryRoots: repo,
+		Executors:      repo,
+		Environments:   repo,
+		Reviews:        repo,
 	}, eventBus, log, RepositoryDiscoveryConfig{
 		Roots:    []string{root},
 		MaxDepth: 6,

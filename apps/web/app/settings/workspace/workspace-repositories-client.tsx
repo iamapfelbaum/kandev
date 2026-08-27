@@ -16,11 +16,11 @@ import {
   createRepositoryScriptAction,
   deleteRepositoryAction,
   deleteRepositoryScriptAction,
-  discoverRepositoriesAction,
   updateRepositoryAction,
   updateRepositoryScriptAction,
   validateRepositoryPathAction,
 } from "@/app/actions/workspaces";
+import { useRepositoryDiscovery } from "@/hooks/domains/workspace/use-repository-discovery";
 import {
   repositoryId as toRepositoryId,
   type LocalRepository,
@@ -43,6 +43,7 @@ import {
 } from "@/app/settings/workspace/workspace-repositories-dirty";
 import { defaultWorktreeBranchTemplate } from "@/lib/worktree-branch-template";
 import { isValidManualRepository } from "@/app/settings/workspace/workspace-repositories-validation";
+import { useDiscoveryRootActions } from "@/app/settings/workspace/use-discovery-root-actions";
 
 type RepositoryItem = RepositoryWithScripts & { __autoOpen?: boolean };
 type WorkspaceRepositoriesClientProps = {
@@ -100,6 +101,28 @@ type RepoHandlerArgs = {
   savedRepositoriesById: Map<string, RepositoryWithScripts>;
   clearRepositoryScripts: (id: string) => void;
 };
+
+function selectDiscoveredRepository(
+  path: string,
+  setSelectedRepoPath: React.Dispatch<React.SetStateAction<string | null>>,
+  setManualRepoPath: React.Dispatch<React.SetStateAction<string>>,
+  setManualValidation: React.Dispatch<React.SetStateAction<ManualValidation>>,
+) {
+  setSelectedRepoPath(path);
+  setManualRepoPath("");
+  setManualValidation({ status: "idle" });
+}
+
+function changeManualRepositoryPath(
+  value: string,
+  setSelectedRepoPath: React.Dispatch<React.SetStateAction<string | null>>,
+  setManualRepoPath: React.Dispatch<React.SetStateAction<string>>,
+  setManualValidation: React.Dispatch<React.SetStateAction<ManualValidation>>,
+) {
+  setManualRepoPath(value);
+  setSelectedRepoPath(null);
+  setManualValidation({ status: "idle" });
+}
 
 async function saveNewRepository(
   repo: RepositoryItem,
@@ -322,13 +345,19 @@ function useDiscoverDialog(
   t: TFunction,
 ) {
   const [localRepoDialogOpen, setLocalRepoDialogOpen] = useState(false);
-  const [discoveredRepositories, setDiscoveredRepositories] = useState<LocalRepository[]>([]);
   const [repoSearch, setRepoSearch] = useState("");
   const [selectedRepoPath, setSelectedRepoPath] = useState<string | null>(null);
   const [manualRepoPath, setManualRepoPath] = useState("");
   const [manualValidation, setManualValidation] = useState<ManualValidation>({ status: "idle" });
-  const discoverRequest = useRequest(discoverRepositoriesAction);
   const validateRequest = useRequest(validateRepositoryPathAction);
+  const discovery = useRepositoryDiscovery(workspace?.id ?? null, localRepoDialogOpen);
+  const discoveredRepositories = discovery.repositories;
+  const {
+    refreshDiscovery,
+    handleChooseDiscoveryRoot,
+    handleReconnectDiscoveryRoot,
+    handleRemoveDiscoveryRoot,
+  } = useDiscoveryRootActions(discovery, toast, t);
 
   const filteredRepositories = useMemo(() => {
     const query = repoSearch.trim().toLowerCase();
@@ -340,16 +369,7 @@ function useDiscoverDialog(
 
   const handleDiscover = async () => {
     if (!workspace) return;
-    try {
-      const result = await discoverRequest.run(workspace.id);
-      setDiscoveredRepositories(result.repositories);
-    } catch (error) {
-      toast({
-        title: t("workspaces:failedToDiscoverRepositories"),
-        description: error instanceof Error ? error.message : t("common:requestFailed"),
-        variant: "error",
-      });
-    }
+    await refreshDiscovery();
   };
 
   const openDialog = async () => {
@@ -391,16 +411,10 @@ function useDiscoverDialog(
     }
   };
 
-  const handleSelectRepoPath = (path: string) => {
-    setSelectedRepoPath(path);
-    setManualRepoPath("");
-    setManualValidation({ status: "idle" });
-  };
-  const handleManualRepoPathChange = (value: string) => {
-    setManualRepoPath(value);
-    setSelectedRepoPath(null);
-    setManualValidation({ status: "idle" });
-  };
+  const handleSelectRepoPath = (path: string) =>
+    selectDiscoveredRepository(path, setSelectedRepoPath, setManualRepoPath, setManualValidation);
+  const handleManualRepoPathChange = (value: string) =>
+    changeManualRepositoryPath(value, setSelectedRepoPath, setManualRepoPath, setManualValidation);
   const canSave =
     Boolean(selectedRepoPath) ||
     (manualValidation.status === "success" && manualValidation.isValid === true);
@@ -418,10 +432,20 @@ function useDiscoverDialog(
     manualValidation,
     handleValidateManualPath,
     isValidating: validateRequest.isLoading,
-    isDiscovering: discoverRequest.isLoading,
+    isDiscovering: discovery.isLoading || discovery.isRefreshing,
     canSave,
     openDialog,
     discoveredRepositories,
+    desktopRuntime: discovery.desktopRuntime,
+    // Configured roots are policy-owned and remain read-only here. Only
+    // install-wide desktop selections have IDs and can be reconnected or
+    // removed by the operator.
+    discoveryRoots: discovery.rootStates.filter((root) => Boolean(root.id)),
+    homeConfirmationRequired: discovery.homeConfirmationRequired,
+    onChooseDiscoveryRoot: handleChooseDiscoveryRoot,
+    onRefreshDiscovery: () => void handleDiscover(),
+    onReconnectDiscoveryRoot: handleReconnectDiscoveryRoot,
+    onRemoveDiscoveryRoot: handleRemoveDiscoveryRoot,
   };
 }
 export function useWorkspaceRepositoriesPage(
@@ -459,21 +483,10 @@ export function useWorkspaceRepositoriesPage(
 
   const discover = useDiscoverDialog(workspace, toast, t);
   const {
-    localRepoDialogOpen,
     setLocalRepoDialogOpen,
-    filteredRepositories,
-    repoSearch,
-    setRepoSearch,
     selectedRepoPath,
-    handleSelectRepoPath,
     manualRepoPath,
-    handleManualRepoPathChange,
     manualValidation,
-    handleValidateManualPath,
-    isValidating,
-    isDiscovering,
-    canSave,
-    openDialog,
     discoveredRepositories,
   } = discover;
 
@@ -501,21 +514,7 @@ export function useWorkspaceRepositoriesPage(
     handleDeleteRepositoryScript,
     handleSaveRepository,
     handleDeleteRepository,
-    localRepoDialogOpen,
-    setLocalRepoDialogOpen,
-    filteredRepositories,
-    repoSearch,
-    setRepoSearch,
-    selectedRepoPath,
-    handleSelectRepoPath,
-    manualRepoPath,
-    handleManualRepoPathChange,
-    manualValidation,
-    handleValidateManualPath,
-    isValidating,
-    isDiscovering,
-    canSave,
-    openDialog,
+    ...discover,
     handleConfirmLocalRepository,
   };
 }

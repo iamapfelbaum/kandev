@@ -247,10 +247,12 @@ func (a *workspacePollAggregator) applyEffectiveModeLocked(workspacePath string,
 	}
 	if effective == WorkspacePollModePaused {
 		delete(a.lastPushed, workspacePath)
-	} else {
-		a.lastPushed[workspacePath] = effective
+		// Keep the mode map bounded, but still report a transition from an
+		// already-managed mode so pushAsync delivers the paused state.
+		return shouldPush
 	}
-	return shouldPush && effective != WorkspacePollModePaused
+	a.lastPushed[workspacePath] = effective
+	return shouldPush
 }
 
 // recordAndCompute updates the per-session mode for the given workspace and

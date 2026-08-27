@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -200,6 +201,57 @@ func TestAggregator_RuntimeInterestRemovalYieldsPaused(t *testing.T) {
 	}
 	if runtimeEntries != 0 || workspaceEntries != 0 {
 		t.Errorf("runtime indexes not cleaned up: sessions=%d workspaces=%d", runtimeEntries, workspaceEntries)
+	}
+}
+
+func TestAggregator_RuntimeInterestRemovalDeliversPaused(t *testing.T) {
+	modes := make(chan string, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/workspace/poll-mode" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var body struct {
+			Mode string `json:"mode"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		modes <- body.Mode
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	mgr := newTestManagerForAggregator(t)
+	port := srv.Listener.Addr().(*net.TCPAddr).Port
+	client := agentctl.NewClient("127.0.0.1", port, newTestLogger())
+	defer client.Close()
+	execution := &AgentExecution{
+		ID: "exec-s1", SessionID: "s1", WorkspacePath: "/tmp/ws1", agentctl: client,
+	}
+	if err := mgr.executionStore.Add(execution); err != nil {
+		t.Fatalf("add execution: %v", err)
+	}
+
+	mgr.pollAggregator.HandleRuntimeInterest("s1", true)
+	select {
+	case got := <-modes:
+		if got != string(WorkspacePollModeSlow) {
+			t.Fatalf("initial runtime mode = %q, want slow", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for runtime poll mode")
+	}
+
+	mgr.pollAggregator.HandleRuntimeInterest("s1", false)
+	select {
+	case got := <-modes:
+		if got != string(WorkspacePollModePaused) {
+			t.Fatalf("final runtime mode = %q, want paused", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for paused poll mode")
 	}
 }
 

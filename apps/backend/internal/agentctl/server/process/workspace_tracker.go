@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kandev/kandev/internal/agentctl/types"
+	"github.com/kandev/kandev/internal/common/fsdiagnostics"
 	"github.com/kandev/kandev/internal/common/logger"
 	"github.com/kandev/kandev/internal/common/securityutil"
 	"github.com/kandev/kandev/internal/common/subproc"
@@ -148,6 +149,15 @@ type WorkspaceTracker struct {
 	// updateMu prevents concurrent updateGitStatus calls from the two polling loops.
 	// Polling loops use TryLock (skip if busy); RefreshGitStatus uses Lock (always completes).
 	updateMu sync.Mutex
+
+	// diagnostic identity is populated by the process manager once the tracker
+	// is attached to an agentctl instance. A tracker can be created before the
+	// owning task/session metadata is available.
+	diagnosticMu        sync.RWMutex
+	diagnosticTaskID    string
+	diagnosticSessionID string
+	filesystemWarnings  *fsdiagnostics.WarningLimiter
+	accessDenied        atomic.Bool
 
 	// gitStatusObserver is the expensive live repository observation. Keeping it
 	// as a dependency makes the concurrency contract deterministic to test while
@@ -400,6 +410,7 @@ func newWorkspaceTracker(resolvedWorkDir, repositoryName string, log *logger.Log
 		cancelCtx:               ctx,
 		cancelFunc:              cancel,
 		gitStatusObserveTimeout: workspaceGitStatusObserveTimeout,
+		filesystemWarnings:      fsdiagnostics.NewWarningLimiter(0),
 	}
 	tracker.gitStatusObserver = tracker.computeGitStatus
 	return tracker
@@ -509,6 +520,9 @@ func workDirHasOwnGitEntry(workDir string) bool {
 // so this only checks for subsequent deletion (e.g., worktree cleanup).
 func (wt *WorkspaceTracker) workDirExists() bool {
 	_, err := os.Stat(wt.workDir) //nolint:gosec // workDir is validated at construction via resolveExistingWorkDir
+	if err != nil && fsdiagnostics.IsAccessDenied(err) {
+		wt.recordFilesystemFailure("workspace.file_monitor", "poll", err)
+	}
 	return !os.IsNotExist(err)
 }
 

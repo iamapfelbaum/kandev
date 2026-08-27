@@ -335,7 +335,7 @@ func (m *Manager) handleCompleteEvent(execution *AgentExecution, event *agentctl
 	if !claimed {
 		return false
 	}
-	m.releaseActivity(executionActivityKey(execution.ID))
+	m.finishExecutionWorkspaceActivity(execution, "turn_complete")
 
 	execution.markAgentActivity()
 
