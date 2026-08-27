@@ -9,16 +9,17 @@ status: building
 ## Overview
 
 Correct the release manifests that feed the marketplace's visible author and
-repository metadata. The Kandev host registry pointer remains unchanged: the
-Bitbucket entry is already a first-party `kdlbs` repository, and the YouTrack
-entry must continue to point to the external contributor's repository. The
-changes land in the two plugin repositories, then the existing release
-workflows and registry builder verify that the catalog displays the corrected
-identities.
+repository metadata. The Kandev host registry pointers remain unchanged: the
+Bitbucket entry points to the `kdlbs` repository but its release author is the
+external contributor `ahmedbally`, and the YouTrack entry points to the
+external contributor's repository. The changes land in the two plugin
+repositories, then the existing release workflows and registry builder verify
+that the catalog displays the corrected identities.
 
 ## Repository boundaries
 
-- `kdlbs/kandev-plugin-bitbucket` owns the first-party Bitbucket manifest.
+- `kdlbs/kandev-plugin-bitbucket` owns the Bitbucket manifest whose release
+  author is `ahmedbally`.
 - `ahmedbally/kandev-plugin-youtrack` owns the community YouTrack manifest.
 - `kdlbs/kandev` owns only the marketplace contract and verification. No new
   author override is added to `plugin-registry/plugins.yaml`; release manifest
@@ -26,12 +27,12 @@ identities.
 
 ## Plugin repository changes
 
-### First-party Bitbucket attribution
+### Bitbucket attribution
 
-In `kdlbs/kandev-plugin-bitbucket/manifest.yaml`, change the author from
-`kdlbs` to `kandev` and preserve the existing repository URL. Produce the next
-release through that repository's existing release workflow so the latest
-release tag and tarball contain the corrected manifest.
+In `kdlbs/kandev-plugin-bitbucket/manifest.yaml`, set the author to
+`ahmedbally` and preserve the existing repository URL. Produce the next release
+through that repository's existing release workflow so the latest release tag
+and tarball contain the corrected manifest.
 
 ### Community YouTrack attribution
 
@@ -49,7 +50,7 @@ release lookup sees the corrected manifest.
   generated `plugin-registry/index.json` after release publication.
   **How:** Run the focused Node test suite, then rebuild the live catalog and
   inspect the Bitbucket and YouTrack records for `author` and `repo_url`.
-- **What:** The first-party plugin still packages successfully after its
+- **What:** The Bitbucket plugin still packages successfully after its
   manifest metadata change.
   **File:** `kdlbs/kandev-plugin-bitbucket` repository tests and package gate.
   **How:** Run `make test` and `make package-host verify-package-host`.
@@ -74,11 +75,11 @@ duplicate unchanged UI behavior.
 
 ## Verification Results
 
-- 2026-08-22: Bitbucket branch `fix/marketplace-author` changes only
-  `manifest.yaml`, declaring `author: "kandev"` while preserving the official
-  repository URL. `make test`, `make package-host verify-package-host`,
-  `make fmt`, and `make vet` pass. The package gate produced
-  `kandev-plugin-bitbucket-0.2.1.tar.gz` with the corrected manifest.
+- 2026-08-27: Bitbucket branch `fix/attribute-bitbucket-to-ahmedbally` changes
+`manifest.yaml`, declaring `author: "ahmedbally"` while preserving the
+repository URL. `make test`, `make package-host verify-package-host`,
+`make fmt`, and `make vet` pass. The package gate produced
+`kandev-plugin-bitbucket-0.3.0.tar.gz` with the corrected manifest.
 - 2026-08-22: YouTrack fork branch
   `fix/correct-marketplace-attribution` changes `manifest.yaml` to version
   `0.1.1`, author `ahmedbally`, and the external repository URL. README build

@@ -12,12 +12,12 @@ spec: "../../specs/plugins/requirements/marketplace.md"
 
 ## Acceptance
 
-- `kdlbs/kandev-plugin-bitbucket/manifest.yaml` declares `author: "kandev"`.
+- `kdlbs/kandev-plugin-bitbucket/manifest.yaml` declares `author: "ahmedbally"`.
 - The manifest continues to point at
   `https://github.com/kdlbs/kandev-plugin-bitbucket` and keeps its plugin id,
   capabilities, and package contract unchanged.
 - A newly published release contains the corrected manifest, so the official
-  catalog can display `by kandev`.
+  catalog can display `by ahmedbally`.
 
 ## Verification
 
@@ -61,9 +61,10 @@ blocker, commands and results, package path, and task/plan status update.
 
 ## Results
 
-2026-08-22: Updated `manifest.yaml` on branch `fix/marketplace-author` in
-`kdlbs/kandev-plugin-bitbucket` to declare `author: "kandev"`. The existing
-plugin id, capabilities, version, and repository URL are unchanged.
+2026-08-27: Updated `manifest.yaml` on branch
+`fix/attribute-bitbucket-to-ahmedbally` in
+`kdlbs/kandev-plugin-bitbucket` to declare `author: "ahmedbally"`. The
+existing plugin id, capabilities, version, and repository URL are unchanged.
 
 Verification passed:
 
@@ -72,6 +73,6 @@ Verification passed:
 - `make fmt`
 - `make vet`
 
-The package gate produced `kandev-plugin-bitbucket-0.2.1.tar.gz` and confirmed
+The package gate produced `kandev-plugin-bitbucket-0.3.0.tar.gz` and confirmed
 the packaged manifest. The next release still must be published through the
 repository workflow after the PR is merged.

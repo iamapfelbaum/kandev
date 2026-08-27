@@ -13,7 +13,7 @@ spec: "../../specs/plugins/requirements/marketplace.md"
 ## Acceptance
 
 - The generated official catalog record for Bitbucket has
-  `author: "kandev"` and `repo_url: "https://github.com/kdlbs/kandev-plugin-bitbucket"`.
+  `author: "ahmedbally"` and `repo_url: "https://github.com/kdlbs/kandev-plugin-bitbucket"`.
 - The generated official catalog record for YouTrack has
   `author: "ahmedbally"` and
   `repo_url: "https://github.com/ahmedbally/kandev-plugin-youtrack"`.
