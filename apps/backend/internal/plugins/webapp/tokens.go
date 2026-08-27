@@ -25,6 +25,7 @@ var (
 // It contains identifiers and a release artifact reference, never a user
 // credential or a source payload.
 type CapabilityBinding struct {
+	PluginID        string
 	UserID          string
 	InstanceID      string
 	ReleaseID       string
@@ -36,6 +37,7 @@ type CapabilityBinding struct {
 	SessionID       string
 	RepositoryID    string
 	GrantGeneration int64
+	Permissions     []string
 	Artifact        Artifact
 	Entry           string
 	NetworkOrigins  []string

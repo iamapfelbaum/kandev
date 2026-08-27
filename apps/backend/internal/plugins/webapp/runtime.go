@@ -2,6 +2,7 @@ package webapp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,8 +19,14 @@ type Runtime struct {
 	tokens         *TokenManager
 	artifacts      *ArtifactStore
 	validate       BindingValidator
+	protocol       ProtocolHandler
 	frameAncestors []string
 }
+
+// ProtocolHandler serves the relative application API after Runtime has
+// validated the bearer capability. path is relative to the `_kandev/` root;
+// the handler must apply its own response-size and method limits.
+type ProtocolHandler func(http.ResponseWriter, *http.Request, string, CapabilityBinding, string)
 
 func NewRuntime(tokens *TokenManager, artifacts *ArtifactStore, validate BindingValidator, frameAncestors []string) *Runtime {
 	if tokens == nil {
@@ -29,6 +36,15 @@ func NewRuntime(tokens *TokenManager, artifacts *ArtifactStore, validate Binding
 		frameAncestors = []string{"http://127.0.0.1:38429", "tauri://localhost", "http://tauri.localhost"}
 	}
 	return &Runtime{tokens: tokens, artifacts: artifacts, validate: validate, frameAncestors: append([]string(nil), frameAncestors...)}
+}
+
+// SetProtocolHandler attaches the versioned browser data protocol. It is
+// configured during startup before the HTTP server accepts requests.
+func (rt *Runtime) SetProtocolHandler(handler ProtocolHandler) {
+	if rt == nil {
+		return
+	}
+	rt.protocol = handler
 }
 
 // Serve handles one capability URL request. path is the path below the
@@ -48,6 +64,14 @@ func (rt *Runtime) Serve(w http.ResponseWriter, r *http.Request, token, requestP
 			writeRuntimeError(w, runtimeAuthorizationStatus(err), err)
 			return
 		}
+	}
+	if protocolPath, ok := runtimeProtocolPath(requestPath); ok {
+		if rt.protocol == nil {
+			writeRuntimeError(w, http.StatusNotFound, ErrArtifactUnavailable)
+			return
+		}
+		rt.protocol(w, r, token, binding, protocolPath)
+		return
 	}
 	name, err := runtimeFilePath(requestPath, binding.Entry)
 	if err != nil {
@@ -106,6 +130,17 @@ func runtimeFilePath(requestPath, entry string) (string, error) {
 	return normalizePackagePath(name, MaxPathBytes)
 }
 
+func runtimeProtocolPath(requestPath string) (string, bool) {
+	name := strings.TrimPrefix(strings.TrimSpace(requestPath), "/")
+	if name == "_kandev" {
+		return "", true
+	}
+	if strings.HasPrefix(name, "_kandev/") {
+		return strings.TrimPrefix(name, "_kandev/"), true
+	}
+	return "", false
+}
+
 func setRuntimeHeaders(w http.ResponseWriter, policy, origin string) {
 	w.Header().Set("Content-Security-Policy", policy)
 	w.Header().Set("Cache-Control", "no-store")
@@ -118,11 +153,34 @@ func setRuntimeHeaders(w http.ResponseWriter, policy, origin string) {
 	}
 }
 
+// SetProtocolHeaders applies the headers shared by capability API and event
+// responses. It is exported for the protocol adapter, while asset responses
+// additionally receive the response CSP from setRuntimeHeaders.
+func SetProtocolHeaders(w http.ResponseWriter, origin string) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
+	if origin == "null" {
+		w.Header().Set("Access-Control-Allow-Origin", "null")
+		w.Header().Add("Vary", "Origin")
+	}
+}
+
 func writeRuntimeError(w http.ResponseWriter, status int, err error) {
 	code := runtimeErrorCode(err)
+	body, marshalErr := json.Marshal(struct {
+		Error string `json:"error"`
+	}{Error: code})
+	if marshalErr != nil {
+		body = []byte(`{"error":"runtime_unavailable"}`)
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "application/json")
-	http.Error(w, fmt.Sprintf(`{"error":%q}`, code), status)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
 
 func runtimeAuthorizationStatus(err error) int {

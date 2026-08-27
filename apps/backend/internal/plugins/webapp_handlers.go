@@ -17,4 +17,9 @@ func RegisterWebAppRuntimeRoutes(router *gin.Engine, runtime *webapp.Runtime) {
 	}
 	router.GET("/api/v1/plugins/web-apps/runtime/:token/*path", handler)
 	router.HEAD("/api/v1/plugins/web-apps/runtime/:token/*path", handler)
+	router.OPTIONS("/api/v1/plugins/web-apps/runtime/:token/*path", handler)
+	router.POST("/api/v1/plugins/web-apps/runtime/:token/*path", handler)
+	router.PATCH("/api/v1/plugins/web-apps/runtime/:token/*path", handler)
+	router.PUT("/api/v1/plugins/web-apps/runtime/:token/*path", handler)
+	router.DELETE("/api/v1/plugins/web-apps/runtime/:token/*path", handler)
 }

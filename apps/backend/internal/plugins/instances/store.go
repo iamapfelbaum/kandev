@@ -572,8 +572,25 @@ func (s *Store) AddGrant(ctx context.Context, grant Grant) error {
 	if grant.ApprovedAt.IsZero() {
 		grant.ApprovedAt = time.Now().UTC()
 	}
-	_, err := s.db.ExecContext(ctx, s.db.Rebind(`INSERT INTO plugin_instance_grants (plugin_instance_id, permission_kind, resource, network_origin, scope_ceiling, approved_by, approved_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(plugin_instance_id, permission_kind, resource, network_origin) DO UPDATE SET scope_ceiling = excluded.scope_ceiling, approved_by = excluded.approved_by, approved_at = excluded.approved_at`), grant.InstanceID, grant.PermissionKind, grant.Resource, grant.NetworkOrigin, grant.ScopeCeiling, grant.ApprovedBy, grant.ApprovedAt.Format(time.RFC3339Nano))
-	return err
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var exists int
+	if err := tx.GetContext(ctx, &exists, tx.Rebind(`SELECT COUNT(*) FROM plugin_instances WHERE id = ? AND status <> ?`), grant.InstanceID, StatusRemoved); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO plugin_instance_grants (plugin_instance_id, permission_kind, resource, network_origin, scope_ceiling, approved_by, approved_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(plugin_instance_id, permission_kind, resource, network_origin) DO UPDATE SET scope_ceiling = excluded.scope_ceiling, approved_by = excluded.approved_by, approved_at = excluded.approved_at`), grant.InstanceID, grant.PermissionKind, grant.Resource, grant.NetworkOrigin, grant.ScopeCeiling, grant.ApprovedBy, grant.ApprovedAt.Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE plugin_instances SET grant_generation = grant_generation + 1, updated_at = ? WHERE id = ? AND status <> ?`), time.Now().UTC().Format(time.RFC3339Nano), grant.InstanceID, StatusRemoved); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ListGrants(ctx context.Context, instanceID string) ([]Grant, error) {
@@ -680,6 +697,13 @@ func (s *Store) RemoveInstance(ctx context.Context, id string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var workspaceID string
+	if err := tx.GetContext(ctx, &workspaceID, tx.Rebind(`SELECT workspace_id FROM plugin_instances WHERE id = ?`), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
 	var paths []string
 	rows, err := tx.QueryxContext(ctx, tx.Rebind(`SELECT artifact_path FROM plugin_releases WHERE instance_id = ?`), id)
 	if err != nil {
@@ -697,7 +721,7 @@ func (s *Store) RemoveInstance(ctx context.Context, id string) error {
 		return err
 	}
 	for _, artifactPath := range paths {
-		job := CleanupJob{ID: uuid.NewString(), InstanceID: id, ArtifactPath: artifactPath, Status: "pending", CreatedAt: time.Now().UTC(), NextAttemptAt: time.Now().UTC()}
+		job := CleanupJob{ID: uuid.NewString(), WorkspaceID: workspaceID, InstanceID: id, ArtifactPath: artifactPath, Status: "pending", CreatedAt: time.Now().UTC(), NextAttemptAt: time.Now().UTC()}
 		if _, err := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO plugin_artifact_cleanup_jobs (id, workspace_id, instance_id, artifact_path, status, attempts, last_error, created_at, next_attempt_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`), job.ID, job.WorkspaceID, job.InstanceID, job.ArtifactPath, job.Status, 0, "", job.CreatedAt.Format(time.RFC3339Nano), job.NextAttemptAt.Format(time.RFC3339Nano)); err != nil {
 			return err
 		}

@@ -73,6 +73,10 @@ func Provide(cfg *config.Config, dbPool *db.Pool, secrets SecretVault, eventBus 
 	if err != nil {
 		return nil, nil, fmt.Errorf("plugins: init web-app instance store: %w", err)
 	}
+	instanceState, err := state.NewInstanceStore(dbPool)
+	if err != nil {
+		return nil, nil, fmt.Errorf("plugins: init web-app instance state: %w", err)
+	}
 	artifactStore, err := webapp.NewArtifactStore(filepath.Join(cfg.ResolvedHomeDir(), pluginsSubdir, "webapps"))
 	if err != nil {
 		return nil, nil, fmt.Errorf("plugins: init web-app artifact store: %w", err)
@@ -97,7 +101,8 @@ func Provide(cfg *config.Config, dbPool *db.Pool, secrets SecretVault, eventBus 
 	svc.SetState(stateStore)
 	svc.SetUserState(userStateStore)
 	svc.SetWebAppStorage(instanceStore, artifactStore)
-	svc.SetWebRuntime(webapp.NewRuntime(webapp.NewTokenManager(nil), artifactStore, nil, nil))
+	svc.SetInstanceState(instanceState)
+	svc.SetWebRuntime(webapp.NewRuntime(webapp.NewTokenManager(nil), artifactStore, svc.validateWebAppBinding, nil))
 	svc.SetSecrets(secrets)
 	svc.SetPluginsDir(dir)
 

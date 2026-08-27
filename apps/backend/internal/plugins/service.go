@@ -95,6 +95,7 @@ type Service struct {
 	state            *state.Store
 	userState        *state.UserStore
 	instances        *instances.Store
+	instanceState    *state.InstanceStore
 	webArtifacts     *webapp.ArtifactStore
 	webRuntime       *webapp.Runtime
 	userStateCleanup userStateCleanupStore
@@ -400,6 +401,21 @@ func (s *Service) SetWebAppStorage(instanceStore *instances.Store, artifactStore
 	s.webArtifacts = artifactStore
 }
 
+// SetInstanceState wires revisioned state owned by isolated web-app
+// instances. It is separate from plugin_state, which belongs to a managed
+// plugin process and has no instance identity.
+func (s *Service) SetInstanceState(instanceState *state.InstanceStore) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.instanceState = instanceState
+}
+
+func (s *Service) InstanceState() *state.InstanceStore {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.instanceState
+}
+
 // Instances returns the scoped web-application instance store.
 func (s *Service) Instances() *instances.Store {
 	s.mu.Lock()
@@ -420,6 +436,9 @@ func (s *Service) SetWebRuntime(runtime *webapp.Runtime) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.webRuntime = runtime
+	if runtime != nil {
+		runtime.SetProtocolHandler(s.handleWebAppProtocol)
+	}
 }
 
 func (s *Service) WebRuntime() *webapp.Runtime {
