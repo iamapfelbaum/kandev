@@ -510,18 +510,36 @@ func appendSessionModelsMessage(sessionID string, session *models.TaskSession, l
 	if lifecycleMgr == nil {
 		return result
 	}
-	modelState := lifecycleMgr.GetModelStateForSession(sessionID)
-	if modelState == nil || (modelState.CurrentModelID == "" && len(modelState.Models) == 0) {
+	return appendSessionModelsMessageFromState(
+		sessionID,
+		session,
+		lifecycleMgr.GetModelStateForSession(sessionID),
+		result,
+	)
+}
+
+func appendSessionModelsMessageFromState(sessionID string, session *models.TaskSession, modelState *lifecycle.CachedModelState, result []*ws.Message) []*ws.Message {
+	if modelState == nil {
 		return result
 	}
 	snapshot, _ := lifecycle.LoadSessionModelsSnapshot(session.Metadata[models.SessionMetaKeyACPModelState])
+	replayState := *modelState
+	if len(replayState.Models) == 0 &&
+		len(replayState.ConfigOptions) == 0 &&
+		!replayState.ConfigOptionsSettled &&
+		len(snapshot.Models) > 0 {
+		replayState.Models = snapshot.Models
+	}
+	if replayState.CurrentModelID == "" && len(replayState.Models) == 0 {
+		return result
+	}
 	notification, err := ws.NewNotification(ws.ActionSessionModelsUpdated, lifecycle.SessionModelsEventPayload{
 		TaskID:               session.TaskID,
 		SessionID:            sessionID,
-		CurrentModelID:       modelState.CurrentModelID,
-		Models:               modelState.Models,
-		ConfigOptions:        modelState.ConfigOptions,
-		ConfigOptionsSettled: modelState.ConfigOptionsSettled || snapshot.ConfigOptionsSettled,
+		CurrentModelID:       replayState.CurrentModelID,
+		Models:               replayState.Models,
+		ConfigOptions:        replayState.ConfigOptions,
+		ConfigOptionsSettled: replayState.ConfigOptionsSettled || snapshot.ConfigOptionsSettled,
 		ConfigBaseline:       sessionACPConfigBaseline(session),
 	})
 	if err == nil {
@@ -630,6 +648,7 @@ func registerRoutes(p routeParams) {
 	handoffDocSvc := taskservice.NewDocumentService(p.taskRepo, p.log)
 	handoffSvc := taskservice.NewHandoffService(p.taskRepo, p.taskRepo, handoffDocSvc,
 		p.officeRepo, p.officeRepo, p.log)
+	handoffSvc.SetCommentReader(&officeCommentReaderAdapter{reader: p.officeRepo})
 	// Phase 6 wirings — materializer hook + disk cleaner. The
 	// SessionWorktreeReader and WorkspaceCleaner interfaces are both
 	// satisfied by adapters that delegate to existing services.
@@ -1137,6 +1156,7 @@ func registerTaskRoutes(p routeParams, planService *taskservice.PlanService, han
 	}
 	taskhandlers.RegisterRepositoryRoutes(p.router, p.gateway.Dispatcher, p.taskSvc, p.log)
 	taskhandlers.RegisterRepositorySetRoutes(p.router, p.gateway.Dispatcher, p.taskSvc, p.log)
+	taskhandlers.RegisterRepositoryBranchPolicyRoutes(p.router, p.gateway.Dispatcher, p.taskSvc, p.log)
 	taskhandlers.RegisterExecutorRoutes(p.router, p.gateway.Dispatcher, p.taskSvc, p.log)
 	taskhandlers.RegisterExecutorProfileRoutes(p.router, p.gateway.Dispatcher, p.taskSvc, p.agentList, p.log)
 	taskhandlers.RegisterEnvironmentRoutes(p.router, p.gateway.Dispatcher, p.taskSvc, p.log)
@@ -1377,7 +1397,7 @@ func registerSecondaryRoutes(
 
 	// Register office routes
 	if p.services.OfficeSvcs != nil {
-		mountOfficeRoutes(p.router, p.services.OfficeSvcs, p.authSvc, p.taskSvc, p.officeRepo, p.log)
+		mountOfficeRoutes(p.router, p.services.OfficeSvcs, p.authSvc, p.taskSvc, p.officeRepo, handoffSvc, p.log)
 		p.log.Debug("Registered Office handlers (HTTP)")
 	}
 }

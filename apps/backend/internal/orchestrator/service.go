@@ -266,6 +266,7 @@ type sessionExecutorStore interface {
 	GetActiveTaskSessionByTaskID(ctx context.Context, taskID string) (*models.TaskSession, error)
 	ListActiveTaskSessionsByTaskID(ctx context.Context, taskID string) ([]*models.TaskSession, error)
 	SetSessionPrimary(ctx context.Context, sessionID string) error
+	SetSessionPrimaryIfNonterminal(ctx context.Context, sessionID string) (bool, error)
 	RenameTaskSession(ctx context.Context, id, name string) error
 	UpdateTaskSession(ctx context.Context, session *models.TaskSession) error
 	UpdateTaskSessionIfCurrentState(ctx context.Context, session *models.TaskSession, expected models.TaskSessionState) (bool, error)
@@ -473,12 +474,13 @@ func (o *reservedPromptCallbackOwner) stop() {
 
 // Service is the main orchestrator service
 type Service struct {
-	config       ServiceConfig
-	logger       *logger.Logger
-	eventBus     bus.EventBus
-	taskRepo     scheduler.TaskRepository
-	repo         sessionExecutorStore
-	agentManager executor.AgentManagerClient
+	config        ServiceConfig
+	logger        *logger.Logger
+	eventBus      bus.EventBus
+	taskRepo      scheduler.TaskRepository
+	repo          sessionExecutorStore
+	promptTargets taskPullRequestTargetStore
+	agentManager  executor.AgentManagerClient
 
 	// Components
 	queue     *queue.TaskQueue
@@ -609,6 +611,22 @@ type Service struct {
 	// Phase 8 dependencies — also nil-safe.
 	engineTaskCreator      engine.TaskCreator
 	engineWorkflowSwitcher engine.WorkflowSwitcher
+
+	// Review participant seats (REQ-OFFICE-REVIEW-SEATS-001) dependencies —
+	// also nil-safe. buildWorkflowCallbacks registers ensure_participant_seat
+	// once engineParticipantSeatWriter is set; engineParticipantSeatCaster
+	// may still be nil at that point (wired separately once the Office seat
+	// caster exists), in which case EnsureParticipantSeatCallback itself
+	// reports ErrActionNotYetWired only for entries that actually need to
+	// cast a new seat.
+	engineParticipantSeatWriter engine.ParticipantSeatWriter
+	engineParticipantSeatCaster engine.ParticipantSeatCaster
+
+	// engineAgentProfiles wires the quorum guard's AgentProfileResolver
+	// (REQ-OFFICE-REVIEW-SEATS-004.3): dropping a required seat whose agent
+	// profile was deleted after the seat was cast. Also nil-safe — an
+	// unwired resolver leaves every seat counted, matching prior behavior.
+	engineAgentProfiles engine.AgentProfileResolver
 
 	// Native code review. When set, buildWorkflowCallbacks registers the
 	// run_code_review on_enter action. Nil-safe: without it the action kind
@@ -1150,6 +1168,7 @@ func NewService(
 		eventBus:                     eventBus,
 		taskRepo:                     taskRepo,
 		repo:                         repo,
+		promptTargets:                repo,
 		agentManager:                 agentManager,
 		queue:                        taskQueue,
 		executor:                     exec,
@@ -1722,6 +1741,31 @@ func (s *Service) SetEngineTaskCreator(creator engine.TaskCreator) {
 func (s *Service) SetEngineWorkflowSwitcher(switcher engine.WorkflowSwitcher) {
 	s.engineWorkflowSwitcher = switcher
 	s.engineOptions = append(s.engineOptions, engine.WithWorkflowSwitcher(switcher))
+	s.reinitWorkflowEngine()
+}
+
+// SetEngineParticipantSeatWriter wires the engine's ParticipantSeatWriter
+// for the ensure_participant_seat action. Unlike ParticipantStore/
+// DecisionStore, this is a pure callback-construction dependency — nothing
+// else in the engine reads it — so it is not also appended as an
+// engine.Option.
+func (s *Service) SetEngineParticipantSeatWriter(writer engine.ParticipantSeatWriter) {
+	s.engineParticipantSeatWriter = writer
+	s.reinitWorkflowEngine()
+}
+
+// SetEngineParticipantSeatCaster wires the engine's ParticipantSeatCaster
+// for the ensure_participant_seat action (REQ-002's casting resolution).
+func (s *Service) SetEngineParticipantSeatCaster(caster engine.ParticipantSeatCaster) {
+	s.engineParticipantSeatCaster = caster
+	s.reinitWorkflowEngine()
+}
+
+// SetEngineAgentProfileResolver wires the engine's AgentProfileResolver for
+// the quorum guard's REQ-OFFICE-REVIEW-SEATS-004.3 skip.
+func (s *Service) SetEngineAgentProfileResolver(resolver engine.AgentProfileResolver) {
+	s.engineAgentProfiles = resolver
+	s.engineOptions = append(s.engineOptions, engine.WithAgentProfileResolver(resolver))
 	s.reinitWorkflowEngine()
 }
 

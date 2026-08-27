@@ -15,7 +15,6 @@ import (
 
 	"github.com/kandev/kandev/internal/auth"
 	"github.com/kandev/kandev/internal/auth/authn"
-	"github.com/kandev/kandev/internal/authz"
 	commonhttpmw "github.com/kandev/kandev/internal/common/httpmw"
 	"github.com/kandev/kandev/internal/common/logger"
 	"github.com/kandev/kandev/internal/plugins/manifest"
@@ -77,23 +76,28 @@ func RegisterRoutes(router *gin.Engine, svc *Service, _ Deliverer, log *logger.L
 	ctrl := &Controller{svc: svc, log: log, actionInvoker: svc, webhookInvoker: svc}
 
 	api := router.Group("/api/plugins")
-	api.POST("/install", authz.RequireOrgScope(authz.ScopeOrgConfigManage), ctrl.install)
-	api.POST("/sync", ctrl.sync)
+	// Instance admin, not an org scope: plugins load into the shared host
+	// runtime, so an install is not confined to the installer's org. Every
+	// other mutating route here (uninstall, enable, disable, config) is
+	// already RequireAdmin; gating install any lower would let an org admin
+	// add a plugin they cannot remove.
+	api.POST("/install", authn.RequireAdmin(), ctrl.install)
+	api.POST("/sync", authn.RequireAdmin(), ctrl.sync)
 	// Register the static /marketplace and /settings routes before the /:id
 	// wildcard, matching the /install and /sync ordering — some gin/httprouter
 	// tree versions reject a static sibling added after an existing wildcard for
 	// the same method.
 	ctrl.registerMarketplaceRoutes(api)
 	api.GET("/settings", ctrl.getSettings)
-	api.PUT("/settings", ctrl.updateSettings)
+	api.PUT("/settings", authn.RequireAdmin(), ctrl.updateSettings)
 	api.GET("", ctrl.list)
 	api.GET("/:id", ctrl.get)
 	api.GET("/:id/config", ctrl.getConfig)
-	api.PATCH("/:id", ctrl.updateConfig)
-	api.PUT("/:id/auto-update", ctrl.setAutoUpdate)
-	api.DELETE("/:id", ctrl.uninstall)
-	api.POST("/:id/enable", ctrl.enable)
-	api.POST("/:id/disable", ctrl.disable)
+	api.PATCH("/:id", authn.RequireAdmin(), ctrl.updateConfig)
+	api.PUT("/:id/auto-update", authn.RequireAdmin(), ctrl.setAutoUpdate)
+	api.DELETE("/:id", authn.RequireAdmin(), ctrl.uninstall)
+	api.POST("/:id/enable", authn.RequireAdmin(), ctrl.enable)
+	api.POST("/:id/disable", authn.RequireAdmin(), ctrl.disable)
 
 	api.GET("/:id/bundle", ctrl.bundle)
 	api.GET("/:id/ui/*path", ctrl.ui)

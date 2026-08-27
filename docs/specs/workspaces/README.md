@@ -12,7 +12,7 @@ owners:
 ## Purpose
 
 The workspace system owns workspace lifecycle, repositories, worktrees,
-branches, workspace secrets, and workspace-scoped execution context.
+branches, branch policies, workspace secrets, and workspace-scoped execution context.
 
 ## Ownership
 
@@ -32,25 +32,27 @@ Git state.
 
 
 
+- [Branch Policies](requirements/branch-policies.md)
 - [Create a Local Repository During Task Creation](requirements/create-local-repository.md)
 - [Kanban workspace creation](requirements/creation.md)
 - [Workspace Deletion](requirements/deletion.md)
 - [Improve Kandev](requirements/improve-kandev.md)
 - [Local Workspace Repositories](requirements/local-repositories.md)
+- [Organization Units](requirements/org-units.md)
 - [Repository and Workspace Secrets](requirements/repository-secrets.md)
 - [Repository Sets](requirements/repository-sets.md)
 - [Copy and Move Secrets Between Scopes](requirements/secret-scope-transfer.md)
 - [Workspace Base-Branch Propagation](requirements/workspace-base-branch-propagation.md)
+- [Worktree Base Refresh](requirements/worktree-base-refresh.md)
 - [Worktree Branch Templates](requirements/worktree-branch-templates.md)
-- [Organization Units](requirements/org-units.md)
 
 ### System design
 
-
-- [Organization Units](system-design/org-units.md)
-
 - [Improve Kandev](system-design/improve-kandev.md)
 - [Copy and Move Secrets Between Scopes](system-design/secret-scope-transfer.md)
+- [Branch Policies](system-design/branch-policies.md)
+- [Worktree Base Refresh](system-design/worktree-base-refresh.md)
+- [Organization Units](system-design/org-units.md)
 
 ## Migration record
 

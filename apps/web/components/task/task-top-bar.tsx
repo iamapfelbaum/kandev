@@ -48,6 +48,8 @@ type TaskTopBarProps = {
   remoteExecutorType?: string | null;
   officeTaskHref?: string | null;
   onTaskUnarchived?: (taskId: string) => void;
+  onMoveStart?: () => void;
+  onMoveError?: (error: unknown) => void;
 };
 
 const TaskTopBar = memo(function TaskTopBar({
@@ -69,6 +71,8 @@ const TaskTopBar = memo(function TaskTopBar({
   remoteExecutorType,
   officeTaskHref,
   onTaskUnarchived,
+  onMoveStart,
+  onMoveError,
 }: TaskTopBarProps) {
   const { t } = useTranslation();
   // Projects only exist for office-owned tasks, so kanban-mode tasks render no
@@ -102,6 +106,8 @@ const TaskTopBar = memo(function TaskTopBar({
             taskId={taskId ?? null}
             workflowId={workflowId ?? null}
             isArchived={isArchived}
+            onMoveStart={onMoveStart}
+            onMoveError={onMoveError}
           />
         ) : undefined
       }

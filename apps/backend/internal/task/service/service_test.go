@@ -203,6 +203,7 @@ func createTestServiceWithSessionsRepo(
 		GitSnapshots:      repo,
 		RepoEntities:      repo,
 		RepositorySets:    repo,
+		BranchPolicies:    repo,
 		RepositoryCleanup: repo,
 		Executors:         repo,
 		Environments:      repo,
