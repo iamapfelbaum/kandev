@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,10 +12,12 @@ import (
 	"github.com/kandev/kandev/internal/common/logger"
 	"github.com/kandev/kandev/internal/db"
 	"github.com/kandev/kandev/internal/events/bus"
+	"github.com/kandev/kandev/internal/plugins/instances"
 	"github.com/kandev/kandev/internal/plugins/marketplace"
 	"github.com/kandev/kandev/internal/plugins/runtime"
 	"github.com/kandev/kandev/internal/plugins/state"
 	"github.com/kandev/kandev/internal/plugins/store"
+	"github.com/kandev/kandev/internal/plugins/webapp"
 )
 
 // marketplaceURLEnv overrides the built-in official marketplace source URL at
@@ -66,6 +69,24 @@ func Provide(cfg *config.Config, dbPool *db.Pool, secrets SecretVault, eventBus 
 		return nil, nil, fmt.Errorf("plugins: init user state store: %w", err)
 	}
 
+	instanceStore, err := instances.NewStore(dbPool)
+	if err != nil {
+		return nil, nil, fmt.Errorf("plugins: init web-app instance store: %w", err)
+	}
+	artifactStore, err := webapp.NewArtifactStore(filepath.Join(cfg.ResolvedHomeDir(), pluginsSubdir, "webapps"))
+	if err != nil {
+		return nil, nil, fmt.Errorf("plugins: init web-app artifact store: %w", err)
+	}
+	if _, err := instanceStore.ReconcileArtifacts(context.Background(), func(path, digest string, bytes int64) (instances.ArtifactCheck, error) {
+		artifact, err := artifactStore.Reconcile(webapp.Artifact{Digest: digest, RelativePath: path, Bytes: bytes})
+		if err != nil {
+			return instances.ArtifactCheck{}, err
+		}
+		return instances.ArtifactCheck{Available: artifact.Available, Reason: artifact.Reason}, nil
+	}); err != nil {
+		return nil, nil, fmt.Errorf("plugins: reconcile web-app artifacts: %w", err)
+	}
+
 	registry := NewRegistry()
 	if err := registry.Load(pluginStore); err != nil {
 		return nil, nil, fmt.Errorf("plugins: load registry: %w", err)
@@ -75,6 +96,7 @@ func Provide(cfg *config.Config, dbPool *db.Pool, secrets SecretVault, eventBus 
 	svc.warnLoadedWebhookAccessIssues()
 	svc.SetState(stateStore)
 	svc.SetUserState(userStateStore)
+	svc.SetWebAppStorage(instanceStore, artifactStore)
 	svc.SetSecrets(secrets)
 	svc.SetPluginsDir(dir)
 

@@ -233,7 +233,7 @@ mapping clear.
 
 - [x] [Task 00: Move to the plugin-backed baseline](task-00-baseline-transition.md)
 - [x] [Task 01: Canvas release gate](task-01-canvas-release-gate.md)
-- [ ] [Task 02: Plugin web-app package foundation](task-02-plugin-web-app-package-foundation.md)
+- [x] [Task 02: Plugin web-app package foundation](task-02-plugin-web-app-package-foundation.md)
 - [ ] [Task 03: Isolated browser runtime](task-03-isolated-browser-runtime.md)
 - [ ] [Task 04: Browser application protocol](task-04-browser-data-state.md)
 - [ ] [Task 05: Live event transport](task-05-live-event-transport.md)
@@ -260,6 +260,10 @@ dependency order only. They do not authorize implementation subagents.
   focused tests. The exact backend verification passes with the internal
   configuration-file environment cleared, and the frontend contract test
   passes.
+- Task 02 passed on 2026-08-27. Static web-app manifest validation, bounded
+  immutable artifacts, scoped plugin-instance/release/grant storage, atomic
+  count and byte admission, cleanup inventory, and startup artifact
+  reconciliation are implemented. The work-order backend verification passes.
 
 ## Risks
 

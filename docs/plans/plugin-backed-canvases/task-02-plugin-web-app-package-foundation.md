@@ -1,7 +1,7 @@
 ---
 id: "02-plugin-web-app-package-foundation"
 title: "Plugin web-app package foundation"
-status: pending
+status: done
 wave: 2
 depends_on:
   - "01-canvas-release-gate"
@@ -104,4 +104,8 @@ cd apps/backend && go test ./internal/plugins/... ./pkg/pluginsdk/... ./internal
 
 ## Results
 
-Pending.
+Completed on 2026-08-27. Added `ui.web_apps` manifest declarations and
+validation, the bounded static package validator, digest-addressed immutable
+artifact storage, startup reconciliation, scoped instance/release/grant
+records, atomic canvas and storage admission, and durable cleanup inventory.
+The documented plugin, SDK, persistence, and backup package tests pass.

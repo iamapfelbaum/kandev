@@ -13,10 +13,12 @@ import (
 	"github.com/kandev/kandev/internal/common/logger"
 	"github.com/kandev/kandev/internal/events/bus"
 	"github.com/kandev/kandev/internal/mcp/plugintools"
+	"github.com/kandev/kandev/internal/plugins/instances"
 	"github.com/kandev/kandev/internal/plugins/manifest"
 	"github.com/kandev/kandev/internal/plugins/marketplace"
 	"github.com/kandev/kandev/internal/plugins/state"
 	"github.com/kandev/kandev/internal/plugins/store"
+	"github.com/kandev/kandev/internal/plugins/webapp"
 	"github.com/kandev/kandev/pkg/pluginsdk"
 )
 
@@ -92,6 +94,8 @@ type Service struct {
 	registry         *Registry
 	state            *state.Store
 	userState        *state.UserStore
+	instances        *instances.Store
+	webArtifacts     *webapp.ArtifactStore
 	userStateCleanup userStateCleanupStore
 	eventBus         bus.EventBus
 	log              *logger.Logger
@@ -383,6 +387,30 @@ func (s *Service) setUserStateCleanupStore(cleanup userStateCleanupStore) {
 // calling user (Approach D1, docs/decisions/2026-08-01-per-user-plugin-storage.md).
 func (s *Service) UserState() *state.UserStore {
 	return s.userState
+}
+
+// SetWebAppStorage wires the durable instance metadata and immutable static
+// artifact stores used by isolated web applications. Native plugin lifecycle
+// remains independent of these stores.
+func (s *Service) SetWebAppStorage(instanceStore *instances.Store, artifactStore *webapp.ArtifactStore) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.instances = instanceStore
+	s.webArtifacts = artifactStore
+}
+
+// Instances returns the scoped web-application instance store.
+func (s *Service) Instances() *instances.Store {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.instances
+}
+
+// WebArtifacts returns immutable static web-application artifact storage.
+func (s *Service) WebArtifacts() *webapp.ArtifactStore {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.webArtifacts
 }
 
 // SetSecrets wires the secret vault Provide was constructed with.
