@@ -99,7 +99,7 @@ test.describe("Desktop repository discovery consent", () => {
       const refreshResponse = testPage.waitForResponse(
         (response) =>
           response.url().includes("/api/v1/workspaces/") &&
-          response.url().endsWith("/repositories/discovery/refresh") &&
+          response.url().includes("/repositories/discovery/refresh") &&
           response.request().method() === "POST" &&
           response.ok(),
       );
