@@ -2150,17 +2150,15 @@ func (s *Service) StartSessionForWorkflowStep(ctx context.Context, taskID, sessi
 	if session.TaskID != taskID {
 		return fmt.Errorf("session does not belong to task")
 	}
-	if !s.agentManager.IsPassthroughSession(ctx, session.ID) {
-		effectiveProfile := s.resolveStepAgentProfile(ctx, step)
-		if effectiveProfile != "" && effectiveProfile != session.AgentProfileID {
-			return fmt.Errorf(
-				"workflow step profile mismatch: step %q resolves to profile %q but session %q uses profile %q; route the session before prompting",
-				workflowStepID,
-				effectiveProfile,
-				session.ID,
-				session.AgentProfileID,
-			)
-		}
+	effectiveProfile := s.resolveStepAgentProfile(ctx, step)
+	if effectiveProfile != "" && effectiveProfile != session.AgentProfileID {
+		return fmt.Errorf(
+			"workflow step profile mismatch: step %q resolves to profile %q but session %q uses profile %q; route the session before prompting",
+			workflowStepID,
+			effectiveProfile,
+			session.ID,
+			session.AgentProfileID,
+		)
 	}
 
 	dbTask, err := s.repo.GetTask(ctx, taskID)
@@ -5158,6 +5156,7 @@ const (
 type cancellationIdentity struct {
 	executionID      string
 	promptGeneration uint64
+	activityEpoch    uint64
 	turnID           string
 }
 
