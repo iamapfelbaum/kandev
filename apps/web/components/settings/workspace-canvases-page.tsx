@@ -370,7 +370,9 @@ function CanvasRow({
             variant="outline"
             size="sm"
             className="min-h-11 cursor-pointer md:min-h-7"
-            disabled={busyId === canvas.id}
+            disabled={
+              busyId === canvas.id || canvas.status === "archived" || canvas.status === "disabled"
+            }
             onClick={() => onEdit(canvas)}
           >
             <IconEdit className="mr-1.5 h-3.5 w-3.5" />

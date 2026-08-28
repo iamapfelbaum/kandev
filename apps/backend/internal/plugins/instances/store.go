@@ -67,6 +67,8 @@ var (
 	ErrInvalidRelease           = errors.New("invalid plugin release")
 	ErrStalePromotionReview     = errors.New("canvas promotion review is stale")
 	ErrStaleCanvasEdit          = errors.New("canvas edit base release is stale")
+	ErrStaleCanvasPublish       = errors.New("canvas publish authority is stale")
+	ErrInvalidLifecycleState    = errors.New("plugin instance lifecycle state does not allow this operation")
 )
 
 // ScopeIdentifiers contains only the trusted identifiers required by a scope.
@@ -129,6 +131,37 @@ type Instance struct {
 	GrantGeneration int64
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+}
+
+// PublishAuthority is the durable identity captured when a trusted authoring
+// request is authorized. A publish must match every field in this snapshot at
+// the release insertion boundary so a scope transition, archive, or competing
+// release cannot turn an already-authorized stream into a write for a new
+// authority.
+type PublishAuthority struct {
+	InstanceID      string
+	ScopeKind       string
+	WorkspaceID     string
+	TaskID          string
+	SessionID       string
+	RepositoryID    string
+	Status          string
+	ActiveReleaseID string
+	GrantGeneration int64
+}
+
+func (i Instance) PublishAuthority() PublishAuthority {
+	return PublishAuthority{
+		InstanceID: i.ID, ScopeKind: i.ScopeKind, WorkspaceID: i.WorkspaceID,
+		TaskID: i.TaskID, SessionID: i.SessionID, RepositoryID: i.RepositoryID,
+		Status: i.Status, ActiveReleaseID: i.ActiveReleaseID, GrantGeneration: i.GrantGeneration,
+	}
+}
+
+func (a PublishAuthority) IsZero() bool {
+	return a.InstanceID == "" && a.ScopeKind == "" && a.WorkspaceID == "" &&
+		a.TaskID == "" && a.SessionID == "" && a.RepositoryID == "" &&
+		a.Status == "" && a.ActiveReleaseID == "" && a.GrantGeneration == 0
 }
 
 type Release struct {
@@ -545,11 +578,22 @@ func (s *Store) Restore(ctx context.Context, id string) error {
 }
 
 func (s *Store) updateStatus(ctx context.Context, id, status string) error {
-	result, err := s.db.ExecContext(ctx, s.db.Rebind(`UPDATE plugin_instances SET status = ?, updated_at = ? WHERE id = ?`), status, time.Now().UTC().Format(time.RFC3339Nano), id)
+	s.admission.Lock()
+	defer s.admission.Unlock()
+	result, err := s.db.ExecContext(ctx, s.db.Rebind(
+		`UPDATE plugin_instances SET status = ?, updated_at = ? WHERE id = ? AND status <> ?`,
+	), status, time.Now().UTC().Format(time.RFC3339Nano), id, StatusRemoved)
 	if err != nil {
 		return err
 	}
 	if affected, _ := result.RowsAffected(); affected == 0 {
+		var exists int
+		if err := s.ro.GetContext(ctx, &exists, s.ro.Rebind(`SELECT COUNT(*) FROM plugin_instances WHERE id = ?`), id); err != nil {
+			return err
+		}
+		if exists == 0 {
+			return ErrNotFound
+		}
 		return ErrNotFound
 	}
 	return nil
@@ -633,8 +677,24 @@ func (s *Store) SetActiveRelease(ctx context.Context, instanceID, releaseID stri
 	if exists == 0 {
 		return ErrInvalidRelease
 	}
-	if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE plugin_instances SET active_release_id = ?, updated_at = ? WHERE id = ? AND status <> ?`), releaseID, time.Now().UTC().Format(time.RFC3339Nano), instanceID, StatusRemoved); err != nil {
+	var status string
+	if err := tx.GetContext(ctx, &status, tx.Rebind(`SELECT status FROM plugin_instances WHERE id = ?`), instanceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
 		return err
+	}
+	if err := activationStateError(status); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, tx.Rebind(
+		`UPDATE plugin_instances SET active_release_id = ?, updated_at = ? WHERE id = ? AND status IN (?, ?, ?)`,
+	), releaseID, time.Now().UTC().Format(time.RFC3339Nano), instanceID, StatusPending, StatusActive, StatusError)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return activationStateError(status)
 	}
 	return tx.Commit()
 }
@@ -668,6 +728,9 @@ func (s *Store) ActivateReleaseTx(ctx context.Context, tx *sqlx.Tx, instanceID, 
 	if current.Status == StatusRemoved {
 		return ErrNotFound
 	}
+	if err := activationStateError(current.Status); err != nil {
+		return err
+	}
 	var release struct {
 		DeclaredPermissionsJSON string `db:"declared_permissions_json"`
 		ValidationStatus        string `db:"validation_status"`
@@ -684,15 +747,26 @@ func (s *Store) ActivateReleaseTx(ctx context.Context, tx *sqlx.Tx, instanceID, 
 		return ErrInvalidRelease
 	}
 	result, err := tx.ExecContext(ctx, tx.Rebind(
-		`UPDATE plugin_instances SET active_release_id = ?, status = ?, updated_at = ? WHERE id = ? AND status <> ?`,
-	), releaseID, StatusActive, time.Now().UTC().Format(time.RFC3339Nano), instanceID, StatusRemoved)
+		`UPDATE plugin_instances SET active_release_id = ?, status = ?, updated_at = ? WHERE id = ? AND status IN (?, ?, ?)`,
+	), releaseID, StatusActive, time.Now().UTC().Format(time.RFC3339Nano), instanceID, StatusPending, StatusActive, StatusError)
 	if err != nil {
 		return err
 	}
 	if affected, _ := result.RowsAffected(); affected == 0 {
-		return ErrNotFound
+		return activationStateError(current.Status)
 	}
 	return nil
+}
+
+func activationStateError(status string) error {
+	switch status {
+	case StatusPending, StatusActive, StatusError:
+		return nil
+	case StatusRemoved:
+		return ErrNotFound
+	default:
+		return fmt.Errorf("%w: instance is %s", ErrInvalidLifecycleState, status)
+	}
 }
 
 type declaredPermissions struct {
@@ -962,6 +1036,51 @@ func (s *Store) SetReleaseValidation(ctx context.Context, releaseID, validationS
 	return nil
 }
 
+// RejectReleaseAndPrune records a user rejection and transfers cleanup
+// ownership for the rejected artifact in the same transaction. This prevents
+// a rejected pending release from consuming durable storage until a later
+// publish happens to trigger retention.
+func (s *Store) RejectReleaseAndPrune(ctx context.Context, instanceID, releaseID string) error {
+	if strings.TrimSpace(instanceID) == "" || strings.TrimSpace(releaseID) == "" {
+		return ErrInvalidRelease
+	}
+	s.admission.Lock()
+	defer s.admission.Unlock()
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	current, err := loadReleaseRetentionInstance(ctx, tx, instanceID)
+	if err != nil {
+		return err
+	}
+	if err := activationStateError(current.Status); err != nil {
+		return err
+	}
+	var validationStatus string
+	if err := tx.GetContext(ctx, &validationStatus, tx.Rebind(
+		`SELECT validation_status FROM plugin_releases WHERE id = ? AND instance_id = ?`,
+	), releaseID, instanceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if validationStatus != ValidationPendingPermission {
+		return ErrInvalidRelease
+	}
+	if _, err := tx.ExecContext(ctx, tx.Rebind(
+		`UPDATE plugin_releases SET validation_status = ?, validation_error = ? WHERE id = ? AND instance_id = ? AND validation_status = ?`,
+	), ValidationInvalid, "rejected_by_user", releaseID, instanceID, ValidationPendingPermission); err != nil {
+		return err
+	}
+	if err := s.pruneReleasesTx(ctx, tx, instanceID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // PromoteScopeAndGrants atomically moves an instance to workspace scope and
 // records the grants approved by one human. The admission check excludes the
 // instance itself, so a full destination workspace can still accept its
@@ -1017,8 +1136,8 @@ func loadPromotionState(ctx context.Context, tx *sqlx.Tx, instanceID string) (in
 		}
 		return instanceRow{}, "", err
 	}
-	if current.Status == StatusRemoved {
-		return instanceRow{}, "", ErrNotFound
+	if err := activationStateError(current.Status); err != nil {
+		return instanceRow{}, "", err
 	}
 	if current.ActiveReleaseID == "" {
 		return instanceRow{}, "", ErrInvalidRelease
@@ -1126,6 +1245,9 @@ func (s *Store) ApproveRelease(ctx context.Context, instanceID, releaseID, appro
 	), ValidationValid, releaseID, instanceID); err != nil {
 		return err
 	}
+	if err := s.SetPluginIDTx(ctx, tx, instanceID, release.PluginID); err != nil {
+		return err
+	}
 	if err := activateReleaseTx(ctx, tx, instanceID, releaseID); err != nil {
 		return err
 	}
@@ -1133,33 +1255,48 @@ func (s *Store) ApproveRelease(ctx context.Context, instanceID, releaseID, appro
 }
 
 type pendingReleaseRow struct {
+	PluginID                string `db:"plugin_id"`
 	DeclaredPermissionsJSON string `db:"declared_permissions_json"`
 	ValidationStatus        string `db:"validation_status"`
 	ScopeKind               string `db:"scope_kind"`
+	Status                  string `db:"status"`
 }
 
 func loadPendingReleaseTx(ctx context.Context, tx *sqlx.Tx, instanceID, releaseID string) (pendingReleaseRow, error) {
 	var release pendingReleaseRow
 	if err := tx.GetContext(ctx, &release, tx.Rebind(
-		`SELECT r.declared_permissions_json, r.validation_status, i.scope_kind FROM plugin_releases r JOIN plugin_instances i ON i.id = r.instance_id WHERE r.id = ? AND r.instance_id = ?`,
+		`SELECT r.plugin_id, r.declared_permissions_json, r.validation_status, i.scope_kind, i.status FROM plugin_releases r JOIN plugin_instances i ON i.id = r.instance_id WHERE r.id = ? AND r.instance_id = ?`,
 	), releaseID, instanceID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return pendingReleaseRow{}, ErrNotFound
 		}
 		return pendingReleaseRow{}, err
 	}
+	if err := activationStateError(release.Status); err != nil {
+		return pendingReleaseRow{}, err
+	}
 	return release, nil
 }
 
 func activateReleaseTx(ctx context.Context, tx *sqlx.Tx, instanceID, releaseID string) error {
+	var status string
+	if err := tx.GetContext(ctx, &status, tx.Rebind(`SELECT status FROM plugin_instances WHERE id = ?`), instanceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if err := activationStateError(status); err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(ctx, tx.Rebind(
-		`UPDATE plugin_instances SET active_release_id = ?, status = ?, grant_generation = grant_generation + 1, updated_at = ? WHERE id = ? AND status <> ?`,
-	), releaseID, StatusActive, time.Now().UTC().Format(time.RFC3339Nano), instanceID, StatusRemoved)
+		`UPDATE plugin_instances SET active_release_id = ?, status = ?, grant_generation = grant_generation + 1, updated_at = ? WHERE id = ? AND status IN (?, ?, ?)`,
+	), releaseID, StatusActive, time.Now().UTC().Format(time.RFC3339Nano), instanceID, StatusPending, StatusActive, StatusError)
 	if err != nil {
 		return err
 	}
 	if affected, _ := result.RowsAffected(); affected == 0 {
-		return ErrNotFound
+		return activationStateError(status)
 	}
 	return nil
 }
@@ -1226,6 +1363,40 @@ func (s *Store) CreateReleaseIfActiveReleaseTx(ctx context.Context, tx *sqlx.Tx,
 	return s.CreateReleaseTx(ctx, tx, release)
 }
 
+// CreateReleaseIfAuthorityTx inserts a release only when the complete
+// authorizing instance snapshot is still current. The conditional update and
+// insert share one transaction, so promotion, archive, restore, or another
+// release cannot invalidate an already-streamed source between authorization
+// and durable release ownership.
+func (s *Store) CreateReleaseIfAuthorityTx(ctx context.Context, tx *sqlx.Tx, instanceID string, expected PublishAuthority, release Release) error {
+	if strings.TrimSpace(instanceID) == "" || expected.InstanceID != instanceID || expected.ScopeKind == "" || expected.Status == "" {
+		return ErrStaleCanvasPublish
+	}
+	if err := activationStateError(expected.Status); err != nil {
+		return err
+	}
+	if release.InstanceID != instanceID {
+		return ErrInvalidRelease
+	}
+	result, err := tx.ExecContext(ctx, tx.Rebind(
+		`UPDATE plugin_instances SET updated_at = updated_at WHERE id = ? AND scope_kind = ? AND workspace_id = ? AND task_id = ? AND session_id = ? AND repository_id = ? AND status = ? AND active_release_id = ? AND grant_generation = ?`,
+	), instanceID, expected.ScopeKind, expected.WorkspaceID, expected.TaskID, expected.SessionID, expected.RepositoryID, expected.Status, expected.ActiveReleaseID, expected.GrantGeneration)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		var exists int
+		if err := tx.GetContext(ctx, &exists, tx.Rebind(`SELECT COUNT(*) FROM plugin_instances WHERE id = ?`), instanceID); err != nil {
+			return err
+		}
+		if exists == 0 {
+			return ErrNotFound
+		}
+		return ErrStaleCanvasPublish
+	}
+	return s.CreateReleaseTx(ctx, tx, release)
+}
+
 // PruneReleases keeps the active release, the newest non-active valid release,
 // and the newest pending release for one instance. Superseded release rows are
 // deleted only after cleanup ownership is recorded in the same transaction.
@@ -1243,6 +1414,13 @@ func (s *Store) PruneReleases(ctx context.Context, instanceID string) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if err := s.pruneReleasesTx(ctx, tx, instanceID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) pruneReleasesTx(ctx context.Context, tx *sqlx.Tx, instanceID string) error {
 	current, err := loadReleaseRetentionInstance(ctx, tx, instanceID)
 	if err != nil {
 		return err
@@ -1255,10 +1433,7 @@ func (s *Store) PruneReleases(ctx context.Context, instanceID string) error {
 	if err := scheduleRemovedReleaseCleanup(ctx, tx, instanceID, current.WorkspaceID, retainedPaths, removed); err != nil {
 		return err
 	}
-	if err := deleteRemovedReleases(ctx, tx, instanceID, removed); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return deleteRemovedReleases(ctx, tx, instanceID, removed)
 }
 
 type releaseRetentionInstance struct {

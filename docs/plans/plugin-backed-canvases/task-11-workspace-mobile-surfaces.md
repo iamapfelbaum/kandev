@@ -119,5 +119,6 @@ drawer with safe-area and viewport containment rules.
 Verification:
 
 - Frontend lint, typecheck, i18n completeness, and new-code ratchet — passed.
-- Focused Vitest — 9 files and 59 tests passed.
-- Desktop and mobile canvas Playwright flows — passed.
+- Focused Vitest — canvas host, lifecycle, workspace, and Dockview tests passed.
+- Desktop and mobile canvas Playwright flows — passed, including two-canvas
+  phone switching and host-action parity.

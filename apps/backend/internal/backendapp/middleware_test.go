@@ -80,6 +80,9 @@ func TestCORSMiddlewareAllowsInterimSettingsInterlockHeader(t *testing.T) {
 	if !strings.Contains(rec.Header().Get("Access-Control-Allow-Headers"), "If-Match") {
 		t.Fatalf("Access-Control-Allow-Headers = %q, want If-Match", rec.Header().Get("Access-Control-Allow-Headers"))
 	}
+	if !strings.Contains(rec.Header().Get("Access-Control-Allow-Headers"), "Last-Event-ID") {
+		t.Fatalf("Access-Control-Allow-Headers = %q, want Last-Event-ID", rec.Header().Get("Access-Control-Allow-Headers"))
+	}
 }
 
 func TestCORSMiddlewareAllowsLoopbackAliasOriginForCredentialedRequests(t *testing.T) {

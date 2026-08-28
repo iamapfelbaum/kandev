@@ -16,7 +16,7 @@ func TestBuildContentSecurityPolicyIsGrantBoundAndOpaque(t *testing.T) {
 		"form-action 'none'",
 		"base-uri 'none'",
 		"object-src 'none'",
-		"script-src 'self'",
+		"script-src 'self' 'unsafe-inline'",
 		"connect-src 'self' https://api.example.com:443",
 		"frame-ancestors http://127.0.0.1:38429 tauri://localhost http://tauri.localhost",
 	} {
@@ -26,6 +26,9 @@ func TestBuildContentSecurityPolicyIsGrantBoundAndOpaque(t *testing.T) {
 	}
 	if strings.Count(policy, "api.example.com:443") != 3 {
 		t.Fatalf("policy includes a duplicate or missing origin: %q", policy)
+	}
+	if strings.Contains(policy, "'unsafe-eval'") || strings.Contains(policy, "script-src https://") {
+		t.Fatalf("policy enables eval or remote scripts: %q", policy)
 	}
 }
 

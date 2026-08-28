@@ -2,17 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  IconDots,
-  IconEdit,
-  IconExternalLink,
-  IconListDetails,
-  IconSparkles,
-} from "@tabler/icons-react";
-import { Button } from "@kandev/ui/button";
 import { PageShell } from "@/components/page-shell";
-import { CanvasPage } from "@/components/plugins/canvas-page";
-import { MobilePickerSheet } from "@/components/task/mobile/mobile-picker-sheet";
 import { useResponsiveBreakpoint } from "@/hooks/use-responsive-breakpoint";
 import { useRouter } from "@/lib/routing/client-router";
 import {
@@ -25,45 +15,14 @@ import {
 } from "@/lib/api/domains/canvas-api";
 import { canvasErrorMessage } from "@/lib/api/domains/canvas-error-copy";
 import { useCanvasLifecycleRevision } from "@/lib/canvas-lifecycle";
-import { CanvasPromotionDialog, CanvasReleaseDialog } from "./canvas-lifecycle-dialogs";
-
-type CanvasHostState =
-  | "loading_metadata"
-  | "pending_first_release"
-  | "pending_permission"
-  | "loading_runtime"
-  | "ready"
-  | "offline"
-  | "invalid_release"
-  | "unavailable"
-  | "archived";
-
-const STATE_COPY: Record<CanvasHostState, { title: string; description: string }> = {
-  loading_metadata: {
-    title: "canvases:loadingCanvas",
-    description: "canvases:loadingCanvasDescription",
-  },
-  pending_first_release: {
-    title: "canvases:pendingFirstRelease",
-    description: "canvases:pendingFirstReleaseDescription",
-  },
-  pending_permission: {
-    title: "canvases:pendingPermission",
-    description: "canvases:pendingPermissionDescription",
-  },
-  loading_runtime: {
-    title: "canvases:loadingRuntime",
-    description: "canvases:loadingRuntimeDescription",
-  },
-  ready: { title: "canvases:ready", description: "canvases:readyDescription" },
-  offline: { title: "canvases:offline", description: "canvases:offlineDescription" },
-  invalid_release: {
-    title: "canvases:invalidRelease",
-    description: "canvases:invalidReleaseDescription",
-  },
-  unavailable: { title: "canvases:unavailable", description: "canvases:unavailableDescription" },
-  archived: { title: "canvases:archived", description: "canvases:archivedDescription" },
-};
+import { useCanvasHostCanvases } from "./canvas-host-picker";
+import {
+  CanvasDesktopActions,
+  CanvasHostBody,
+  CanvasHostDialogs,
+  MobileCanvasActions,
+  type CanvasHostState,
+} from "./canvas-host-components";
 
 function stateForCanvas(canvas: Canvas): CanvasHostState {
   if (canvas.status === "archived") return "archived";
@@ -78,6 +37,22 @@ function stateForCanvas(canvas: Canvas): CanvasHostState {
   if (canvas.active_release_status === "invalid") return "invalid_release";
   if (canvas.active_release_status === "unavailable") return "unavailable";
   return "loading_runtime";
+}
+
+function canvasAuthorityChanged(previous: Canvas, next: Canvas): boolean {
+  return (
+    previous.status !== next.status ||
+    previous.plugin_id !== next.plugin_id ||
+    previous.plugin_instance_id !== next.plugin_instance_id ||
+    previous.scope_kind !== next.scope_kind ||
+    previous.workspace_id !== next.workspace_id ||
+    previous.task_id !== next.task_id ||
+    previous.active_release_id !== next.active_release_id ||
+    previous.active_release_status !== next.active_release_status ||
+    previous.pending_release?.id !== next.pending_release?.id ||
+    previous.pending_release?.validation_status !== next.pending_release?.validation_status ||
+    previous.grant_generation !== next.grant_generation
+  );
 }
 
 function useRuntimeRenewal() {
@@ -109,29 +84,173 @@ function useRuntimeRenewal() {
   return { clearRuntimeRenewal, scheduleRuntimeRenewal, renewRuntimeRef };
 }
 
-function useCanvasHost(canvasId: string) {
+type CanvasHostRef<T> = { current: T };
+type CanvasHostSetter<T> = (value: T | ((current: T) => T)) => void;
+
+type CanvasHostSnapshotOptions = {
+  canvasId: string;
+  requestId: number;
+  requestRef: CanvasHostRef<number>;
+  canvasRef: CanvasHostRef<Canvas | null>;
+  nextCanvas: Canvas;
+  forceRuntimeReset: boolean;
+  setCanvas: CanvasHostSetter<Canvas | null>;
+  setRuntimeUrl: CanvasHostSetter<string | null>;
+  setState: CanvasHostSetter<CanvasHostState>;
+  setError: CanvasHostSetter<string | null>;
+  clearRuntimeRenewal: () => void;
+  applyRuntime: (runtime: CanvasRuntimeResponse) => void;
+};
+
+function applyCanvasRuntime(
+  runtime: CanvasRuntimeResponse,
+  setRuntimeUrl: CanvasHostSetter<string | null>,
+  setState: CanvasHostSetter<CanvasHostState>,
+  clearRuntimeRenewal: () => void,
+  scheduleRuntimeRenewal: (expiresInSeconds: number | undefined) => void,
+) {
+  if (runtime.runtime_url) {
+    setRuntimeUrl(runtime.runtime_url);
+    setState("ready");
+    scheduleRuntimeRenewal(runtime.expires_in_seconds);
+  } else {
+    clearRuntimeRenewal();
+    setState("unavailable");
+  }
+}
+
+type CanvasHostErrorOptions = {
+  requestRef: CanvasHostRef<number>;
+  requestId: number;
+  reason: unknown;
+  message: string;
+  clearRuntimeRenewal: () => void;
+  setState: CanvasHostSetter<CanvasHostState>;
+  setError: CanvasHostSetter<string | null>;
+};
+
+function applyCanvasHostError(options: CanvasHostErrorOptions) {
+  if (options.requestRef.current !== options.requestId) return;
+  options.clearRuntimeRenewal();
+  options.setState(
+    typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "unavailable",
+  );
+  options.setError(options.message || String(options.reason));
+}
+
+function applyCanvasSnapshot(options: CanvasHostSnapshotOptions): Promise<void> | undefined {
+  if (options.requestRef.current !== options.requestId) return;
+  const previousCanvas = options.canvasRef.current;
+  options.canvasRef.current = options.nextCanvas;
+  options.setCanvas(options.nextCanvas);
+  if (
+    !options.forceRuntimeReset &&
+    previousCanvas &&
+    !canvasAuthorityChanged(previousCanvas, options.nextCanvas)
+  ) {
+    return;
+  }
+
+  options.clearRuntimeRenewal();
+  options.setRuntimeUrl(null);
+  options.setError(null);
+  const nextState = stateForCanvas(options.nextCanvas);
+  options.setState(nextState);
+  if (nextState !== "loading_runtime") return;
+  return getCanvasRuntime(options.canvasId).then((runtime) => {
+    if (options.requestRef.current !== options.requestId) return;
+    options.applyRuntime(runtime);
+  });
+}
+
+type CanvasHostRuntimeRequestOptions = {
+  canvasId: string;
+  requestId: number;
+  requestRef: CanvasHostRef<number>;
+  applyRuntime: (runtime: CanvasRuntimeResponse) => void;
+  onError: (requestId: number, reason: unknown) => void;
+  onComplete: () => void;
+};
+
+function requestCanvasHostRuntime(options: CanvasHostRuntimeRequestOptions) {
+  getCanvasRuntime(options.canvasId)
+    .then((runtime) => {
+      if (options.requestRef.current !== options.requestId) return;
+      options.applyRuntime(runtime);
+    })
+    .catch((reason: unknown) => options.onError(options.requestId, reason))
+    .finally(options.onComplete);
+}
+
+type CanvasHostRequestOptions = {
+  setCanvas: CanvasHostSetter<Canvas | null>;
+  setRuntimeUrl: CanvasHostSetter<string | null>;
+  setState: CanvasHostSetter<CanvasHostState>;
+  setError: CanvasHostSetter<string | null>;
+  requestRef: CanvasHostRef<number>;
+  canvasRef: CanvasHostRef<Canvas | null>;
+  renewingRef: CanvasHostRef<boolean>;
+  clearRuntimeRenewal: () => void;
+  scheduleRuntimeRenewal: (expiresInSeconds: number | undefined) => void;
+};
+
+function useCanvasHostRequests(canvasId: string, options: CanvasHostRequestOptions) {
   const { t } = useTranslation();
-  const [canvas, setCanvas] = useState<Canvas | null>(null);
-  const [runtimeUrl, setRuntimeUrl] = useState<string | null>(null);
-  const [state, setState] = useState<CanvasHostState>("loading_metadata");
-  const [error, setError] = useState<string | null>(null);
-  const requestRef = useRef(0);
-  const renewingRef = useRef(false);
-  const { clearRuntimeRenewal, scheduleRuntimeRenewal, renewRuntimeRef } = useRuntimeRenewal();
-  const lifecycleRevision = useCanvasLifecycleRevision();
+  const {
+    setCanvas,
+    setRuntimeUrl,
+    setState,
+    setError,
+    requestRef,
+    canvasRef,
+    renewingRef,
+    clearRuntimeRenewal,
+    scheduleRuntimeRenewal,
+  } = options;
 
   const applyRuntime = useCallback(
-    (runtime: CanvasRuntimeResponse) => {
-      if (runtime.runtime_url) {
-        setRuntimeUrl(runtime.runtime_url);
-        setState("ready");
-        scheduleRuntimeRenewal(runtime.expires_in_seconds);
-      } else {
-        clearRuntimeRenewal();
-        setState("unavailable");
-      }
-    },
+    (runtime: CanvasRuntimeResponse) =>
+      applyCanvasRuntime(
+        runtime,
+        setRuntimeUrl,
+        setState,
+        clearRuntimeRenewal,
+        scheduleRuntimeRenewal,
+      ),
     [clearRuntimeRenewal, scheduleRuntimeRenewal],
+  );
+
+  const handleError = useCallback(
+    (requestId: number, reason: unknown) =>
+      applyCanvasHostError({
+        requestRef,
+        requestId,
+        reason,
+        message: canvasErrorMessage(reason, t, "canvases:loadFailed"),
+        clearRuntimeRenewal,
+        setState,
+        setError,
+      }),
+    [clearRuntimeRenewal, t],
+  );
+
+  const applySnapshot = useCallback(
+    (requestId: number, nextCanvas: Canvas, forceRuntimeReset: boolean) =>
+      applyCanvasSnapshot({
+        canvasId,
+        requestId,
+        requestRef,
+        canvasRef,
+        nextCanvas,
+        forceRuntimeReset,
+        setCanvas,
+        setRuntimeUrl,
+        setState,
+        setError,
+        clearRuntimeRenewal,
+        applyRuntime,
+      }),
+    [applyRuntime, canvasId, clearRuntimeRenewal],
   );
 
   const renewRuntime = useCallback(() => {
@@ -141,49 +260,62 @@ function useCanvasHost(canvasId: string) {
     clearRuntimeRenewal();
     setState("loading_runtime");
     setError(null);
-    getCanvasRuntime(canvasId)
-      .then((runtime) => {
-        if (requestRef.current !== requestId) return;
-        applyRuntime(runtime);
-      })
-      .catch((reason: unknown) => {
-        if (requestRef.current !== requestId) return;
-        clearRuntimeRenewal();
-        setState(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "unavailable");
-        setError(canvasErrorMessage(reason, t, "canvases:loadFailed"));
-      })
-      .finally(() => {
+    requestCanvasHostRuntime({
+      canvasId,
+      requestId,
+      requestRef,
+      applyRuntime,
+      onError: handleError,
+      onComplete: () => {
         renewingRef.current = false;
-      });
-  }, [applyRuntime, canvasId, clearRuntimeRenewal, t]);
+      },
+    });
+  }, [applyRuntime, canvasId, clearRuntimeRenewal, handleError]);
 
   const load = useCallback(() => {
     const requestId = ++requestRef.current;
     clearRuntimeRenewal();
+    canvasRef.current = null;
     setCanvas(null);
     setRuntimeUrl(null);
     setState("loading_metadata");
     setError(null);
-
     getCanvas(canvasId)
-      .then((nextCanvas) => {
-        if (requestRef.current !== requestId) return;
-        setCanvas(nextCanvas);
-        const nextState = stateForCanvas(nextCanvas);
-        setState(nextState);
-        if (nextState !== "loading_runtime") return;
-        return getCanvasRuntime(canvasId).then((runtime) => {
-          if (requestRef.current !== requestId) return;
-          applyRuntime(runtime);
-        });
-      })
-      .catch((reason: unknown) => {
-        if (requestRef.current !== requestId) return;
-        clearRuntimeRenewal();
-        setState(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "unavailable");
-        setError(canvasErrorMessage(reason, t, "canvases:loadFailed"));
-      });
-  }, [applyRuntime, canvasId, clearRuntimeRenewal, t]);
+      .then((nextCanvas) => applySnapshot(requestId, nextCanvas, true))
+      .catch((reason: unknown) => handleError(requestId, reason));
+  }, [applySnapshot, canvasId, clearRuntimeRenewal, handleError]);
+
+  const refresh = useCallback(() => {
+    const requestId = ++requestRef.current;
+    getCanvas(canvasId)
+      .then((nextCanvas) => applySnapshot(requestId, nextCanvas, false))
+      .catch((reason: unknown) => handleError(requestId, reason));
+  }, [applySnapshot, canvasId, handleError]);
+
+  return { load, refresh, renewRuntime };
+}
+
+function useCanvasHost(canvasId: string) {
+  const [canvas, setCanvas] = useState<Canvas | null>(null);
+  const [runtimeUrl, setRuntimeUrl] = useState<string | null>(null);
+  const [state, setState] = useState<CanvasHostState>("loading_metadata");
+  const [error, setError] = useState<string | null>(null);
+  const requestRef = useRef(0);
+  const canvasRef = useRef<Canvas | null>(null);
+  const renewingRef = useRef(false);
+  const { clearRuntimeRenewal, scheduleRuntimeRenewal, renewRuntimeRef } = useRuntimeRenewal();
+  const lifecycleRevision = useCanvasLifecycleRevision();
+  const { load, refresh, renewRuntime } = useCanvasHostRequests(canvasId, {
+    setCanvas,
+    setRuntimeUrl,
+    setState,
+    setError,
+    requestRef,
+    canvasRef,
+    renewingRef,
+    clearRuntimeRenewal,
+    scheduleRuntimeRenewal,
+  });
 
   useEffect(() => {
     renewRuntimeRef.current = renewRuntime;
@@ -198,7 +330,12 @@ function useCanvasHost(canvasId: string) {
       requestRef.current += 1;
       clearRuntimeRenewal();
     };
-  }, [clearRuntimeRenewal, lifecycleRevision, load]);
+  }, [clearRuntimeRenewal, load]);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    refresh();
+  }, [lifecycleRevision, refresh]);
 
   return {
     canvas,
@@ -216,8 +353,9 @@ export function CanvasHostRoute({ canvasId }: { canvasId: string }) {
   const { t } = useTranslation();
   const router = useRouter();
   const { isMobile } = useResponsiveBreakpoint();
-  const { canvas, runtimeUrl, state, error, lifecycleRevision, load, renewRuntime, setHostError } =
+  const { canvas, runtimeUrl, state, error, load, renewRuntime, setHostError } =
     useCanvasHost(canvasId);
+  const hostCanvases = useCanvasHostCanvases(canvas);
   const [menuOpen, setMenuOpen] = useState(false);
   const [promotionOpen, setPromotionOpen] = useState(false);
   const [releasesOpen, setReleasesOpen] = useState(false);
@@ -242,6 +380,14 @@ export function CanvasHostRoute({ canvasId }: { canvasId: string }) {
     }
   };
 
+  const selectCanvas = useCallback(
+    (nextCanvas: Canvas) => {
+      setMenuOpen(false);
+      if (nextCanvas.id !== canvasId) router.push(canvasHref(nextCanvas.id));
+    },
+    [canvasId, router],
+  );
+
   const title = canvas?.title || t("canvases:canvas");
   const desktopActions = canvas ? (
     <CanvasDesktopActions
@@ -263,30 +409,18 @@ export function CanvasHostRoute({ canvasId }: { canvasId: string }) {
       contentTestId="canvas-route-content"
       showNavTrigger
     >
-      <div
-        className="flex h-dvh min-h-0 min-w-0 max-h-[calc(100dvh-2.75rem)] flex-1 flex-col overflow-hidden md:h-auto md:max-h-none"
-        data-testid="canvas-host-route"
-      >
-        <CanvasHostHeader
-          title={title}
-          state={state}
-          isMobile={isMobile}
-          menuOpen={menuOpen}
-          onOpenActions={() => setMenuOpen(true)}
-        />
-        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          {state === "ready" && runtimeUrl ? (
-            <CanvasPage
-              key={`${canvasId}:${lifecycleRevision}:${runtimeUrl}`}
-              runtimeUrl={runtimeUrl}
-              title={title}
-              onError={() => void renewRuntime()}
-            />
-          ) : (
-            <CanvasHostStatePanel state={state} error={error} onRetry={load} />
-          )}
-        </div>
-      </div>
+      <CanvasHostBody
+        canvasId={canvasId}
+        title={title}
+        state={state}
+        isMobile={isMobile}
+        menuOpen={menuOpen}
+        runtimeUrl={runtimeUrl}
+        error={error}
+        onOpenActions={() => setMenuOpen(true)}
+        onRuntimeError={() => void renewRuntime()}
+        onRetry={load}
+      />
       <MobileCanvasActions
         canvas={canvas}
         open={menuOpen}
@@ -295,203 +429,18 @@ export function CanvasHostRoute({ canvasId }: { canvasId: string }) {
         onPromote={() => setPromotionOpen(true)}
         onReleases={() => setReleasesOpen(true)}
         editing={editing}
+        canvases={hostCanvases}
+        onSelectCanvas={selectCanvas}
       />
-      <CanvasPromotionDialog
-        canvas={canvas?.scope_kind === "task" ? canvas : null}
-        open={promotionOpen}
-        onOpenChange={setPromotionOpen}
-        onCompleted={() => router.push(canvas ? canvasHref(canvas.id) : "/")}
-      />
-      <CanvasReleaseDialog
+      <CanvasHostDialogs
         canvas={canvas}
-        open={releasesOpen}
-        onOpenChange={setReleasesOpen}
+        promotionOpen={promotionOpen}
+        onPromotionOpenChange={setPromotionOpen}
+        releasesOpen={releasesOpen}
+        onReleasesOpenChange={setReleasesOpen}
+        onPromotionCompleted={() => router.push(canvas ? canvasHref(canvas.id) : "/")}
         onChanged={load}
       />
     </PageShell>
-  );
-}
-
-function CanvasDesktopActions({
-  canvas,
-  editing,
-  onEdit,
-  onPromote,
-  onReleases,
-}: {
-  canvas: Canvas;
-  editing: boolean;
-  onEdit: () => void;
-  onPromote: () => void;
-  onReleases: () => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div className="flex items-center gap-2">
-      {canvas.scope_kind === "workspace" && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="cursor-pointer"
-          disabled={editing}
-          onClick={onEdit}
-        >
-          <IconEdit className="mr-1.5 h-3.5 w-3.5" />
-          {t("canvases:editCanvas")}
-        </Button>
-      )}
-      <Button variant="outline" size="sm" className="cursor-pointer" onClick={onReleases}>
-        <IconListDetails className="mr-1.5 h-3.5 w-3.5" />
-        {t("canvases:releasesAndPermissions")}
-      </Button>
-      {canvas.scope_kind === "task" && canvas.active_release_status === "valid" && (
-        <Button size="sm" className="cursor-pointer" onClick={onPromote}>
-          <IconSparkles className="mr-1.5 h-3.5 w-3.5" />
-          {t("canvases:promoteCanvas")}
-        </Button>
-      )}
-    </div>
-  );
-}
-
-function CanvasHostHeader({
-  title,
-  state,
-  isMobile,
-  menuOpen,
-  onOpenActions,
-}: {
-  title: string;
-  state: CanvasHostState;
-  isMobile: boolean;
-  menuOpen: boolean;
-  onOpenActions: () => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div className="flex min-h-11 shrink-0 items-center gap-2 border-b px-3 py-1.5">
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium md:hidden">{title}</p>
-        <p
-          className="text-xs text-muted-foreground"
-          data-testid="canvas-host-state"
-          aria-live="polite"
-        >
-          {t(STATE_COPY[state].title)}
-        </p>
-      </div>
-      {isMobile && (
-        <Button
-          variant="outline"
-          size="icon"
-          className="h-11 w-11 shrink-0 cursor-pointer"
-          aria-label={t("canvases:canvasActions")}
-          aria-expanded={menuOpen}
-          onClick={onOpenActions}
-          data-testid="canvas-mobile-actions"
-        >
-          <IconDots className="h-4 w-4" />
-        </Button>
-      )}
-    </div>
-  );
-}
-
-function CanvasHostStatePanel({
-  state,
-  error,
-  onRetry,
-}: {
-  state: CanvasHostState;
-  error: string | null;
-  onRetry: () => void;
-}) {
-  const { t } = useTranslation();
-  const copy = STATE_COPY[state];
-  return (
-    <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-center">
-      <div className="max-w-md space-y-3">
-        <h2 className="text-lg font-semibold">{t(copy.title)}</h2>
-        <p className="text-sm text-muted-foreground">{error || t(copy.description)}</p>
-        {state !== "loading_metadata" && state !== "loading_runtime" && (
-          <Button
-            variant="outline"
-            className="min-h-11 cursor-pointer md:min-h-7"
-            onClick={onRetry}
-          >
-            {t("canvases:retry")}
-          </Button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function MobileCanvasActions({
-  canvas,
-  open,
-  onOpenChange,
-  onEdit,
-  onPromote,
-  onReleases,
-  editing,
-}: {
-  canvas: Canvas | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onEdit: () => void;
-  onPromote: () => void;
-  onReleases: () => void;
-  editing: boolean;
-}) {
-  const { t } = useTranslation();
-  return (
-    <MobilePickerSheet
-      open={open}
-      onOpenChange={onOpenChange}
-      title={t("canvases:canvasActions")}
-      description={canvas?.title}
-      contentTestId="canvas-mobile-actions-sheet"
-    >
-      <div className="flex flex-col gap-1 pb-2">
-        {canvas?.scope_kind === "workspace" && (
-          <Button
-            variant="ghost"
-            className="min-h-11 justify-start cursor-pointer"
-            disabled={editing}
-            onClick={onEdit}
-          >
-            <IconEdit className="mr-2 h-4 w-4" />
-            {t("canvases:editCanvas")}
-          </Button>
-        )}
-        <Button
-          variant="ghost"
-          className="min-h-11 justify-start cursor-pointer"
-          onClick={onReleases}
-        >
-          <IconListDetails className="mr-2 h-4 w-4" />
-          {t("canvases:releasesAndPermissions")}
-        </Button>
-        {canvas?.scope_kind === "task" && canvas.active_release_status === "valid" && (
-          <Button
-            variant="ghost"
-            className="min-h-11 justify-start cursor-pointer"
-            onClick={onPromote}
-          >
-            <IconSparkles className="mr-2 h-4 w-4" />
-            {t("canvases:promoteCanvas")}
-          </Button>
-        )}
-        {canvas && (
-          <Button variant="ghost" className="min-h-11 justify-start cursor-pointer" asChild>
-            <a href={canvasHref(canvas.id)} target="_blank" rel="noreferrer">
-              <IconExternalLink className="mr-2 h-4 w-4" />
-              {t("canvases:openInNewTab")}
-            </a>
-          </Button>
-        )}
-      </div>
-    </MobilePickerSheet>
   );
 }

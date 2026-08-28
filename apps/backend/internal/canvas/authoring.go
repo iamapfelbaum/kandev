@@ -34,6 +34,9 @@ type PublishRequest struct {
 	CanvasID string
 	Package  *webapp.Package
 	Artifact webapp.Artifact
+	// ExpectedAuthority is captured by the trusted authoring boundary before
+	// source transfer. Durable persistence must still match it atomically.
+	ExpectedAuthority plugininstances.PublishAuthority
 	// ExpectedBaseReleaseID is set for a trusted edit session. The release
 	// publish transaction rejects the package if the active release changed
 	// after the editor materialized its source.
@@ -101,6 +104,10 @@ type reviewedPromotionStore interface {
 }
 
 type conditionalReleaseStore interface {
+	CreateReleaseIfAuthorityTx(context.Context, *sqlx.Tx, string, plugininstances.PublishAuthority, plugininstances.Release) error
+}
+
+type legacyConditionalReleaseStore interface {
 	CreateReleaseIfActiveReleaseTx(context.Context, *sqlx.Tx, string, string, plugininstances.Release) error
 }
 
@@ -110,6 +117,10 @@ type conditionalReleaseStore interface {
 // after a publish.
 type releaseRetentionStore interface {
 	PruneReleases(context.Context, string) error
+}
+
+type releaseRejectionStore interface {
+	RejectReleaseAndPrune(context.Context, string, string) error
 }
 
 // PublishPackage stores one validated package as an immutable release. A
@@ -127,7 +138,7 @@ func (s *Service) PublishPackage(ctx context.Context, request PublishRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	persisted, err := persistPublishedRelease(ctx, store, instance.ID, release, activated, request.ExpectedBaseReleaseID)
+	persisted, err := persistPublishedRelease(ctx, store, instance.ID, release, activated, request.ExpectedAuthority, request.ExpectedBaseReleaseID)
 	if err != nil {
 		if persisted {
 			return &PublishResult{Release: release, Activated: activated, PermissionRequired: !activated, ReleasePersisted: true}, err
@@ -164,6 +175,9 @@ func (s *Service) preparePublishedRelease(ctx context.Context, store authoringIn
 	}
 	if instance.Status == StatusRemoved || instance.Status == StatusArchived {
 		return plugininstances.Instance{}, plugininstances.Release{}, false, fmt.Errorf("%w: canvas is %s", ErrInvalidCanvasState, instance.Status)
+	}
+	if !request.ExpectedAuthority.IsZero() && request.ExpectedAuthority != instance.PublishAuthority() {
+		return plugininstances.Instance{}, plugininstances.Release{}, false, ErrStaleCanvasPublish
 	}
 	if request.Artifact.Digest != request.Package.Digest {
 		return plugininstances.Instance{}, plugininstances.Release{}, false, fmt.Errorf("%w: artifact digest does not match package", ErrInvalidCanvas)
@@ -202,10 +216,22 @@ func (s *Service) preparePublishedRelease(ctx context.Context, store authoringIn
 	return instance, release, activated, nil
 }
 
-func persistPublishedRelease(ctx context.Context, store authoringInstanceStore, instanceID string, release plugininstances.Release, activated bool, expectedBaseReleaseID string) (bool, error) {
-	if expectedBaseReleaseID != "" {
+func persistPublishedRelease(ctx context.Context, store authoringInstanceStore, instanceID string, release plugininstances.Release, activated bool, expectedAuthority plugininstances.PublishAuthority, expectedBaseReleaseID string) (bool, error) {
+	if !expectedAuthority.IsZero() {
+		if expectedBaseReleaseID != "" && expectedBaseReleaseID != expectedAuthority.ActiveReleaseID {
+			return false, ErrStaleCanvasEdit
+		}
 		transactional, ok := store.(transactionalAuthoringStore)
 		conditional, supportsConditional := store.(conditionalReleaseStore)
+		if !ok || !supportsConditional {
+			return false, ErrStaleCanvasPublish
+		}
+		err := persistAuthorityRelease(ctx, transactional, conditional, instanceID, release, activated, expectedAuthority)
+		return err == nil, err
+	}
+	if expectedBaseReleaseID != "" {
+		transactional, ok := store.(transactionalAuthoringStore)
+		conditional, supportsConditional := store.(legacyConditionalReleaseStore)
 		if !ok || !supportsConditional {
 			return false, ErrStaleCanvasEdit
 		}
@@ -226,7 +252,22 @@ func persistPublishedRelease(ctx context.Context, store authoringInstanceStore, 
 	return persistActivatedReleaseFallback(ctx, store, instanceID, release)
 }
 
-func persistConditionalRelease(ctx context.Context, transactional transactionalAuthoringStore, conditional conditionalReleaseStore, instanceID string, release plugininstances.Release, activated bool, expectedBaseReleaseID string) error {
+func persistAuthorityRelease(ctx context.Context, transactional transactionalAuthoringStore, conditional conditionalReleaseStore, instanceID string, release plugininstances.Release, activated bool, expectedAuthority plugininstances.PublishAuthority) error {
+	return transactional.WithTransaction(ctx, func(tx *sqlx.Tx) error {
+		if err := conditional.CreateReleaseIfAuthorityTx(ctx, tx, instanceID, expectedAuthority, release); err != nil {
+			return err
+		}
+		if !activated {
+			return nil
+		}
+		if err := transactional.SetPluginIDTx(ctx, tx, instanceID, release.PluginID); err != nil {
+			return err
+		}
+		return transactional.ActivateReleaseTx(ctx, tx, instanceID, release.ID)
+	})
+}
+
+func persistConditionalRelease(ctx context.Context, transactional transactionalAuthoringStore, conditional legacyConditionalReleaseStore, instanceID string, release plugininstances.Release, activated bool, expectedBaseReleaseID string) error {
 	return transactional.WithTransaction(ctx, func(tx *sqlx.Tx) error {
 		if err := conditional.CreateReleaseIfActiveReleaseTx(ctx, tx, instanceID, expectedBaseReleaseID, release); err != nil {
 			return err
@@ -413,6 +454,9 @@ func (s *Service) ApproveRelease(ctx context.Context, canvasID, releaseID, userI
 	if err != nil {
 		return nil, err
 	}
+	if err := releaseMutationStateError(canvas.Status); err != nil {
+		return nil, err
+	}
 	release, err := store.GetRelease(ctx, releaseID)
 	if err != nil {
 		return nil, err
@@ -455,6 +499,9 @@ func (s *Service) RejectRelease(ctx context.Context, canvasID, releaseID string)
 	if err != nil {
 		return nil, err
 	}
+	if err := releaseMutationStateError(canvas.Status); err != nil {
+		return nil, err
+	}
 	release, err := store.GetRelease(ctx, releaseID)
 	if err != nil {
 		return nil, err
@@ -462,8 +509,17 @@ func (s *Service) RejectRelease(ctx context.Context, canvasID, releaseID string)
 	if release.InstanceID != canvas.PluginInstanceID || release.ValidationStatus != ValidationPendingPermission {
 		return nil, plugininstances.ErrInvalidRelease
 	}
-	if err := store.SetReleaseValidation(ctx, releaseID, plugininstances.ValidationInvalid, "rejected_by_user"); err != nil {
-		return nil, err
+	if rejection, ok := store.(releaseRejectionStore); ok {
+		if err := rejection.RejectReleaseAndPrune(ctx, canvas.PluginInstanceID, releaseID); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := store.SetReleaseValidation(ctx, releaseID, plugininstances.ValidationInvalid, "rejected_by_user"); err != nil {
+			return nil, err
+		}
+		if err := prunePublishedReleases(ctx, store, canvas.PluginInstanceID); err != nil {
+			return nil, err
+		}
 	}
 	return s.Get(ctx, canvasID)
 }
@@ -480,6 +536,9 @@ func (s *Service) RollbackRelease(ctx context.Context, canvasID, releaseID strin
 	}
 	canvas, err := s.Get(ctx, canvasID)
 	if err != nil {
+		return nil, err
+	}
+	if err := releaseMutationStateError(canvas.Status); err != nil {
 		return nil, err
 	}
 	instance, err := store.Get(ctx, canvas.PluginInstanceID)
@@ -550,6 +609,13 @@ func prunePublishedReleases(ctx context.Context, store authoringInstanceStore, i
 		return nil
 	}
 	return retention.PruneReleases(ctx, instanceID)
+}
+
+func releaseMutationStateError(status string) error {
+	if status == StatusArchived || status == StatusDisabled {
+		return fmt.Errorf("%w: canvas is %s", ErrInvalidCanvasState, status)
+	}
+	return nil
 }
 
 // ManifestPermissions converts the manifest into the review/runtime shape.

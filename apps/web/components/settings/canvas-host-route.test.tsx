@@ -4,10 +4,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Canvas } from "@/lib/api/domains/canvas-api";
 import { registerCanvasesHandlers } from "@/lib/ws/handlers/canvases";
 
-const { mockGetCanvas, mockGetCanvasRuntime, mockPush } = vi.hoisted(() => ({
+const {
+  mockGetCanvas,
+  mockGetCanvasRuntime,
+  mockListTaskCanvases,
+  mockListWorkspaceCanvases,
+  mockPush,
+  mockIsMobile,
+} = vi.hoisted(() => ({
   mockGetCanvas: vi.fn(),
   mockGetCanvasRuntime: vi.fn(),
+  mockListTaskCanvases: vi.fn(),
+  mockListWorkspaceCanvases: vi.fn(),
   mockPush: vi.fn(),
+  mockIsMobile: { value: false },
 }));
 
 const FRAME_TEST_ID = "canvas-frame";
@@ -17,6 +27,8 @@ vi.mock("@/lib/api/domains/canvas-api", () => ({
   canvasHref: (canvasId: string) => `/canvases/${canvasId}`,
   getCanvas: mockGetCanvas,
   getCanvasRuntime: mockGetCanvasRuntime,
+  listTaskCanvases: mockListTaskCanvases,
+  listWorkspaceCanvases: mockListWorkspaceCanvases,
   startCanvasEdit: vi.fn(),
 }));
 
@@ -43,7 +55,19 @@ vi.mock("@/components/settings/canvas-lifecycle-dialogs", () => ({
 }));
 
 vi.mock("@/hooks/use-responsive-breakpoint", () => ({
-  useResponsiveBreakpoint: () => ({ isMobile: false }),
+  useResponsiveBreakpoint: () => ({ isMobile: mockIsMobile.value }),
+}));
+
+vi.mock("@/components/task/mobile/mobile-picker-sheet", () => ({
+  MobilePickerSheet: ({
+    children,
+    open,
+    contentTestId,
+  }: {
+    children: ReactNode;
+    open: boolean;
+    contentTestId?: string;
+  }) => (open ? <div data-testid={contentTestId}>{children}</div> : null),
 }));
 
 vi.mock("@/lib/routing/client-router", () => ({
@@ -79,6 +103,9 @@ beforeEach(() => {
       release_id: "release-1",
       expires_in_seconds: 900,
     });
+  mockListTaskCanvases.mockReset().mockResolvedValue({ canvases: [canvas] });
+  mockListWorkspaceCanvases.mockReset().mockResolvedValue({ canvases: [] });
+  mockIsMobile.value = false;
   mockPush.mockReset();
 });
 
@@ -166,5 +193,26 @@ describe("CanvasHostRoute runtime recovery", () => {
         "/runtime/release-2",
       );
     });
+  });
+
+  it("lets a mobile focused host switch to another applicable canvas", async () => {
+    mockIsMobile.value = true;
+    const otherCanvas = {
+      ...canvas,
+      id: "canvas-2",
+      title: "Another task canvas",
+    };
+    mockListTaskCanvases.mockResolvedValue({ canvases: [canvas, otherCanvas] });
+
+    render(<CanvasHostRoute canvasId="canvas-1" />);
+
+    await waitFor(() => expect(screen.getByTestId(FRAME_TEST_ID)).toBeTruthy());
+    fireEvent.click(screen.getByTestId("canvas-mobile-actions"));
+
+    const other = await screen.findByTestId("canvas-mobile-picker-item-canvas-2");
+    expect(other.textContent).toContain("Another task canvas");
+    fireEvent.click(other);
+
+    expect(mockPush).toHaveBeenCalledWith("/canvases/canvas-2");
   });
 });

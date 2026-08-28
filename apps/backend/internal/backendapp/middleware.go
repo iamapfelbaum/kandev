@@ -43,7 +43,7 @@ func corsMiddleware() gin.HandlerFunc {
 			c.Header("Access-Control-Allow-Origin", "*")
 		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, If-Match, X-Kandev-Interim-Settings-Interlock, Upgrade, Connection, Sec-WebSocket-Key, Sec-WebSocket-Version, Sec-WebSocket-Protocol")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, If-Match, Last-Event-ID, X-Kandev-Interim-Settings-Interlock, Upgrade, Connection, Sec-WebSocket-Key, Sec-WebSocket-Version, Sec-WebSocket-Protocol")
 		c.Header("Access-Control-Expose-Headers", "WWW-Authenticate")
 
 		if c.Request.Method == "OPTIONS" {

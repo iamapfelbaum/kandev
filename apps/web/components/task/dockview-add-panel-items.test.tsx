@@ -506,21 +506,32 @@ describe("AddPanelMenuItems — task canvases", () => {
     );
   });
 
-  it("shows active workspace canvases and omits inactive canvases", async () => {
+  it("shows pending and error task canvases and omits archived canvases", async () => {
     mockListTaskCanvases.mockResolvedValueOnce({
       canvases: [
         {
-          id: "workspace-canvas-1",
+          id: "pending-canvas-1",
           plugin_instance_id: "instance-2",
           plugin_id: "plugin-1",
           workspace_id: TEST_WORKSPACE_ID,
-          scope_kind: "workspace",
-          title: "Workspace board",
-          status: "active",
+          task_id: "task-1",
+          scope_kind: "task",
+          title: "Pending board",
+          status: "pending",
+        },
+        {
+          id: "error-canvas-1",
+          plugin_instance_id: "instance-3",
+          plugin_id: "plugin-1",
+          workspace_id: TEST_WORKSPACE_ID,
+          task_id: "task-1",
+          scope_kind: "task",
+          title: "Error board",
+          status: "error",
         },
         {
           id: "archived-canvas-1",
-          plugin_instance_id: "instance-3",
+          plugin_instance_id: "instance-4",
           plugin_id: "plugin-1",
           workspace_id: TEST_WORKSPACE_ID,
           task_id: "task-1",
@@ -533,7 +544,8 @@ describe("AddPanelMenuItems — task canvases", () => {
 
     renderMenu({ taskId: "task-1" });
 
-    expect(await screen.findByTestId("add-panel-canvas-item-workspace-canvas-1")).toBeTruthy();
+    expect(await screen.findByTestId("add-panel-canvas-item-pending-canvas-1")).toBeTruthy();
+    expect(screen.getByTestId("add-panel-canvas-item-error-canvas-1")).toBeTruthy();
     expect(screen.queryByTestId("add-panel-canvas-item-archived-canvas-1")).toBeNull();
   });
 

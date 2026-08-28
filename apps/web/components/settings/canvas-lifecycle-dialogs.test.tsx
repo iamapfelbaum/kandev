@@ -321,6 +321,23 @@ describe("CanvasReleaseDialog permission review", () => {
     expect(screen.getByText("api_read:tasks")).toBeTruthy();
     expect(screen.getByRole("button", { name: COPY.approveRelease })).toBeTruthy();
   });
+
+  it("disables release mutations for an archived canvas while keeping the review visible", async () => {
+    mockListCanvasReleases.mockResolvedValue({ releases: [release()] });
+
+    render(
+      <CanvasReleaseDialog
+        canvas={{ ...canvas, status: "archived" }}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    const approveButton = await screen.findByRole("button", { name: COPY.approveRelease });
+    const rejectButton = screen.getByRole("button", { name: COPY.rejectRelease });
+    expect((approveButton as HTMLButtonElement).disabled).toBe(true);
+    expect((rejectButton as HTMLButtonElement).disabled).toBe(true);
+  });
 });
 
 describe("CanvasReleaseDialog actions", () => {

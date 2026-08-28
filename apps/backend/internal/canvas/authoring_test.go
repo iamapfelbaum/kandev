@@ -3,8 +3,11 @@ package canvas
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/jmoiron/sqlx"
 
 	"github.com/kandev/kandev/internal/db"
 	plugininstances "github.com/kandev/kandev/internal/plugins/instances"
@@ -92,6 +95,13 @@ func TestFirstTaskReleaseCanBeReviewedAndApproved(t *testing.T) {
 	}
 	if approved.ActiveReleaseID != published.Release.ID || approved.ActiveReleaseStatus != plugininstances.ValidationValid {
 		t.Fatalf("approved canvas = %+v, want active valid release", approved)
+	}
+	instance, err := instanceStore.Get(context.Background(), canvas.PluginInstanceID)
+	if err != nil {
+		t.Fatalf("get approved instance: %v", err)
+	}
+	if instance.PluginID != published.Release.PluginID {
+		t.Fatalf("approved plugin id = %q, want release plugin id %q", instance.PluginID, published.Release.PluginID)
 	}
 	grants, err := instanceStore.ListGrants(context.Background(), canvas.PluginInstanceID)
 	if err != nil {
@@ -323,6 +333,133 @@ func TestPublishPackageRetainsPriorValidReleaseForRollback(t *testing.T) {
 	if rolledBack.PluginInstanceID != canvas.PluginInstanceID || rolledBack.ScopeKind != plugininstances.ScopeTask {
 		t.Fatalf("rollback changed canvas identity or scope: %+v", rolledBack)
 	}
+}
+
+func TestRejectReleasePrunesRejectedArtifact(t *testing.T) {
+	service, instanceStore, pool := newCanvasService(t)
+	canvas := createCanvas(t, service, CreateCanvasRequest{
+		WorkspaceID: "workspace-1",
+		TaskID:      "task-1",
+		Title:       "Reject cleanup",
+	})
+	active := publishTestPackage(t, service, canvas.ID, "reject-active", nil)
+	pending := publishTestPackage(t, service, canvas.ID, "reject-pending", []string{"tasks"})
+
+	if _, err := service.RejectRelease(context.Background(), canvas.ID, pending.Release.ID); err != nil {
+		t.Fatalf("reject release: %v", err)
+	}
+	releases, err := instanceStore.ListReleases(context.Background(), canvas.PluginInstanceID)
+	if err != nil {
+		t.Fatalf("list releases: %v", err)
+	}
+	assertReleaseStatus(t, releases, active.Release.ID, plugininstances.ValidationValid, "")
+	assertReleaseAbsent(t, releases, pending.Release.ID)
+	if got := cleanupArtifactPaths(t, pool, canvas.PluginInstanceID); len(got) != 1 || got[0] != "releases/reject-pending" {
+		t.Fatalf("cleanup paths = %v, want [releases/reject-pending]", got)
+	}
+}
+
+func TestReleaseMutationsRequireRestoreAfterArchive(t *testing.T) {
+	service, _, _ := newCanvasService(t)
+	canvas := createCanvas(t, service, CreateCanvasRequest{
+		WorkspaceID: "workspace-1", TaskID: "task-1", Title: "Archived release mutations",
+	})
+	prior := publishTestPackage(t, service, canvas.ID, "archived-prior", nil)
+	publishTestPackage(t, service, canvas.ID, "archived-active", nil)
+	pending := publishTestPackage(t, service, canvas.ID, "archived-pending", []string{"tasks"})
+	if _, err := service.ArchiveCanvas(context.Background(), canvas.ID); err != nil {
+		t.Fatalf("archive canvas: %v", err)
+	}
+
+	if _, err := service.ApproveRelease(context.Background(), canvas.ID, pending.Release.ID, "user-1"); !errors.Is(err, ErrInvalidCanvasState) {
+		t.Fatalf("approve archived release = %v, want ErrInvalidCanvasState", err)
+	}
+	if _, err := service.RollbackRelease(context.Background(), canvas.ID, prior.Release.ID); !errors.Is(err, ErrInvalidCanvasState) {
+		t.Fatalf("rollback archived release = %v, want ErrInvalidCanvasState", err)
+	}
+	if _, err := service.PromoteCanvas(context.Background(), canvas.ID, "user-1"); !errors.Is(err, ErrInvalidLifecycleState) {
+		t.Fatalf("promote archived canvas = %v, want ErrInvalidLifecycleState", err)
+	}
+}
+
+func TestPublishPackageRejectsAuthorityChangedAfterAuthorization(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Service, *plugininstances.Store, string, string) error
+	}{
+		{
+			name: "archive",
+			mutate: func(_ *Service, store *plugininstances.Store, _ string, instanceID string) error {
+				return store.Archive(context.Background(), instanceID)
+			},
+		},
+		{
+			name: "promote",
+			mutate: func(service *Service, _ *plugininstances.Store, canvasID, _ string) error {
+				_, err := service.PromoteCanvas(context.Background(), canvasID, "user-1")
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service, instanceStore, _ := newCanvasService(t)
+			canvas := createCanvas(t, service, CreateCanvasRequest{
+				WorkspaceID: "workspace-1", TaskID: "task-1", Title: "Publish authority race",
+			})
+			if tt.name == "promote" {
+				publishTestPackage(t, service, canvas.ID, "authority-base", nil)
+			}
+			captured, err := instanceStore.Get(context.Background(), canvas.PluginInstanceID)
+			if err != nil {
+				t.Fatalf("capture authority: %v", err)
+			}
+			barrier := &publishTransactionBarrier{
+				Store:         instanceStore,
+				entered:       make(chan struct{}),
+				continueFirst: make(chan struct{}),
+			}
+			service.instances = barrier
+			resultCh := make(chan error, 1)
+			go func() {
+				_, publishErr := service.PublishPackage(context.Background(), PublishRequest{
+					CanvasID: canvas.ID, Package: testCanvasPackage("authority-race", nil),
+					Artifact:          webapp.Artifact{Digest: "authority-race", RelativePath: "releases/authority-race", Bytes: 1},
+					ExpectedAuthority: captured.PublishAuthority(), SourceActorKind: "agent",
+				})
+				resultCh <- publishErr
+			}()
+			<-barrier.entered
+
+			if err := tt.mutate(service, instanceStore, canvas.ID, canvas.PluginInstanceID); err != nil {
+				t.Fatalf("%s authority mutation: %v", tt.name, err)
+			}
+			close(barrier.continueFirst)
+			if err := <-resultCh; !errors.Is(err, ErrStaleCanvasPublish) {
+				t.Fatalf("publish after %s = %v, want ErrStaleCanvasPublish", tt.name, err)
+			}
+		})
+	}
+}
+
+type publishTransactionBarrier struct {
+	*plugininstances.Store
+	entered       chan struct{}
+	continueFirst chan struct{}
+	once          sync.Once
+}
+
+func (s *publishTransactionBarrier) WithTransaction(ctx context.Context, fn func(*sqlx.Tx) error) error {
+	first := false
+	s.once.Do(func() {
+		first = true
+		close(s.entered)
+	})
+	if first {
+		<-s.continueFirst
+	}
+	return s.Store.WithTransaction(ctx, fn)
 }
 
 func publishTestPackage(t *testing.T, service *Service, canvasID, digest string, reads []string) *PublishResult {

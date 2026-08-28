@@ -106,6 +106,7 @@ recovery states, lifecycle action slots, and localized task surfaces.
 
 Verification:
 
-- Focused Vitest — 9 files and 59 tests passed.
-- `pnpm run lint` and `pnpm run typecheck` — passed.
-- Desktop Playwright canvas flow — passed.
+- Focused Vitest: canvas host, lifecycle, workspace, and Dockview tests passed.
+- `pnpm run lint`, `pnpm run typecheck`, and the i18n checks: passed.
+- Desktop Playwright canvas flow: first-release permission review, task data,
+  Continue, workflow movement, state recovery, SSE reconnect, and resync passed.

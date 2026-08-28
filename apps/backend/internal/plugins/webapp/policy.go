@@ -50,7 +50,10 @@ func BuildContentSecurityPolicy(networkOrigins, frameAncestors []string) (string
 		"form-action 'none'",
 		"base-uri 'none'",
 		"object-src 'none'",
-		"script-src 'self'",
+		// Packaged canvases may be a single HTML file. Inline scripts are
+		// allowed by the approved canvas contract, while the absence of
+		// unsafe-eval and remote script sources keeps code execution bounded.
+		"script-src 'self' 'unsafe-inline'",
 		"style-src 'self' 'unsafe-inline'",
 		"img-src " + strings.Join(images, " "),
 		"font-src " + strings.Join(fonts, " "),

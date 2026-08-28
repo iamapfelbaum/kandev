@@ -419,11 +419,13 @@ function CanvasReleaseActions({
   release,
   activeReleaseId,
   busyId,
+  mutationsDisabled,
   releaseAction,
 }: {
   release: CanvasRelease;
   activeReleaseId?: string;
   busyId: string | null;
+  mutationsDisabled: boolean;
   releaseAction: (releaseId: string, action: CanvasReleaseAction) => void;
 }) {
   const { t } = useTranslation();
@@ -439,7 +441,7 @@ function CanvasReleaseActions({
           <Button
             className="min-h-11 cursor-pointer md:min-h-7"
             size="sm"
-            disabled={busy}
+            disabled={busy || mutationsDisabled}
             onClick={() => releaseAction(release.id, "approve")}
           >
             {t("canvases:approveRelease")}
@@ -448,7 +450,7 @@ function CanvasReleaseActions({
             variant="outline"
             className="min-h-11 cursor-pointer md:min-h-7"
             size="sm"
-            disabled={busy}
+            disabled={busy || mutationsDisabled}
             onClick={() => releaseAction(release.id, "reject")}
           >
             {t("canvases:rejectRelease")}
@@ -460,7 +462,7 @@ function CanvasReleaseActions({
           variant="outline"
           className="min-h-11 cursor-pointer md:min-h-7"
           size="sm"
-          disabled={busy}
+          disabled={busy || mutationsDisabled}
           onClick={() => releaseAction(release.id, "rollback")}
         >
           {t("canvases:rollbackRelease")}
@@ -474,11 +476,13 @@ function CanvasReleaseCard({
   release,
   activeReleaseId,
   busyId,
+  mutationsDisabled,
   releaseAction,
 }: {
   release: CanvasRelease;
   activeReleaseId?: string;
   busyId: string | null;
+  mutationsDisabled: boolean;
   releaseAction: (releaseId: string, action: CanvasReleaseAction) => void;
 }) {
   const { t } = useTranslation();
@@ -509,6 +513,7 @@ function CanvasReleaseCard({
         release={release}
         activeReleaseId={activeReleaseId}
         busyId={busyId}
+        mutationsDisabled={mutationsDisabled}
         releaseAction={releaseAction}
       />
     </div>
@@ -556,6 +561,7 @@ export function CanvasReleaseDialog({
               release={release}
               activeReleaseId={canvas?.active_release_id}
               busyId={busyId}
+              mutationsDisabled={canvas?.status === "archived" || canvas?.status === "disabled"}
               releaseAction={(releaseId, action) => void releaseAction(releaseId, action)}
             />
           ))}

@@ -227,6 +227,13 @@ describe("WorkspaceCanvasesPage lifecycle", () => {
     expect(screen.queryByText(COPY.activeCanvases)).toBeNull();
     expect(screen.getByText(COPY.archivedCanvases)).toBeTruthy();
     expect(screen.getByRole("button", { name: COPY.restoreCanvas })).toBeTruthy();
+    expect(
+      (
+        within(screen.getByTestId("workspace-canvas-lifecycle-canvas")).getByRole("button", {
+          name: COPY.editCanvas,
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: COPY.restoreCanvas }));
     await waitFor(() => expect(mocks.restoreCanvas).toHaveBeenCalledWith(activeCanvas.id));

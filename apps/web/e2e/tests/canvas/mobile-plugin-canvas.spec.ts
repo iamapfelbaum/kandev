@@ -5,6 +5,7 @@ import {
   enableCanvasFeature,
   getCanvas,
   removeCanvas,
+  promoteCanvas,
   seedTaskCanvas,
 } from "./canvas-fixture";
 
@@ -18,10 +19,10 @@ test.describe("Plugin-backed canvases on mobile", () => {
     test.setTimeout(180_000);
 
     const releaseFeature = await enableCanvasFeature(backend, apiClient, seedData.workspaceId);
-    let canvasId: string | undefined;
+    const canvasIds: string[] = [];
     try {
       const seeded = await seedTaskCanvas(testPage, apiClient, seedData, true);
-      canvasId = seeded.canvas.id;
+      canvasIds.push(seeded.canvas.id);
       const activeCanvas = seeded.canvas.pending_release
         ? await approvePendingCanvas(apiClient, seeded.canvas)
         : seeded.canvas;
@@ -37,6 +38,10 @@ test.describe("Plugin-backed canvases on mobile", () => {
         "ready",
         { timeout: 20_000 },
       );
+      const fixture = testPage.frameLocator('iframe[title="E2E Plugin Canvas"]');
+      await expect(fixture.getByTestId("canvas-fixture-script")).toHaveText("inline-ready");
+      await expect(fixture.getByTestId("canvas-fixture-context")).toHaveText(seeded.taskId);
+      await expect(fixture.getByTestId("canvas-fixture-sse-status")).toHaveText("connected");
 
       const actionsButton = testPage.getByTestId("canvas-mobile-actions");
       await expect(actionsButton).toBeVisible();
@@ -87,8 +92,43 @@ test.describe("Plugin-backed canvases on mobile", () => {
           testPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
         )
         .toBe(true);
+
+      const secondSeeded = await seedTaskCanvas(testPage, apiClient, seedData, true);
+      canvasIds.push(secondSeeded.canvas.id);
+      const secondApproved = secondSeeded.canvas.pending_release
+        ? await approvePendingCanvas(apiClient, secondSeeded.canvas)
+        : secondSeeded.canvas;
+      await promoteCanvas(apiClient, secondApproved);
+
+      await testPage.goto(canvasHref(activeCanvas.id));
+      await expect(testPage.getByTestId("canvas-host-route")).toBeVisible({ timeout: 20_000 });
+      await expect(testPage.getByTestId("web-app-frame")).toHaveAttribute(
+        "data-frame-state",
+        "ready",
+        { timeout: 20_000 },
+      );
+      await testPage.getByTestId("canvas-mobile-actions").tap();
+      const picker = testPage.getByTestId("canvas-mobile-picker");
+      await expect(picker).toBeVisible();
+      const secondCanvasItem = picker.getByTestId(`canvas-mobile-picker-item-${secondApproved.id}`);
+      await expect(secondCanvasItem).toBeVisible();
+      expect((await secondCanvasItem.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+      await secondCanvasItem.tap();
+
+      await expect(testPage).toHaveURL(new RegExp(`${canvasHref(secondApproved.id)}$`));
+      await expect(testPage.getByTestId("canvas-host-route")).toBeVisible({ timeout: 20_000 });
+      await expect(testPage.getByTestId("web-app-frame")).toHaveAttribute(
+        "data-frame-state",
+        "ready",
+        { timeout: 20_000 },
+      );
+      await testPage.getByTestId("canvas-mobile-actions").tap();
+      await expect(testPage.getByTestId(`canvas-mobile-picker-item-${canvasIds[0]}`)).toBeVisible();
+      await expect(
+        testPage.getByRole("button", { name: "Releases and permissions", exact: true }),
+      ).toBeVisible();
     } finally {
-      if (canvasId) await removeCanvas(apiClient, canvasId);
+      await Promise.all(canvasIds.map((canvasId) => removeCanvas(apiClient, canvasId)));
       await releaseFeature();
     }
   });

@@ -372,3 +372,91 @@ func TestReleaseActivationContractsRemovedPermissions(t *testing.T) {
 		t.Fatalf("active release = %q, want release-1", instance.ActiveReleaseID)
 	}
 }
+
+func TestCreateReleaseIfActiveReleaseTxRejectsChangedAuthority(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	if err := store.Create(ctx, Instance{
+		ID: "instance-authority", PluginID: "canvas-board", SourceKind: SourceLocalCanvas,
+		ScopeKind: ScopeTask, WorkspaceID: "workspace-1", TaskID: "task-1", Status: StatusActive,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := store.CreateRelease(ctx, Release{
+		ID: "release-authority-base", PluginID: "canvas-board", InstanceID: "instance-authority",
+		PackageDigest: "digest-base", SourceKind: SourceLocalCanvas, SourceActorKind: "agent",
+		ManifestJSON: json.RawMessage(`{}`), DeclaredPermissionsJSON: json.RawMessage(`{}`),
+		ArtifactPath: "releases/base", ArtifactBytes: 1, ValidationStatus: ValidationValid,
+	}); err != nil {
+		t.Fatalf("CreateRelease: %v", err)
+	}
+	if err := store.SetActiveRelease(ctx, "instance-authority", "release-authority-base"); err != nil {
+		t.Fatalf("SetActiveRelease: %v", err)
+	}
+	captured, err := store.Get(ctx, "instance-authority")
+	if err != nil {
+		t.Fatalf("capture publish authority: %v", err)
+	}
+	expected := captured.PublishAuthority()
+	if err := store.SetScope(ctx, "instance-authority", ScopeWorkspace, ScopeIdentifiers{WorkspaceID: "workspace-1"}); err != nil {
+		t.Fatalf("promote scope: %v", err)
+	}
+
+	err = store.WithTransaction(ctx, func(tx *sqlx.Tx) error {
+		return store.CreateReleaseIfAuthorityTx(ctx, tx, "instance-authority", expected, Release{
+			ID: "release-authority-stale", PluginID: "canvas-board", InstanceID: "instance-authority",
+			PackageDigest: "digest-stale", SourceKind: SourceLocalCanvas, SourceActorKind: "agent",
+			ManifestJSON: json.RawMessage(`{}`), DeclaredPermissionsJSON: json.RawMessage(`{}`),
+			ArtifactPath: "releases/stale", ArtifactBytes: 1, ValidationStatus: ValidationValid,
+		})
+	})
+	if !errors.Is(err, ErrStaleCanvasPublish) {
+		t.Fatalf("stale task authority error = %v, want ErrStaleCanvasPublish", err)
+	}
+}
+
+func TestActivateReleaseRejectsArchivedInstance(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	if err := store.Create(ctx, Instance{
+		ID: "instance-archived-activate", PluginID: "canvas-board", SourceKind: SourceLocalCanvas,
+		ScopeKind: ScopeWorkspace, WorkspaceID: "workspace-1", Status: StatusArchived,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := store.CreateRelease(ctx, Release{
+		ID: "release-archived-activate", PluginID: "canvas-board", InstanceID: "instance-archived-activate",
+		PackageDigest: "digest-archived-activate", SourceKind: SourceLocalCanvas, SourceActorKind: "agent",
+		ManifestJSON: json.RawMessage(`{}`), DeclaredPermissionsJSON: json.RawMessage(`{}`),
+		ArtifactPath: "releases/archived-activate", ArtifactBytes: 1, ValidationStatus: ValidationValid,
+	}); err != nil {
+		t.Fatalf("CreateRelease: %v", err)
+	}
+	if err := store.ActivateRelease(ctx, "instance-archived-activate", "release-archived-activate"); err == nil {
+		t.Fatal("archived instance was reactivated without Restore")
+	}
+}
+
+func TestApproveReleaseRejectsArchivedInstance(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	if err := store.Create(ctx, Instance{
+		ID: "instance-archived-approve", PluginID: "canvas-board", SourceKind: SourceLocalCanvas,
+		ScopeKind: ScopeTask, WorkspaceID: "workspace-1", TaskID: "task-1", Status: StatusArchived,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := store.CreateRelease(ctx, Release{
+		ID: "release-archived-approve", PluginID: "canvas-board", InstanceID: "instance-archived-approve",
+		PackageDigest: "digest-archived-approve", SourceKind: SourceLocalCanvas, SourceActorKind: "agent",
+		ManifestJSON: json.RawMessage(`{}`), DeclaredPermissionsJSON: json.RawMessage(`{"reads":["tasks"]}`),
+		ArtifactPath: "releases/archived-approve", ArtifactBytes: 1, ValidationStatus: ValidationPendingPermission,
+	}); err != nil {
+		t.Fatalf("CreateRelease: %v", err)
+	}
+	if err := store.ApproveRelease(ctx, "instance-archived-approve", "release-archived-approve", "user-1", []Grant{{
+		PermissionKind: "api_read", Resource: "tasks", ScopeCeiling: ScopeTask,
+	}}); err == nil {
+		t.Fatal("archived instance was approved and activated without Restore")
+	}
+}

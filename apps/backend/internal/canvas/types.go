@@ -49,13 +49,15 @@ const (
 )
 
 var (
-	ErrCanvasNotFound       = errors.New("canvas not found")
-	ErrInvalidCanvas        = errors.New("invalid canvas")
-	ErrInvalidCanvasState   = errors.New("invalid canvas state")
-	ErrCanvasMetadataBroken = errors.New("canvas metadata is inconsistent with its plugin instance")
-	ErrCanvasNotConfigured  = errors.New("canvas lifecycle is not configured")
-	ErrStalePromotionReview = plugininstances.ErrStalePromotionReview
-	ErrStaleCanvasEdit      = plugininstances.ErrStaleCanvasEdit
+	ErrCanvasNotFound        = errors.New("canvas not found")
+	ErrInvalidCanvas         = errors.New("invalid canvas")
+	ErrInvalidCanvasState    = errors.New("invalid canvas state")
+	ErrCanvasMetadataBroken  = errors.New("canvas metadata is inconsistent with its plugin instance")
+	ErrCanvasNotConfigured   = errors.New("canvas lifecycle is not configured")
+	ErrStalePromotionReview  = plugininstances.ErrStalePromotionReview
+	ErrStaleCanvasEdit       = plugininstances.ErrStaleCanvasEdit
+	ErrStaleCanvasPublish    = plugininstances.ErrStaleCanvasPublish
+	ErrInvalidLifecycleState = plugininstances.ErrInvalidLifecycleState
 
 	// These aliases preserve the stable plugin admission errors while keeping
 	// the canvas package convenient for service callers and API adapters.

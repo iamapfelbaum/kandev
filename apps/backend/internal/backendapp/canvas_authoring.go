@@ -33,6 +33,7 @@ const (
 	canvasSourceActor      = "agent"
 	canvasEditOrigin       = "canvas_edit"
 	canvasErrorCodeDefault = "canvas_error"
+	canvasErrorCodeInvalid = "invalid_canvas"
 	canvasInvalidRelease   = "invalid_release"
 	// This key is written only by the authenticated canvas edit endpoint. MCP
 	// canvas authorization treats it as trusted session state, never as tool
@@ -203,11 +204,17 @@ func (s *canvasAuthoringService) PublishCanvas(ctx context.Context, request mcph
 		return nil, err
 	}
 	defer s.endPublish(request.Agent.SessionID, item.ID)
+	expectedAuthority := instances.PublishAuthority{
+		InstanceID: item.PluginInstanceID, ScopeKind: item.ScopeKind,
+		WorkspaceID: item.WorkspaceID, TaskID: item.TaskID,
+		Status: item.Status, ActiveReleaseID: item.ActiveReleaseID,
+		GrantGeneration: item.GrantGeneration,
+	}
 	expectedBaseReleaseID := ""
 	if editSession {
 		expectedBaseReleaseID = target.ReleaseID
 	}
-	return s.publishCanvasSource(ctx, execution, task, item, request, expectedBaseReleaseID)
+	return s.publishCanvasSource(ctx, execution, task, item, request, expectedAuthority, expectedBaseReleaseID)
 }
 
 func validateCanvasPublishSource(item *canvas.Canvas, request mcphandlers.CanvasPublishRequest) error {
@@ -217,7 +224,7 @@ func validateCanvasPublishSource(item *canvas.Canvas, request mcphandlers.Canvas
 	return nil
 }
 
-func (s *canvasAuthoringService) publishCanvasSource(ctx context.Context, execution *canvasAgentExecution, task *models.Task, item *canvas.Canvas, request mcphandlers.CanvasPublishRequest, expectedBaseReleaseID string) (any, error) {
+func (s *canvasAuthoringService) publishCanvasSource(ctx context.Context, execution *canvasAgentExecution, task *models.Task, item *canvas.Canvas, request mcphandlers.CanvasPublishRequest, expectedAuthority instances.PublishAuthority, expectedBaseReleaseID string) (any, error) {
 	client := execution.GetAgentCtlClient()
 	if client == nil {
 		return nil, canvasOperationError("agent_unavailable", "the task agent is not ready", nil)
@@ -262,7 +269,7 @@ func (s *canvasAuthoringService) publishCanvasSource(ctx context.Context, execut
 		}
 	}()
 	result, err := s.canvases.PublishPackage(ctx, canvas.PublishRequest{
-		CanvasID: item.ID, Package: pkg, Artifact: artifact, ExpectedBaseReleaseID: expectedBaseReleaseID,
+		CanvasID: item.ID, Package: pkg, Artifact: artifact, ExpectedAuthority: expectedAuthority, ExpectedBaseReleaseID: expectedBaseReleaseID,
 		SourceActorKind: canvasSourceActor, SourceUserID: s.workspaceOwner(ctx, task.WorkspaceID),
 		SourceTaskID: task.ID, SourceSessionID: request.Agent.SessionID,
 	})
@@ -554,6 +561,10 @@ func canvasErrorCode(err error) string {
 		return "promotion_review_stale"
 	case errors.Is(err, canvas.ErrStaleCanvasEdit):
 		return "canvas_edit_stale"
+	case errors.Is(err, canvas.ErrStaleCanvasPublish):
+		return "canvas_publish_stale"
+	case errors.Is(err, canvas.ErrInvalidLifecycleState):
+		return canvasErrorCodeInvalid
 	case errors.Is(err, canvas.ErrCanvasNotFound):
 		return "canvas_not_found"
 	default:
