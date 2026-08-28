@@ -491,6 +491,7 @@ export const TaskCenterPanel = memo(function TaskCenterPanel(props: TaskCenterPa
             onFileChange={handleFileChange}
             onFileSave={handleFileSave}
             onFileDelete={handleFileDelete}
+            onOpenFile={handleOpenFileFromChat}
             onMarkdownModeChange={(mode) => handleMarkdownModeChange(getFileTabKey(tab), mode)}
           />
         ))}
