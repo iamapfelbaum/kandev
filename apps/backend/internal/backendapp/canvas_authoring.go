@@ -13,6 +13,7 @@ import (
 
 	"github.com/kandev/kandev/internal/agentctl/types"
 	"github.com/kandev/kandev/internal/canvas"
+	"github.com/kandev/kandev/internal/common/logger"
 	"github.com/kandev/kandev/internal/mcp/canvasskill"
 	mcphandlers "github.com/kandev/kandev/internal/mcp/handlers"
 	"github.com/kandev/kandev/internal/plugins"
@@ -22,6 +23,7 @@ import (
 	"github.com/kandev/kandev/internal/task/models"
 	taskservice "github.com/kandev/kandev/internal/task/service"
 	userstore "github.com/kandev/kandev/internal/user/store"
+	"go.uber.org/zap"
 )
 
 const (
@@ -54,6 +56,7 @@ type canvasAuthoringService struct {
 	tasks      *taskservice.Service
 	executions canvasExecutionResolver
 	home       string
+	log        *logger.Logger
 
 	mu       sync.Mutex
 	attempts map[string][]time.Time
@@ -68,10 +71,11 @@ func newCanvasAuthoringService(
 	tasks *taskservice.Service,
 	executions canvasExecutionResolver,
 	home string,
+	log *logger.Logger,
 ) *canvasAuthoringService {
 	return &canvasAuthoringService{
 		canvases: canvases, plugins: pluginsSvc, tasks: tasks,
-		executions: executions, home: home,
+		executions: executions, home: home, log: log,
 		attempts: make(map[string][]time.Time), inflight: make(map[string]bool),
 	}
 }
@@ -394,7 +398,7 @@ func (s *canvasAuthoringService) authorizedTaskCanvas(ctx context.Context, task 
 	if err != nil || item == nil || item.WorkspaceID != task.WorkspaceID || item.TaskID != task.ID || item.ScopeKind != canvas.ScopeTask {
 		return nil, canvasOperationError("canvas_not_found", "canvas was not found for this task", nil)
 	}
-	if item.CreatedBySessionID != "" && item.CreatedBySessionID != agent.SessionID {
+	if item.CreatedBySessionID == "" || item.CreatedBySessionID != agent.SessionID {
 		return nil, canvasOperationError("canvas_not_found", "canvas was not found for this task", nil)
 	}
 	return item, nil
@@ -421,6 +425,9 @@ func (s *canvasAuthoringService) canvasEditTarget(ctx context.Context, task *mod
 	}
 	target, err := decodeCanvasEditSessionTarget(raw)
 	if err != nil {
+		if s.log != nil {
+			s.log.Warn("malformed canvas edit session target", zap.String("session_id", agent.SessionID), zap.Error(err))
+		}
 		return canvasEditSessionTarget{}, true, nil
 	}
 	return target, true, nil

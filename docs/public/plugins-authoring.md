@@ -118,7 +118,8 @@ does not need a Go backend or an injected Kandev JavaScript API.
 1. Add one or more `ui.web_apps` entries with a package-relative HTML entry.
 2. Set `placements` to `task-canvas`, `workspace-canvas`, or both.
 3. Build the app with relative `./_kandev/v1` requests.
-4. Declare only the Kandev capabilities that the app needs.
+4. Declare only the Kandev capabilities and exact HTTPS `network_origins` that
+   the app needs.
 5. Package the manifest and static files as a gzip-compressed tar archive.
 
 For example, a page can read task data with the browser Fetch API:

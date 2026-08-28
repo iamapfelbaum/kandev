@@ -161,6 +161,7 @@ ui:
       title: Task board
       entry: ui/index.html
       placements: [task-canvas, workspace-canvas]
+      network_origins: [https://api.example.com]
 ```
 
 The package contains the declared entry document and its static files:
@@ -256,7 +257,16 @@ slots, and per-route title-bar chrome (`registerNavItem`, `registerRoute`, and
 owns the host label, placement, route, and canvas controls. The web app owns
 the content inside its frame. It uses packaged scripts and styles, relative
 Kandev protocol paths, and only the capabilities and network origins that the
-host grants.
+host grants. Declare exact HTTPS origins in `network_origins` when the app
+needs external network access. Paths, credentials, wildcards, query strings,
+and fragments are rejected.
+
+### Static web app network origins
+
+`ui.web_apps[].network_origins` is optional. Each value must be an exact HTTPS
+origin with no path, credentials, wildcard, query string, or fragment. Kandev
+reviews each declared origin as a separate grant before the app can contact
+it.
 
 ## Managed vs. legacy manifests
 

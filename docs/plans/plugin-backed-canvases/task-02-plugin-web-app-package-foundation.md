@@ -105,7 +105,8 @@ cd apps/backend && go test ./internal/plugins/... ./pkg/pluginsdk/... ./internal
 ## Results
 
 Completed on 2026-08-27. Added `ui.web_apps` manifest declarations and
-validation, the bounded static package validator, digest-addressed immutable
-artifact storage, startup reconciliation, scoped instance/release/grant
-records, atomic canvas and storage admission, and durable cleanup inventory.
+validation, including per-app exact HTTPS `network_origins`, the bounded static
+package validator, digest-addressed immutable artifact storage, startup
+reconciliation, scoped instance/release/grant records, atomic canvas and
+storage admission, and durable cleanup inventory.
 The documented plugin, SDK, persistence, and backup package tests pass.

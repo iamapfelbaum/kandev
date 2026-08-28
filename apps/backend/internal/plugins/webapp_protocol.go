@@ -387,7 +387,7 @@ func (s *Service) validateWebAppPermissions(ctx context.Context, binding webapp.
 	if err != nil {
 		return err
 	}
-	for _, permission := range webAppDeclaredPermissions(m) {
+	for _, permission := range webAppDeclaredPermissions(m, binding.WebAppKey) {
 		if !webAppGrantCovers(permission, binding.ScopeKind, grants) {
 			return errors.New("web app permission grant is stale")
 		}
@@ -400,7 +400,7 @@ func (s *Service) validateWebAppPermissions(ctx context.Context, binding webapp.
 	return nil
 }
 
-func webAppDeclaredPermissions(m manifest.Manifest) []string {
+func webAppDeclaredPermissions(m manifest.Manifest, webAppKey string) []string {
 	permissions := make([]string, 0, len(m.Capabilities.APIRead)+len(m.Capabilities.APIWrite)+len(m.Capabilities.Events)+1)
 	for _, resource := range m.Capabilities.APIRead {
 		permissions = append(permissions, "api_read:"+resource)
@@ -414,8 +414,18 @@ func webAppDeclaredPermissions(m manifest.Manifest) []string {
 	if m.Capabilities.State {
 		permissions = append(permissions, "state")
 	}
-	if strings.TrimSpace(m.BaseURL) != "" {
-		permissions = append(permissions, "network:"+m.BaseURL)
+	for _, app := range m.UI.WebApps {
+		if app.Key != webAppKey {
+			continue
+		}
+		origins, err := webapp.NormalizeNetworkOrigins(app.NetworkOrigins)
+		if err != nil {
+			break
+		}
+		for _, origin := range origins {
+			permissions = append(permissions, "network:"+origin)
+		}
+		break
 	}
 	return permissions
 }

@@ -9,6 +9,9 @@ const { mockGetCanvas, mockGetCanvasRuntime, mockPush } = vi.hoisted(() => ({
   mockPush: vi.fn(),
 }));
 
+const FRAME_TEST_ID = "canvas-frame";
+const RUNTIME_URL_ATTRIBUTE = "data-runtime-url";
+
 vi.mock("@/lib/api/domains/canvas-api", () => ({
   canvasHref: (canvasId: string) => `/canvases/${canvasId}`,
   getCanvas: mockGetCanvas,
@@ -24,7 +27,7 @@ vi.mock("@/components/plugins/canvas-page", () => ({
   CanvasPage: ({ runtimeUrl, onError }: { runtimeUrl?: string; onError?: () => void }) => (
     <button
       type="button"
-      data-testid="canvas-frame"
+      data-testid={FRAME_TEST_ID}
       data-runtime-url={runtimeUrl ?? ""}
       onClick={onError}
     >
@@ -67,7 +70,7 @@ beforeEach(() => {
     .mockResolvedValueOnce({
       runtime_url: "/runtime/old",
       release_id: "release-1",
-      expires_in_seconds: 1,
+      expires_in_seconds: 900,
     })
     .mockResolvedValueOnce({
       runtime_url: "/runtime/renewed",
@@ -77,24 +80,55 @@ beforeEach(() => {
   mockPush.mockReset();
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+});
 
 describe("CanvasHostRoute runtime recovery", () => {
   it("renews the capability URL for the same active release after a frame failure", async () => {
     render(<CanvasHostRoute canvasId="canvas-1" />);
 
     await waitFor(() =>
-      expect(screen.getByTestId("canvas-frame").getAttribute("data-runtime-url")).toBe(
+      expect(screen.getByTestId(FRAME_TEST_ID).getAttribute(RUNTIME_URL_ATTRIBUTE)).toBe(
         "/runtime/old",
       ),
     );
 
-    fireEvent.click(screen.getByTestId("canvas-frame"));
+    fireEvent.click(screen.getByTestId(FRAME_TEST_ID));
 
     await waitFor(() => {
       expect(mockGetCanvasRuntime).toHaveBeenCalledTimes(2);
-      expect(screen.getByTestId("canvas-frame").getAttribute("data-runtime-url")).toBe(
+      expect(screen.getByTestId(FRAME_TEST_ID).getAttribute(RUNTIME_URL_ATTRIBUTE)).toBe(
         "/runtime/renewed",
+      );
+    });
+  });
+
+  it("renews the capability URL before its expiry", async () => {
+    mockGetCanvasRuntime
+      .mockReset()
+      .mockResolvedValueOnce({
+        runtime_url: "/runtime/expiring",
+        release_id: "release-1",
+        expires_in_seconds: 30,
+      })
+      .mockResolvedValueOnce({
+        runtime_url: "/runtime/refreshed",
+        release_id: "release-1",
+        expires_in_seconds: 900,
+      });
+
+    render(<CanvasHostRoute canvasId="canvas-1" />);
+    await waitFor(() =>
+      expect(screen.getByTestId(FRAME_TEST_ID).getAttribute(RUNTIME_URL_ATTRIBUTE)).toBe(
+        "/runtime/expiring",
+      ),
+    );
+
+    await waitFor(() => {
+      expect(mockGetCanvasRuntime).toHaveBeenCalledTimes(2);
+      expect(screen.getByTestId(FRAME_TEST_ID).getAttribute(RUNTIME_URL_ATTRIBUTE)).toBe(
+        "/runtime/refreshed",
       );
     });
   });

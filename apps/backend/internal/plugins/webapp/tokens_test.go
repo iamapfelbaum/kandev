@@ -58,3 +58,22 @@ func TestTokenManagerIssueURLDoesNotUseQueryToken(t *testing.T) {
 		t.Fatalf("runtime URL contains a query token: %q", url)
 	}
 }
+
+func TestTokenManagerBoundsExpiredTombstones(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	manager := NewTokenManager(func() time.Time { return now })
+	for i := 0; i < maxExpiredCapabilityTombstones+25; i++ {
+		manager.expired[digestToken(strings.Repeat("x", i+1))] = now
+	}
+	if _, err := manager.Issue(CapabilityBinding{UserID: "u", InstanceID: "i", ReleaseID: "r", WebAppKey: "main", Placement: "task-canvas", Entry: "ui/index.html"}, time.Minute); err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+	if len(manager.expired) > maxExpiredCapabilityTombstones {
+		t.Fatalf("expired tombstones = %d, want at most %d", len(manager.expired), maxExpiredCapabilityTombstones)
+	}
+	now = now.Add(RuntimeTokenTTL + time.Second)
+	manager.StoredTokenCount()
+	if len(manager.expired) != 0 {
+		t.Fatalf("expired tombstones after retention = %d, want 0", len(manager.expired))
+	}
+}

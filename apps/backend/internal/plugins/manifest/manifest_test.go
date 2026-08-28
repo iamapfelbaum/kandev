@@ -94,6 +94,33 @@ func TestValidate_WebAppRejectsUnsafeEntryAndUnknownPlacement(t *testing.T) {
 	}
 }
 
+func TestValidate_WebAppNormalizesNetworkOrigins(t *testing.T) {
+	m := validManifest(t)
+	m.UI.WebApps = []WebApp{{
+		Key: "main", Title: "Board", Entry: "ui/index.html",
+		Placements:     []string{WebAppPlacementTask},
+		NetworkOrigins: []string{"https://API.example.com"},
+	}}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("Validate() unexpected error: %v", err)
+	}
+	if got := m.UI.WebApps[0].NetworkOrigins; len(got) != 1 || got[0] != "https://api.example.com" {
+		t.Fatalf("network origins = %#v, want canonical HTTPS origin", got)
+	}
+}
+
+func TestValidate_WebAppRejectsInvalidNetworkOrigin(t *testing.T) {
+	m := validManifest(t)
+	m.UI.WebApps = []WebApp{{
+		Key: "main", Title: "Board", Entry: "ui/index.html",
+		Placements:     []string{WebAppPlacementTask},
+		NetworkOrigins: []string{"https://api.example.com/v1"},
+	}}
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "network_origins") {
+		t.Fatalf("Validate() error = %v, want network origin error", err)
+	}
+}
+
 // TestParse_UserStateCapabilityRoundTrips pins capabilities.user_state
 // (Approach D1 / AC17): a plugin declaring host-provided per-user storage
 // parses with Capabilities.UserState set.

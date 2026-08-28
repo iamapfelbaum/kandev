@@ -16,6 +16,8 @@ import (
 	userstore "github.com/kandev/kandev/internal/user/store"
 )
 
+var errCanvasWebAppNotDeclared = errors.New("canvas web application is not declared")
+
 func (h *canvasHTTPHandler) runtimeBinding(c *gin.Context, canvas canvasservice.Canvas, request canvasRuntimeRequest) (string, instances.Release, manifest.WebApp, webapp.CapabilityBinding, error) {
 	instance, release, appManifest, err := h.loadRuntimeRelease(c, canvas)
 	if err != nil {
@@ -50,7 +52,7 @@ func (h *canvasHTTPHandler) runtimeBinding(c *gin.Context, canvas canvasservice.
 			Available:    true,
 		},
 		Entry:          app.Entry,
-		NetworkOrigins: runtimeNetworkOrigins(appManifest, instance.ScopeKind, grants),
+		NetworkOrigins: runtimeNetworkOrigins(app, instance.ScopeKind, grants),
 	}
 	runtime := h.plugins.WebRuntime()
 	if runtime == nil {
@@ -100,20 +102,22 @@ func selectRuntimeWebApp(appManifest *manifest.Manifest, request canvasRuntimeRe
 		break
 	}
 	if app.Key == "" {
-		return manifest.WebApp{}, "", errors.New("canvas web application is not declared")
+		return manifest.WebApp{}, "", errCanvasWebAppNotDeclared
 	}
 	return app, appPlacement(app, request.Placement, scope), nil
 }
 
-func runtimeNetworkOrigins(appManifest *manifest.Manifest, scope string, grants []instances.Grant) []string {
-	declared := strings.TrimSpace(appManifest.BaseURL)
-	if declared == "" {
+func runtimeNetworkOrigins(app manifest.WebApp, scope string, grants []instances.Grant) []string {
+	declared, err := webapp.NormalizeNetworkOrigins(app.NetworkOrigins)
+	if err != nil || len(declared) == 0 {
 		return nil
 	}
 	origins := make([]string, 0, len(grants))
-	for _, grant := range grants {
-		if grant.NetworkOrigin == declared && runtimeGrantScopeCovers(grant.ScopeCeiling, scope) && !containsString(origins, grant.NetworkOrigin) {
-			origins = append(origins, grant.NetworkOrigin)
+	for _, origin := range declared {
+		for _, grant := range grants {
+			if grant.NetworkOrigin == origin && runtimeGrantScopeCovers(grant.ScopeCeiling, scope) && !containsString(origins, grant.NetworkOrigin) {
+				origins = append(origins, grant.NetworkOrigin)
+			}
 		}
 	}
 	return origins
@@ -133,10 +137,9 @@ func (h *canvasHTTPHandler) writeError(c *gin.Context, err error) {
 		status, code = http.StatusConflict, "invalid_release"
 	case errors.Is(err, canvasservice.ErrInvalidCanvas), errors.Is(err, canvasservice.ErrInvalidCanvasState):
 		status, code = http.StatusBadRequest, "invalid_canvas"
+	case errors.Is(err, errCanvasWebAppNotDeclared):
+		status, code = http.StatusBadRequest, "web_app_not_declared"
 	default:
-		if strings.Contains(strings.ToLower(err.Error()), "not declared") {
-			status, code = http.StatusBadRequest, "web_app_not_declared"
-		}
 	}
 	writeCanvasError(c, status, code, nil)
 }

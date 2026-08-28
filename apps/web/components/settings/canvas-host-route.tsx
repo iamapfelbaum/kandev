@@ -15,6 +15,7 @@ import {
   getCanvasRuntime,
   startCanvasEdit,
   type Canvas,
+  type CanvasRuntimeResponse,
 } from "@/lib/api/domains/canvas-api";
 import { canvasErrorMessage } from "@/lib/api/domains/canvas-error-copy";
 import { CanvasPromotionDialog } from "./canvas-lifecycle-dialogs";
@@ -72,6 +73,35 @@ function stateForCanvas(canvas: Canvas): CanvasHostState {
   return "loading_runtime";
 }
 
+function useRuntimeRenewal() {
+  const renewalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const renewRuntimeRef = useRef<() => void>(() => undefined);
+
+  const clearRuntimeRenewal = useCallback(() => {
+    if (renewalTimerRef.current !== null) {
+      clearTimeout(renewalTimerRef.current);
+      renewalTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleRuntimeRenewal = useCallback(
+    (expiresInSeconds: number | undefined) => {
+      clearRuntimeRenewal();
+      if (!Number.isFinite(expiresInSeconds) || !expiresInSeconds || expiresInSeconds <= 0) {
+        return;
+      }
+      const delay = Math.max(100, (expiresInSeconds - 30) * 1000);
+      renewalTimerRef.current = setTimeout(() => {
+        renewalTimerRef.current = null;
+        renewRuntimeRef.current();
+      }, delay);
+    },
+    [clearRuntimeRenewal],
+  );
+
+  return { clearRuntimeRenewal, scheduleRuntimeRenewal, renewRuntimeRef };
+}
+
 function useCanvasHost(canvasId: string) {
   const { t } = useTranslation();
   const [canvas, setCanvas] = useState<Canvas | null>(null);
@@ -80,9 +110,48 @@ function useCanvasHost(canvasId: string) {
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);
   const renewingRef = useRef(false);
+  const { clearRuntimeRenewal, scheduleRuntimeRenewal, renewRuntimeRef } = useRuntimeRenewal();
+
+  const applyRuntime = useCallback(
+    (runtime: CanvasRuntimeResponse) => {
+      if (runtime.runtime_url) {
+        setRuntimeUrl(runtime.runtime_url);
+        setState("ready");
+        scheduleRuntimeRenewal(runtime.expires_in_seconds);
+      } else {
+        clearRuntimeRenewal();
+        setState("unavailable");
+      }
+    },
+    [clearRuntimeRenewal, scheduleRuntimeRenewal],
+  );
+
+  const renewRuntime = useCallback(() => {
+    if (renewingRef.current) return;
+    const requestId = ++requestRef.current;
+    renewingRef.current = true;
+    clearRuntimeRenewal();
+    setState("loading_runtime");
+    setError(null);
+    getCanvasRuntime(canvasId)
+      .then((runtime) => {
+        if (requestRef.current !== requestId) return;
+        applyRuntime(runtime);
+      })
+      .catch((reason: unknown) => {
+        if (requestRef.current !== requestId) return;
+        clearRuntimeRenewal();
+        setState(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "unavailable");
+        setError(canvasErrorMessage(reason, t, "canvases:loadFailed"));
+      })
+      .finally(() => {
+        renewingRef.current = false;
+      });
+  }, [applyRuntime, canvasId, clearRuntimeRenewal, t]);
 
   const load = useCallback(() => {
     const requestId = ++requestRef.current;
+    clearRuntimeRenewal();
     setCanvas(null);
     setRuntimeUrl(null);
     setState("loading_metadata");
@@ -97,53 +166,31 @@ function useCanvasHost(canvasId: string) {
         if (nextState !== "loading_runtime") return;
         return getCanvasRuntime(canvasId).then((runtime) => {
           if (requestRef.current !== requestId) return;
-          if (runtime.runtime_url) {
-            setRuntimeUrl(runtime.runtime_url);
-            setState("ready");
-          } else {
-            setState("unavailable");
-          }
+          applyRuntime(runtime);
         });
       })
       .catch((reason: unknown) => {
         if (requestRef.current !== requestId) return;
+        clearRuntimeRenewal();
         setState(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "unavailable");
         setError(canvasErrorMessage(reason, t, "canvases:loadFailed"));
       });
-  }, [canvasId, t]);
+  }, [applyRuntime, canvasId, clearRuntimeRenewal, t]);
 
-  const renewRuntime = useCallback(() => {
-    if (renewingRef.current) return;
-    const requestId = ++requestRef.current;
-    renewingRef.current = true;
-    setState("loading_runtime");
-    setError(null);
-    getCanvasRuntime(canvasId)
-      .then((runtime) => {
-        if (requestRef.current !== requestId) return;
-        if (runtime.runtime_url) {
-          setRuntimeUrl(runtime.runtime_url);
-          setState("ready");
-        } else {
-          setState("unavailable");
-        }
-      })
-      .catch((reason: unknown) => {
-        if (requestRef.current !== requestId) return;
-        setState(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "unavailable");
-        setError(canvasErrorMessage(reason, t, "canvases:loadFailed"));
-      })
-      .finally(() => {
-        renewingRef.current = false;
-      });
-  }, [canvasId, t]);
+  useEffect(() => {
+    renewRuntimeRef.current = renewRuntime;
+    return () => {
+      renewRuntimeRef.current = () => undefined;
+    };
+  }, [renewRuntime]);
 
   useEffect(() => {
     load();
     return () => {
       requestRef.current += 1;
+      clearRuntimeRenewal();
     };
-  }, [load]);
+  }, [clearRuntimeRenewal, load]);
 
   return {
     canvas,

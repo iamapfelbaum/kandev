@@ -427,6 +427,50 @@ func (s *Store) Get(ctx context.Context, id string) (Instance, error) {
 	return row.instance()
 }
 
+// GetMany loads instance authority in one query for lifecycle projections.
+// Missing IDs are omitted so callers can reconcile stale metadata without
+// turning an expected orphan into a query error.
+func (s *Store) GetMany(ctx context.Context, ids []string) ([]Instance, error) {
+	unique := make([]string, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return []Instance{}, nil
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(unique)), ",")
+	args := make([]any, len(unique))
+	for i, id := range unique {
+		args[i] = id
+	}
+	rows, err := s.ro.QueryxContext(ctx, s.ro.Rebind(`SELECT id, plugin_id, source_kind, scope_kind, workspace_id, task_id, session_id, repository_id, status, active_release_id, grant_generation, created_at, updated_at FROM plugin_instances WHERE id IN (`+placeholders+`)`), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	result := make([]Instance, 0, len(unique))
+	for rows.Next() {
+		var row instanceRow
+		if err := rows.StructScan(&row); err != nil {
+			return nil, err
+		}
+		instance, err := row.instance()
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, instance)
+	}
+	return result, rows.Err()
+}
+
 func (s *Store) List(ctx context.Context, workspaceID string, includeRemoved bool) ([]Instance, error) {
 	query := `SELECT id, plugin_id, source_kind, scope_kind, workspace_id, task_id, session_id, repository_id, status, active_release_id, grant_generation, created_at, updated_at FROM plugin_instances WHERE workspace_id = ?`
 	args := []any{workspaceID}
@@ -1650,6 +1694,58 @@ func (s *Store) CompleteCleanupJob(ctx context.Context, id string) error {
 		return nil
 	}
 	return ErrNotFound
+}
+
+// RemoveArtifactIfUnreferenced rechecks artifact ownership and completes a
+// claimed cleanup job in one writer transaction. The removal callback runs
+// while the admission lock and SQLite write transaction are held, so a
+// concurrent release cannot republish the same artifact path between the
+// ownership check and filesystem removal.
+func (s *Store) RemoveArtifactIfUnreferenced(ctx context.Context, id, artifactPath string, remove func() error) (bool, error) {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(artifactPath) == "" || remove == nil {
+		return false, ErrInvalidRelease
+	}
+	s.admission.Lock()
+	defer s.admission.Unlock()
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, tx.Rebind(`
+		UPDATE plugin_artifact_cleanup_jobs
+		SET status = ?
+		WHERE id = ? AND artifact_path = ? AND status = ?
+	`), CleanupRunning, id, artifactPath, CleanupRunning)
+	if err != nil {
+		return false, err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return false, ErrNotFound
+	}
+	var references int
+	if err := tx.GetContext(ctx, &references, tx.Rebind(`SELECT COUNT(*) FROM plugin_releases WHERE artifact_path = ?`), artifactPath); err != nil {
+		return false, err
+	}
+	if references > 0 {
+		if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE plugin_artifact_cleanup_jobs SET status = ? WHERE id = ? AND status = ?`), CleanupCompleted, id, CleanupRunning); err != nil {
+			return false, err
+		}
+		if err := tx.Commit(); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	if err := remove(); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE plugin_artifact_cleanup_jobs SET status = ? WHERE id = ? AND status = ?`), CleanupCompleted, id, CleanupRunning); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ListCleanupJobs returns the durable cleanup inventory in stable order.

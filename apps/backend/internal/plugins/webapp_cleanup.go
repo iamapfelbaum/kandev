@@ -70,15 +70,15 @@ func (s *Service) RunWebAppArtifactCleanupOnce(ctx context.Context) error {
 		if !claimed {
 			return nil
 		}
-		if err := artifacts.RemoveRelativePath(job.ArtifactPath); err != nil {
+		_, err = store.RemoveArtifactIfUnreferenced(ctx, job.ID, job.ArtifactPath, func() error {
+			return artifacts.RemoveRelativePath(job.ArtifactPath)
+		})
+		if err != nil {
 			next := time.Now().UTC().Add(cleanupBackoff(job.Attempts))
 			if retryErr := store.RetryCleanupJob(ctx, job.ID, next, err); retryErr != nil && !errors.Is(retryErr, instances.ErrNotFound) {
 				return retryErr
 			}
 			continue
-		}
-		if err := store.CompleteCleanupJob(ctx, job.ID); err != nil && !errors.Is(err, instances.ErrNotFound) {
-			return err
 		}
 	}
 	return nil

@@ -1657,7 +1657,7 @@ func registerMCPAndDebugRoutes(
 	if p.features.Canvases && p.services != nil && p.services.Canvas != nil && p.services.Plugins != nil {
 		mcpHandlers.SetCanvasAuthoringService(newCanvasAuthoringService(
 			p.services.Canvas, p.services.Plugins, p.taskSvc,
-			lifecycleCanvasExecutionResolver{manager: p.lifecycleMgr}, p.homeDir,
+			lifecycleCanvasExecutionResolver{manager: p.lifecycleMgr}, p.homeDir, p.log,
 		))
 	}
 	mcpHandlers.SetRemoteContributionService(newRemoteContributionCoordinator(p.services.GitHub, p.services.GitLab))

@@ -73,6 +73,21 @@ func TestRuntimeBindingPermissionsIntersectCurrentGrants(t *testing.T) {
 	}
 }
 
+func TestRuntimeNetworkOriginsUseSelectedWebAppDeclaration(t *testing.T) {
+	app := manifest.WebApp{NetworkOrigins: []string{
+		"https://api.example.com",
+		"https://unused.example.com",
+	}}
+	grants := []instances.Grant{
+		{PermissionKind: "network", NetworkOrigin: "https://api.example.com", ScopeCeiling: instances.ScopeTask},
+		{PermissionKind: "network", NetworkOrigin: "https://unrelated.example.com", ScopeCeiling: instances.ScopeTask},
+	}
+	got := runtimeNetworkOrigins(app, instances.ScopeTask, grants)
+	if len(got) != 1 || got[0] != "https://api.example.com" {
+		t.Fatalf("runtime network origins = %#v, want only the declared granted origin", got)
+	}
+}
+
 func TestCanvasEditLaunchFailureDeletesEphemeralTask(t *testing.T) {
 	tasks, canvasReader, releases, artifacts := newCanvasEditTestDependencies()
 	launcher := &fakeCanvasEditLauncher{launchErr: errors.New("agent unavailable")}

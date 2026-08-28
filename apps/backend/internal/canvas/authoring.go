@@ -486,12 +486,30 @@ func ManifestPermissions(m *manifest.Manifest) PermissionSummary {
 	if m == nil {
 		return PermissionSummary{}
 	}
+	origins := nonEmptyStrings([]string{m.BaseURL})
+	seenOrigins := make(map[string]struct{}, len(origins))
+	for _, origin := range origins {
+		seenOrigins[origin] = struct{}{}
+	}
+	for _, app := range m.UI.WebApps {
+		normalized, err := webapp.NormalizeNetworkOrigins(app.NetworkOrigins)
+		if err != nil {
+			continue
+		}
+		for _, origin := range normalized {
+			if _, exists := seenOrigins[origin]; exists {
+				continue
+			}
+			seenOrigins[origin] = struct{}{}
+			origins = append(origins, origin)
+		}
+	}
 	return PermissionSummary{
 		Reads:           append([]string(nil), m.Capabilities.APIRead...),
 		Writes:          append([]string(nil), m.Capabilities.APIWrite...),
 		Events:          append([]string(nil), m.Capabilities.Events...),
 		SharedState:     m.Capabilities.State,
-		ExternalOrigins: nonEmptyStrings([]string{m.BaseURL}),
+		ExternalOrigins: origins,
 	}
 }
 

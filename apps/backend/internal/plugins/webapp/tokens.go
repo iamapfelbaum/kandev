@@ -15,6 +15,8 @@ import (
 
 const RuntimeTokenTTL = 15 * time.Minute
 
+const maxExpiredCapabilityTombstones = 1024
+
 var (
 	ErrRuntimeTokenInvalid = errors.New("runtime_token_invalid")
 	ErrRuntimeTokenExpired = errors.New("runtime_token_expired")
@@ -55,7 +57,7 @@ type storedCapability struct {
 type TokenManager struct {
 	mu      sync.Mutex
 	tokens  map[[sha256.Size]byte]storedCapability
-	expired map[[sha256.Size]byte]struct{}
+	expired map[[sha256.Size]byte]time.Time
 	now     func() time.Time
 }
 
@@ -63,7 +65,7 @@ func NewTokenManager(now func() time.Time) *TokenManager {
 	if now == nil {
 		now = time.Now
 	}
-	return &TokenManager{tokens: make(map[[sha256.Size]byte]storedCapability), expired: make(map[[sha256.Size]byte]struct{}), now: now}
+	return &TokenManager{tokens: make(map[[sha256.Size]byte]storedCapability), expired: make(map[[sha256.Size]byte]time.Time), now: now}
 }
 
 func (m *TokenManager) Issue(binding CapabilityBinding, ttl time.Duration) (string, error) {
@@ -80,6 +82,7 @@ func (m *TokenManager) Issue(binding CapabilityBinding, ttl time.Duration) (stri
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	issuedAt := m.now().UTC()
 	m.mu.Lock()
+	m.sweepExpiredLocked(issuedAt)
 	digest := digestToken(token)
 	delete(m.expired, digest)
 	m.tokens[digest] = storedCapability{binding: binding, issuedAt: issuedAt, expiresAt: issuedAt.Add(ttl)}
@@ -107,10 +110,11 @@ func (m *TokenManager) Validate(token string) (CapabilityBinding, error) {
 	digest := digestToken(token)
 	now := m.now().UTC()
 	m.mu.Lock()
+	m.sweepExpiredLocked(now)
 	capability, ok := m.tokens[digest]
 	if ok && !now.Before(capability.expiresAt) {
 		delete(m.tokens, digest)
-		m.expired[digest] = struct{}{}
+		m.expired[digest] = now
 		ok = false
 	}
 	_, wasExpired := m.expired[digest]
@@ -137,6 +141,7 @@ func (m *TokenManager) Renew(token string, ttl time.Duration) error {
 	now := m.now().UTC()
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.sweepExpiredLocked(now)
 	capability, ok := m.tokens[digest]
 	if !ok {
 		if _, wasExpired := m.expired[digest]; wasExpired {
@@ -146,7 +151,7 @@ func (m *TokenManager) Renew(token string, ttl time.Duration) error {
 	}
 	if !now.Before(capability.expiresAt) {
 		delete(m.tokens, digest)
-		m.expired[digest] = struct{}{}
+		m.expired[digest] = now
 		return ErrRuntimeTokenExpired
 	}
 	capability.expiresAt = now.Add(ttl)
@@ -170,7 +175,27 @@ func (m *TokenManager) StoredTokenCount() int {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.sweepExpiredLocked(m.now().UTC())
 	return len(m.tokens)
+}
+
+func (m *TokenManager) sweepExpiredLocked(now time.Time) {
+	cutoff := now.Add(-RuntimeTokenTTL)
+	for digest, expiredAt := range m.expired {
+		if !expiredAt.After(cutoff) {
+			delete(m.expired, digest)
+		}
+	}
+	for len(m.expired) > maxExpiredCapabilityTombstones {
+		var oldestDigest [sha256.Size]byte
+		var oldestAt time.Time
+		for digest, expiredAt := range m.expired {
+			if oldestAt.IsZero() || expiredAt.Before(oldestAt) {
+				oldestDigest, oldestAt = digest, expiredAt
+			}
+		}
+		delete(m.expired, oldestDigest)
+	}
 }
 
 // HasRawToken is a diagnostic test helper. Since the map key is a fixed-size

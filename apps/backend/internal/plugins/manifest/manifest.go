@@ -283,10 +283,11 @@ const (
 // placement, navigation, and permissions; the package only supplies the
 // immutable entry document and its supported host placements.
 type WebApp struct {
-	Key        string   `yaml:"key" json:"key"`
-	Title      string   `yaml:"title" json:"title"`
-	Entry      string   `yaml:"entry" json:"entry"`
-	Placements []string `yaml:"placements" json:"placements"`
+	Key            string   `yaml:"key" json:"key"`
+	Title          string   `yaml:"title" json:"title"`
+	Entry          string   `yaml:"entry" json:"entry"`
+	Placements     []string `yaml:"placements" json:"placements"`
+	NetworkOrigins []string `yaml:"network_origins,omitempty" json:"network_origins,omitempty"`
 }
 
 // UIPage is a single UI page contributed by the plugin.

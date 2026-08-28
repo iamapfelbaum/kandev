@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"path"
 	"regexp"
 	"strings"
@@ -399,8 +400,40 @@ func (m *Manifest) validateWebApps() []error {
 			}
 			placementSeen[placement] = struct{}{}
 		}
+		networkOrigins, originErrs := normalizeWebAppNetworkOrigins(prefix, app.NetworkOrigins)
+		errs = append(errs, originErrs...)
+		m.UI.WebApps[i].NetworkOrigins = networkOrigins
 	}
 	return errs
+}
+
+// normalizeWebAppNetworkOrigins validates the exact HTTPS origins that a
+// packaged web application may request from its sandbox. The host later uses
+// this canonical form for grants and CSP, so equivalent host casing cannot
+// create two permission entries.
+func normalizeWebAppNetworkOrigins(prefix string, origins []string) ([]string, []error) {
+	if len(origins) == 0 {
+		return nil, nil
+	}
+	result := make([]string, 0, len(origins))
+	seen := make(map[string]struct{}, len(origins))
+	var errs []error
+	for i, raw := range origins {
+		trimmed := strings.TrimSpace(raw)
+		parsed, err := url.Parse(trimmed)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || strings.ContainsAny(parsed.Host, " \t\r\n") || parsed.Hostname() == "" {
+			errs = append(errs, fmt.Errorf("%s.network_origins[%d] must be an exact HTTPS origin", prefix, i))
+			continue
+		}
+		origin := parsed.Scheme + "://" + strings.ToLower(parsed.Host)
+		if _, exists := seen[origin]; exists {
+			errs = append(errs, fmt.Errorf("%s.network_origins duplicates %q", prefix, origin))
+			continue
+		}
+		seen[origin] = struct{}{}
+		result = append(result, origin)
+	}
+	return result, errs
 }
 
 // validateCategories checks each category against the known enum.

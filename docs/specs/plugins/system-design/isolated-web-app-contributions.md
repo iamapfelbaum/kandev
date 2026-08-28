@@ -6,7 +6,7 @@ system: plugins
 owners:
   - kandev
 created: 2026-08-26
-last_updated: 2026-08-27
+last_updated: 2026-08-28
 requirements:
   - REQ-PLUGINS-ISOLATED-WEB-APPS-001
   - REQ-PLUGINS-ISOLATED-WEB-APPS-002
@@ -79,11 +79,15 @@ ui:
       title: Task board
       entry: ui/index.html
       placements: [task-canvas, workspace-canvas]
+      network_origins: [https://api.example.com]
 ```
 
 `key` is unique inside the plugin. `entry` is a package-relative HTML file.
 The first placement vocabulary contains `task-canvas` and
-`workspace-canvas`. Later specifications can add other host placements.
+`workspace-canvas`. `network_origins` is an optional list of exact HTTPS
+origins for this web application. It cannot contain paths, credentials,
+wildcards, query strings, or fragments. Later specifications can add other
+host placements.
 
 The host owns the displayed navigation label, icon, scope, route, and actions.
 The iframe owns only its document rectangle.
@@ -233,8 +237,9 @@ The permission vocabulary reuses current manifest capabilities:
 - `state`
 - declared authenticated `actions`
 
-Add exact HTTPS origin grants for browser network access. Remote script origins
-are not grantable in this version.
+Add exact HTTPS origin grants for browser network access. Each web application
+declares its own `network_origins`, so one app cannot inherit another app's
+external origins. Remote script origins are not grantable in this version.
 
 Task-scoped instances default to the current task as their scope ceiling.
 Workspace access requires a separate approved grant. Promotion performs a new

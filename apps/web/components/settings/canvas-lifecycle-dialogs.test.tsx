@@ -1,8 +1,8 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api/client";
-import type { Canvas } from "@/lib/api/domains/canvas-api";
+import type { Canvas, CanvasRelease } from "@/lib/api/domains/canvas-api";
 
 const {
   mockRequestCanvasPromotion,
@@ -20,19 +20,47 @@ const {
   mockRollbackCanvas: vi.fn(),
 }));
 
+const translate = vi.hoisted(() => {
+  const translations: Record<string, string> = {
+    "canvases:runtimeTokenExpired": "The runtime token expired. Try again.",
+    "canvases:actionFailed": "The canvas action failed.",
+    "canvases:promoteCanvas": "Promote canvas",
+    "canvases:promoteCanvasDescription": "Review permissions before promotion.",
+    "canvases:loadingPermissions": "Loading requested permissions",
+    "canvases:promotionScopeChange": "Promotion changes the canvas scope.",
+    "canvases:noAdditionalPermissions": "No additional permissions were requested.",
+    "canvases:promotingCanvas": "Promoting canvas",
+    "canvases:confirmPromotion": "Confirm promotion",
+    "canvases:releasesAndPermissions": "Releases and permissions",
+    "canvases:releasesDescription": "Review releases and permissions.",
+    "canvases:loadingReleases": "Loading releases",
+    "canvases:noReleases": "No releases are available.",
+    "canvases:approveRelease": "Approve release",
+    "canvases:rejectRelease": "Reject release",
+    "canvases:rollbackRelease": "Roll back release",
+    "canvases:statusActive": "Active",
+    "canvases:statusPending": "Pending",
+    "canvases:invalidRelease": "Invalid release",
+    "canvases:unavailable": "Unavailable",
+    "canvases:permissionReads": "API reads",
+    "canvases:permissionWrites": "API writes",
+    "canvases:permissionEvents": "Events",
+    "canvases:permissionExternalOrigins": "External origins",
+    "canvases:sharedState": "Shared state",
+    "canvases:promotionSourceScope": "Source scope",
+    "canvases:promotionSourceActor": "Source actor",
+    "canvases:promotionSourceTask": "Source task",
+    "canvases:promotionSourceSession": "Source session",
+    "canvases:promotionTargetScope": "Target scope",
+    "canvases:promotionPlacement": "Workspace placement",
+    "common:cancel": "Cancel",
+    "common:close": "Close",
+  };
+  return (key: string) => translations[key] ?? key;
+});
+
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (key: string) =>
-      ({
-        "canvases:runtimeTokenExpired": "The runtime token expired. Try again.",
-        "canvases:actionFailed": "The canvas action failed.",
-        "canvases:permissionReads": "API reads",
-        "canvases:permissionWrites": "API writes",
-        "canvases:permissionEvents": "Events",
-        "canvases:permissionExternalOrigins": "External origins",
-        "canvases:sharedState": "Shared state",
-      })[key] ?? key,
-  }),
+  useTranslation: () => ({ t: translate }),
 }));
 
 vi.mock("@kandev/ui/dialog", () => ({
@@ -70,6 +98,35 @@ const canvas: Canvas = {
   active_release_id: "release-1",
   active_release_status: "valid",
 };
+
+const COPY = {
+  actionFailed: "The canvas action failed.",
+  noReleases: "No releases are available.",
+  approveRelease: "Approve release",
+  rejectRelease: "Reject release",
+  rollbackRelease: "Roll back release",
+  promotingCanvas: "Promoting canvas",
+  confirmPromotion: "Confirm promotion",
+  cancel: "Cancel",
+} as const;
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function release(overrides: Partial<CanvasRelease> = {}): CanvasRelease {
+  return {
+    id: "release-pending",
+    validation_status: "pending_permission",
+    ...overrides,
+  };
+}
 
 beforeEach(() => {
   mockRequestCanvasPromotion.mockReset().mockResolvedValue({
@@ -140,6 +197,61 @@ describe("CanvasPromotionDialog", () => {
     expect(alert.textContent).not.toContain("raw server failure");
   });
 
+  it("confirms promotion, reports the completed canvas, and closes", async () => {
+    const preview = deferred<{
+      canvas_id: string;
+      current_scope: string;
+      target_scope: string;
+      permissions: { reads: string[] };
+    }>();
+    const confirmation = deferred<Canvas>();
+    const promoted = { ...canvas, scope_kind: "workspace" };
+    const onCompleted = vi.fn();
+    const onOpenChange = vi.fn();
+    mockRequestCanvasPromotion.mockReturnValue(preview.promise);
+    mockConfirmCanvasPromotion.mockReturnValue(confirmation.promise);
+
+    render(
+      <CanvasPromotionDialog
+        canvas={canvas}
+        open
+        onOpenChange={onOpenChange}
+        onCompleted={onCompleted}
+      />,
+    );
+
+    const confirmButton = screen.getByRole("button", { name: COPY.confirmPromotion });
+    expect((confirmButton as HTMLButtonElement).disabled).toBe(true);
+
+    preview.resolve({
+      canvas_id: canvas.id,
+      current_scope: "task",
+      target_scope: "workspace",
+      permissions: { reads: [] },
+    });
+    await waitFor(() => expect((confirmButton as HTMLButtonElement).disabled).toBe(false));
+
+    fireEvent.click(confirmButton);
+    await waitFor(() => expect(mockConfirmCanvasPromotion).toHaveBeenCalledWith(canvas.id));
+    expect(
+      (screen.getByRole("button", { name: COPY.promotingCanvas }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    confirmation.resolve(promoted);
+    await waitFor(() => expect(onCompleted).toHaveBeenCalledWith(promoted));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("closes promotion without confirming when cancelled", async () => {
+    const onOpenChange = vi.fn();
+    render(<CanvasPromotionDialog canvas={canvas} open onOpenChange={onOpenChange} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: COPY.cancel }));
+
+    expect(mockConfirmCanvasPromotion).not.toHaveBeenCalled();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it("localizes stable release validation codes", async () => {
     mockListCanvasReleases.mockResolvedValue({
       releases: [
@@ -156,5 +268,100 @@ describe("CanvasPromotionDialog", () => {
     await waitFor(() =>
       expect(screen.getByText("The runtime token expired. Try again.")).toBeTruthy(),
     );
+  });
+});
+
+describe("CanvasReleaseDialog actions", () => {
+  it.each([
+    {
+      action: "approve",
+      actionMock: mockApproveCanvasRelease,
+      buttonName: COPY.approveRelease,
+      release: release(),
+    },
+    {
+      action: "reject",
+      actionMock: mockRejectCanvasRelease,
+      buttonName: COPY.rejectRelease,
+      release: release({ id: "release-to-reject" }),
+    },
+    {
+      action: "rollback",
+      actionMock: mockRollbackCanvas,
+      buttonName: COPY.rollbackRelease,
+      release: release({ id: "release-to-rollback", validation_status: "valid" }),
+    },
+  ])("runs the $action release action and refreshes the list", async (testCase) => {
+    const next = { ...canvas, active_release_id: testCase.release.id };
+    const onChanged = vi.fn();
+    testCase.actionMock.mockResolvedValue(next);
+    mockListCanvasReleases
+      .mockResolvedValueOnce({ releases: [testCase.release] })
+      .mockResolvedValueOnce({ releases: [] });
+
+    render(
+      <CanvasReleaseDialog canvas={canvas} open onOpenChange={vi.fn()} onChanged={onChanged} />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: testCase.buttonName }));
+
+    await waitFor(() =>
+      expect(testCase.actionMock).toHaveBeenCalledWith(canvas.id, testCase.release.id),
+    );
+    await waitFor(() => expect(onChanged).toHaveBeenCalledWith(next));
+    await waitFor(() => expect(mockListCanvasReleases).toHaveBeenCalledTimes(2));
+    expect(screen.getByText(COPY.noReleases)).toBeTruthy();
+  });
+
+  it("disables both actions for a busy pending release until refresh completes", async () => {
+    const mutation = deferred<Canvas>();
+    const refreshed = deferred<{ releases: CanvasRelease[] }>();
+    const pendingRelease = release();
+    mockApproveCanvasRelease.mockReturnValue(mutation.promise);
+    mockListCanvasReleases
+      .mockResolvedValueOnce({ releases: [pendingRelease] })
+      .mockReturnValueOnce(refreshed.promise);
+
+    render(<CanvasReleaseDialog canvas={canvas} open onOpenChange={vi.fn()} />);
+
+    const approveButton = await screen.findByRole("button", { name: COPY.approveRelease });
+    const rejectButton = screen.getByRole("button", { name: COPY.rejectRelease });
+    fireEvent.click(approveButton);
+
+    await waitFor(() => expect((approveButton as HTMLButtonElement).disabled).toBe(true));
+    expect((rejectButton as HTMLButtonElement).disabled).toBe(true);
+
+    mutation.resolve({ ...canvas, active_release_id: pendingRelease.id });
+    await waitFor(() => expect(mockListCanvasReleases).toHaveBeenCalledTimes(2));
+    expect((approveButton as HTMLButtonElement).disabled).toBe(true);
+
+    refreshed.resolve({ releases: [] });
+    await waitFor(() => expect(screen.getByText(COPY.noReleases)).toBeTruthy());
+  });
+
+  it("shows a refresh error and releases the busy action after failure", async () => {
+    const pendingRelease = release();
+    mockListCanvasReleases.mockResolvedValueOnce({ releases: [pendingRelease] });
+    mockApproveCanvasRelease.mockRejectedValue(new ApiError("raw action failure", 500, {}));
+
+    render(<CanvasReleaseDialog canvas={canvas} open onOpenChange={vi.fn()} />);
+
+    const approveButton = await screen.findByRole("button", { name: COPY.approveRelease });
+    fireEvent.click(approveButton);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(COPY.actionFailed);
+    await waitFor(() => expect((approveButton as HTMLButtonElement).disabled).toBe(false));
+    expect(mockListCanvasReleases).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders an error when the release list cannot be loaded", async () => {
+    mockListCanvasReleases.mockRejectedValue(new ApiError("raw load failure", 500, {}));
+
+    render(<CanvasReleaseDialog canvas={canvas} open onOpenChange={vi.fn()} />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(COPY.actionFailed);
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });

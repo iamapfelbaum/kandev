@@ -494,15 +494,17 @@ func (s *Service) Reconcile(ctx context.Context) error {
 
 func (s *Service) reconcileMetadata(ctx context.Context, metadata []CanvasMetadata) (map[string]struct{}, []error) {
 	knownInstances := make(map[string]struct{}, len(metadata))
-	var errs []error
 	for _, item := range metadata {
 		knownInstances[item.PluginInstanceID] = struct{}{}
-		instance, err := s.instances.Get(ctx, item.PluginInstanceID)
-		if err == nil && instance.Status != plugininstances.StatusRemoved {
-			continue
-		}
-		if err != nil && !errors.Is(err, plugininstances.ErrNotFound) {
-			errs = append(errs, fmt.Errorf("inspect canvas %s: %w", item.ID, err))
+	}
+	instancesByID, err := s.loadMetadataInstances(ctx, metadata)
+	if err != nil {
+		return knownInstances, []error{fmt.Errorf("inspect canvas instances: %w", err)}
+	}
+	var errs []error
+	for _, item := range metadata {
+		instance, exists := instancesByID[item.PluginInstanceID]
+		if exists && instance.Status != plugininstances.StatusRemoved {
 			continue
 		}
 		if _, err := s.removeMetadataLocked(ctx, item); err != nil {
@@ -609,14 +611,15 @@ func (s *Service) listMetadata(
 	includeArchived bool,
 	allowed func(CanvasMetadata, plugininstances.Instance) bool,
 ) ([]Canvas, error) {
+	instancesByID, err := s.loadMetadataInstances(ctx, metadata)
+	if err != nil {
+		return nil, err
+	}
 	canvases := make([]Canvas, 0, len(metadata))
 	for _, item := range metadata {
-		instance, err := s.instances.Get(ctx, item.PluginInstanceID)
-		if errors.Is(err, plugininstances.ErrNotFound) || instance.Status == StatusRemoved {
+		instance, exists := instancesByID[item.PluginInstanceID]
+		if !exists || instance.Status == StatusRemoved {
 			continue
-		}
-		if err != nil {
-			return nil, err
 		}
 		if !includeArchived && instance.Status == StatusArchived {
 			continue
@@ -637,6 +640,44 @@ func (s *Service) listMetadata(
 		return canvases[i].CreatedAt.Before(canvases[j].CreatedAt)
 	})
 	return canvases, nil
+}
+
+type bulkPluginInstanceStore interface {
+	GetMany(context.Context, []string) ([]plugininstances.Instance, error)
+}
+
+func (s *Service) loadMetadataInstances(ctx context.Context, metadata []CanvasMetadata) (map[string]plugininstances.Instance, error) {
+	ids := make([]string, 0, len(metadata))
+	seen := make(map[string]struct{}, len(metadata))
+	for _, item := range metadata {
+		if _, exists := seen[item.PluginInstanceID]; exists {
+			continue
+		}
+		seen[item.PluginInstanceID] = struct{}{}
+		ids = append(ids, item.PluginInstanceID)
+	}
+	result := make(map[string]plugininstances.Instance, len(ids))
+	if bulk, ok := s.instances.(bulkPluginInstanceStore); ok {
+		instances, err := bulk.GetMany(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
+		for _, instance := range instances {
+			result[instance.ID] = instance
+		}
+		return result, nil
+	}
+	for _, id := range ids {
+		instance, err := s.instances.Get(ctx, id)
+		if errors.Is(err, plugininstances.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		result[instance.ID] = instance
+	}
+	return result, nil
 }
 
 func (s *Service) buildCanvas(ctx context.Context, metadata CanvasMetadata, instance plugininstances.Instance) (Canvas, error) {
