@@ -56,6 +56,9 @@ interface MarkdownPreviewToolbarProps {
   repositoryName?: string;
   showExternalVcsLink: boolean;
   onTogglePreview?: () => void;
+  toolbarModeControl?: ReactNode;
+  toolbarActions?: ReactNode;
+  showToolbar?: boolean;
 }
 
 function MarkdownPreviewToolbar({
@@ -69,19 +72,25 @@ function MarkdownPreviewToolbar({
   repositoryName,
   showExternalVcsLink,
   onTogglePreview,
+  toolbarModeControl,
+  toolbarActions,
 }: MarkdownPreviewToolbarProps) {
   const { t } = useTranslation();
   const fileStatus = useExternalVcsFileStatus(path, sessionId, repositoryName);
   return (
     <PanelHeaderBarSplit
+      className={toolbarModeControl ? "markdown-file-toolbar" : undefined}
       left={
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span className="font-mono">{toRelativePath(path, worktreePath)}</span>
-          <span className="text-xs text-muted-foreground/60">{t("task:preview")}</span>
+          {!toolbarModeControl && (
+            <span className="text-xs text-muted-foreground/60">{t("task:preview")}</span>
+          )}
         </div>
       }
       right={
         <div className="flex items-center gap-1">
+          {toolbarModeControl}
           {showExternalVcsLink && (
             <ExternalVcsFileLink
               filePath={path}
@@ -116,6 +125,7 @@ function MarkdownPreviewToolbar({
               <TooltipContent>{t("task:showCode")}</TooltipContent>
             </Tooltip>
           )}
+          {toolbarActions}
         </div>
       }
     />
@@ -135,6 +145,8 @@ interface MarkdownPreviewContentProps {
   onTogglePreview?: () => void;
   onOpenFile?: (path: string) => void;
   onOpenLink?: (url: string) => boolean | void;
+  toolbarModeControl?: ReactNode;
+  toolbarActions?: ReactNode;
 }
 
 type PositionedNode = {
@@ -388,6 +400,9 @@ export const MarkdownPreviewContent = memo(function MarkdownPreviewContent({
   onTogglePreview,
   onOpenFile,
   onOpenLink,
+  toolbarModeControl,
+  toolbarActions,
+  showToolbar = true,
 }: MarkdownPreviewContentProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -429,18 +444,22 @@ export const MarkdownPreviewContent = memo(function MarkdownPreviewContent({
 
   return (
     <div className="relative flex h-full flex-col" data-testid="markdown-preview">
-      <MarkdownPreviewToolbar
-        path={path}
-        worktreePath={worktreePath}
-        commentCount={commentState.comments.length}
-        commentsEnabled={commentsEnabled}
-        taskId={taskId}
-        sessionId={sessionId}
-        repositoryId={repositoryId}
-        repositoryName={repositoryName}
-        showExternalVcsLink={showExternalVcsLink}
-        onTogglePreview={onTogglePreview}
-      />
+      {showToolbar && (
+        <MarkdownPreviewToolbar
+          path={path}
+          worktreePath={worktreePath}
+          commentCount={commentState.comments.length}
+          commentsEnabled={commentsEnabled}
+          taskId={taskId}
+          sessionId={sessionId}
+          repositoryId={repositoryId}
+          repositoryName={repositoryName}
+          showExternalVcsLink={showExternalVcsLink}
+          onTogglePreview={onTogglePreview}
+          toolbarModeControl={toolbarModeControl}
+          toolbarActions={toolbarActions}
+        />
+      )}
       <div
         ref={scrollRef}
         className="flex-1 overflow-auto p-6"
