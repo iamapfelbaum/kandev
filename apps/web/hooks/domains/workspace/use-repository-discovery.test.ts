@@ -49,6 +49,7 @@ function client(overrides: Partial<RepositoryDiscoveryClient> = {}): RepositoryD
   };
 }
 
+// eslint-disable-next-line max-lines-per-function -- coordinator scenarios share setup and lifecycle assertions
 describe("RepositoryDiscoveryCoordinator", () => {
   it("shares one stale refresh between active leases", async () => {
     const api = client();
@@ -134,6 +135,24 @@ describe("RepositoryDiscoveryCoordinator", () => {
     const release = coordinator.acquire(workspaceId);
     await vi.waitFor(() => expect(api.getSnapshot).toHaveBeenCalledTimes(1));
     expect(api.refresh).not.toHaveBeenCalled();
+    release();
+    coordinator.dispose();
+  });
+
+  it("joins a refresh reported by a fresh cached snapshot", async () => {
+    const api = client({
+      getSnapshot: vi.fn(async () => ({
+        ...response(new Date(currentTime).toISOString()),
+        refreshing: true,
+      })),
+    });
+    const coordinator = new RepositoryDiscoveryCoordinator(api, {
+      now: () => currentTime,
+    });
+
+    const release = coordinator.acquire(workspaceId);
+    await vi.waitFor(() => expect(api.refresh).toHaveBeenCalledTimes(1));
+    expect(api.refresh).toHaveBeenCalledWith(workspaceId, "stale_refresh");
     release();
     coordinator.dispose();
   });

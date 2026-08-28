@@ -43,6 +43,10 @@ vi.mock("@/components/folder-picker", () => ({
     </button>
   ),
 }));
+vi.mock("@/components/repository-discovery-controls", () => ({
+  RepositoryDiscoveryControls: ({ enabled }: { enabled?: boolean }) =>
+    enabled ? <div data-testid="repository-discovery-controls" /> : null,
+}));
 vi.mock("@/lib/api/domains/kanban-api", () => ({ attachTaskWorkspaceSources }));
 vi.mock("@/app/actions/workspaces", () => ({
   discoverRepositoriesAction,
@@ -141,6 +145,7 @@ describe("AddWorkspaceSourcesDialog consequences", () => {
 
     fireEvent.click(screen.getByRole("button", { name: ADD_SOURCES_LABEL }));
     const surface = await screen.findByTestId(surfaceTestId);
+    expect(surface.contains(screen.getByTestId("repository-discovery-controls"))).toBe(true);
     const consequences = screen.getByTestId("workspace-change-consequences");
 
     expect(surface.contains(consequences)).toBe(true);

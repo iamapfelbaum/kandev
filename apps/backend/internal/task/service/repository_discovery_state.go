@@ -23,6 +23,24 @@ var (
 	ErrInvalidDiscoveryRoot        = errors.New("invalid discovery root")
 )
 
+const (
+	discoveryTriggerManualRefresh = "manual_refresh"
+	discoveryTriggerStaleRefresh  = "stale_refresh"
+	discoveryTriggerUserSelect    = "user_select"
+)
+
+// NormalizeRepositoryDiscoveryTrigger keeps scan diagnostics within the
+// triggers understood by the discovery contract. Unknown or missing causes
+// are treated as an explicit manual refresh.
+func NormalizeRepositoryDiscoveryTrigger(trigger string) string {
+	switch trigger {
+	case discoveryTriggerManualRefresh, discoveryTriggerStaleRefresh, discoveryTriggerUserSelect:
+		return trigger
+	default:
+		return discoveryTriggerManualRefresh
+	}
+}
+
 type discoveryCacheEntry struct {
 	roots        []string
 	repositories []LocalRepository
@@ -122,7 +140,7 @@ func (s *Service) getLocalRepositoryDiscovery(
 // set. Concurrent callers share the same in-flight scan. A failed root keeps
 // the previous successful repository list in the cache.
 func (s *Service) RefreshLocalRepositoryDiscovery(ctx context.Context, root string) (RepositoryDiscoveryResult, error) {
-	return s.refreshLocalRepositoryDiscovery(ctx, "", root)
+	return s.refreshLocalRepositoryDiscovery(ctx, "", root, discoveryTriggerManualRefresh)
 }
 
 // RefreshLocalRepositoryDiscoveryForWorkspace applies the workspace
@@ -131,13 +149,32 @@ func (s *Service) RefreshLocalRepositoryDiscoveryForWorkspace(
 	ctx context.Context,
 	workspaceID, root string,
 ) (RepositoryDiscoveryResult, error) {
-	return s.refreshLocalRepositoryDiscovery(ctx, workspaceID, root)
+	return s.RefreshLocalRepositoryDiscoveryForWorkspaceWithTrigger(
+		ctx, workspaceID, root, discoveryTriggerManualRefresh,
+	)
+}
+
+// RefreshLocalRepositoryDiscoveryForWorkspaceWithTrigger applies the
+// workspace visibility check before starting or joining a scan. The validated
+// trigger is retained in scan diagnostics so support can distinguish stale
+// activation from a user refresh or root selection.
+func (s *Service) RefreshLocalRepositoryDiscoveryForWorkspaceWithTrigger(
+	ctx context.Context,
+	workspaceID, root, trigger string,
+) (RepositoryDiscoveryResult, error) {
+	return s.refreshLocalRepositoryDiscovery(
+		ctx,
+		workspaceID,
+		root,
+		NormalizeRepositoryDiscoveryTrigger(trigger),
+	)
 }
 
 func (s *Service) refreshLocalRepositoryDiscovery(
 	ctx context.Context,
-	workspaceID, root string,
+	workspaceID, root, trigger string,
 ) (RepositoryDiscoveryResult, error) {
+	trigger = NormalizeRepositoryDiscoveryTrigger(trigger)
 	if err := s.authorizeWorkspaceID(ctx, workspaceID); err != nil {
 		return RepositoryDiscoveryResult{}, err
 	}
@@ -154,7 +191,7 @@ func (s *Service) refreshLocalRepositoryDiscovery(
 		return RepositoryDiscoveryResult{}, err
 	}
 	if len(roots) == 0 {
-		s.logFilesystemInfo("repository discovery scan skipped", "repository.discovery.scan", root, "manual_refresh")
+		s.logFilesystemInfo("repository discovery scan skipped", "repository.discovery.scan", root, trigger)
 		return RepositoryDiscoveryResult{
 			Roots:                    roots,
 			RootStates:               states,
@@ -171,7 +208,7 @@ func (s *Service) refreshLocalRepositoryDiscovery(
 		select {
 		case <-done:
 			if errors.Is(flight.err, context.Canceled) || errors.Is(flight.err, context.DeadlineExceeded) {
-				return s.refreshLocalRepositoryDiscovery(ctx, workspaceID, root)
+				return s.refreshLocalRepositoryDiscovery(ctx, workspaceID, root, trigger)
 			}
 			return flight.result, flight.err
 		case <-ctx.Done():
@@ -183,7 +220,7 @@ func (s *Service) refreshLocalRepositoryDiscovery(
 	s.discoveryFlights[key] = flight
 	s.discoveryCacheMu.Unlock()
 
-	result, scanErr := s.scanDiscoveryRoots(ctx, roots, previous, hasPrevious, homeConfirmation)
+	result, scanErr := s.scanDiscoveryRoots(ctx, roots, previous, hasPrevious, homeConfirmation, trigger)
 	s.discoveryCacheMu.Lock()
 	flight.result = result
 	flight.err = scanErr
@@ -199,21 +236,23 @@ func (s *Service) scanDiscoveryRoots(
 	previous discoveryCacheEntry,
 	hasPrevious bool,
 	homeConfirmation bool,
+	trigger string,
 ) (RepositoryDiscoveryResult, error) {
+	trigger = NormalizeRepositoryDiscoveryTrigger(trigger)
 	found := make([]LocalRepository, 0)
 	failed := make([]string, 0)
 	for _, root := range roots {
 		if err := ctx.Err(); err != nil {
 			return RepositoryDiscoveryResult{}, err
 		}
-		s.logFilesystemInfo("repository discovery scan started", "repository.discovery.scan", root, "manual_refresh")
+		s.logFilesystemInfo("repository discovery scan started", "repository.discovery.scan", root, trigger)
 		repositories, err := s.discoveryScanRoot(ctx, root, s.discoveryMaxDepth())
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return RepositoryDiscoveryResult{}, err
 			}
 			failed = append(failed, root)
-			s.logFilesystemFailure("repository.discovery.scan", root, "manual_refresh", err)
+			s.logFilesystemFailure("repository.discovery.scan", root, trigger, err)
 			s.recordDesktopRootFailure(ctx, root, err)
 			continue
 		}
@@ -410,7 +449,7 @@ func (s *Service) AddDesktopDiscoveryRoot(ctx context.Context, path string) (*mo
 		}
 	}
 	s.invalidateDiscoveryCache()
-	if _, err := s.RefreshLocalRepositoryDiscovery(ctx, ""); err != nil {
+	if _, err := s.refreshLocalRepositoryDiscovery(ctx, "", "", discoveryTriggerUserSelect); err != nil {
 		return nil, err
 	}
 	return s.getRequiredDesktopDiscoveryRoot(ctx, canonical)
@@ -459,7 +498,7 @@ func (s *Service) ReconnectDesktopDiscoveryRoot(ctx context.Context, oldPath, ne
 		}
 	}
 	s.invalidateDiscoveryCache()
-	if _, err := s.RefreshLocalRepositoryDiscovery(ctx, ""); err != nil {
+	if _, err := s.refreshLocalRepositoryDiscovery(ctx, "", "", discoveryTriggerUserSelect); err != nil {
 		return nil, err
 	}
 	return s.getRequiredDesktopDiscoveryRoot(ctx, canonical)

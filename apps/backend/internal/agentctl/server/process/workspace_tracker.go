@@ -563,7 +563,23 @@ func (wt *WorkspaceTracker) armPollModeGrace() {
 	if wt.pollModePushed || wt.pollModeGraceTimer != nil || wt.pollModeGrace <= 0 {
 		return
 	}
-	wt.pollModeGraceTimer = time.AfterFunc(wt.pollModeGrace, wt.demoteUnpushedPollMode)
+	timer := time.NewTimer(wt.pollModeGrace)
+	wt.pollModeGraceTimer = timer
+	// The grace callback owns filesystem work, so it must be part of the
+	// tracker lifecycle. A timer callback launched by time.AfterFunc cannot be
+	// joined by Stop when it races with teardown.
+	wt.wg.Add(1)
+	go wt.pollModeGraceLoop(timer)
+}
+
+func (wt *WorkspaceTracker) pollModeGraceLoop(timer *time.Timer) {
+	defer wt.wg.Done()
+	select {
+	case <-timer.C:
+		wt.demoteUnpushedPollMode(wt.cancelCtx)
+	case <-wt.stopCh:
+	case <-wt.cancelCtx.Done():
+	}
 }
 
 // disarmPollModeGraceLocked stops the fallback timer. Caller must hold pollModeMu.

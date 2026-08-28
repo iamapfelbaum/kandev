@@ -255,6 +255,77 @@ func TestAggregator_RuntimeInterestRemovalDeliversPaused(t *testing.T) {
 	}
 }
 
+func TestAggregator_FailedPausedPushIsRetriedOnUnchangedContribution(t *testing.T) {
+	var (
+		mu          sync.Mutex
+		pausedCalls int
+		modes       = make(chan string, 4)
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Mode string `json:"mode"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		modes <- body.Mode
+		if body.Mode == string(WorkspacePollModePaused) {
+			mu.Lock()
+			pausedCalls++
+			call := pausedCalls
+			mu.Unlock()
+			if call == 1 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	mgr := newTestManagerForAggregator(t)
+	addExecutionWithClient(t, mgr, "s1", "/tmp/ws1", srv.URL)
+
+	mgr.pollAggregator.HandleRuntimeInterest("s1", true)
+	if got := <-modes; got != string(WorkspacePollModeSlow) {
+		t.Fatalf("initial runtime mode = %q, want slow", got)
+	}
+	mgr.pollAggregator.HandleRuntimeInterest("s1", false)
+	if got := <-modes; got != string(WorkspacePollModePaused) {
+		t.Fatalf("first paused mode = %q, want paused", got)
+	}
+
+	// The first paused RPC failed. A repeated paused contribution must not be
+	// suppressed just because the desired mode was already recorded locally.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mgr.pollAggregator.mu.Lock()
+		dirty := mgr.pollAggregator.dirtyPush["/tmp/ws1"]
+		mgr.pollAggregator.mu.Unlock()
+		if dirty {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mgr.pollAggregator.mu.Lock()
+	dirty := mgr.pollAggregator.dirtyPush["/tmp/ws1"]
+	mgr.pollAggregator.mu.Unlock()
+	if !dirty {
+		t.Fatal("first paused RPC did not record a dirty retry state")
+	}
+	mgr.pollAggregator.HandleRuntimeInterest("s1", false)
+	if got := <-modes; got != string(WorkspacePollModePaused) {
+		t.Fatalf("retried paused mode = %q, want paused", got)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if pausedCalls != 2 {
+		t.Fatalf("paused RPC calls = %d, want 2", pausedCalls)
+	}
+}
+
 func TestAggregator_FlushSessionMode_PushesRuntimeBaselineWithoutCachedUIState(t *testing.T) {
 	mgr := newTestManagerForAggregator(t)
 	addExecution(mgr, "s1", "/tmp/ws1")

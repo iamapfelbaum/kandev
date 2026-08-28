@@ -14,6 +14,7 @@ import type { TaskMode } from "@/lib/types/automation";
 import type { TaskRepoRow } from "@/components/task-create-dialog-types";
 import { WorkflowSelectorRow } from "@/components/workflow-selector-row";
 import { WorkspaceRepoChips } from "@/components/task-create-dialog-workspace-repo-chips";
+import { RepositoryDiscoveryControls } from "@/components/repository-discovery-controls";
 import { AgentSelector, ExecutorProfileSelector } from "@/components/task-create-dialog-selectors";
 import {
   useAgentProfileOptions,
@@ -122,6 +123,7 @@ function RepositoryAccess({
           {t("automations:repositoryModeDescription")}
         </p>
       </div>
+      <RepositoryDiscoveryControls workspaceId={workspaceId} />
       <div className="flex min-w-0 flex-wrap items-center gap-2" data-testid="repository-rows">
         <WorkspaceRepoChips
           rows={rows}

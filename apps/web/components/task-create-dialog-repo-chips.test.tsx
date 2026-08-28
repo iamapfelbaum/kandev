@@ -32,6 +32,10 @@ vi.mock("./task-create-dialog-remote-repo-chip", () => ({
   selectedRemoteRepositoryIdentity: () => null,
 }));
 
+vi.mock("@/components/repository-discovery-controls", () => ({
+  RepositoryDiscoveryControls: () => null,
+}));
+
 import { RepoChipsRow } from "./task-create-dialog-repo-chips";
 
 afterEach(() => {

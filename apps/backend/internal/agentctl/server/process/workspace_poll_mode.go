@@ -112,20 +112,27 @@ func (wt *WorkspaceTracker) SetPollMode(mode PollMode) {
 
 // demoteUnpushedPollMode performs the one startup-grace scan, then pauses the
 // tracker when no gateway mode ever arrived. Fires at most once — the timer is
-// not rearmed — so a later push always wins.
-func (wt *WorkspaceTracker) demoteUnpushedPollMode() {
+// not rearmed — so a later push always wins. The caller owns the context so
+// Stop can cancel both the scan and the transition before it publishes.
+func (wt *WorkspaceTracker) demoteUnpushedPollMode(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	wt.pollModeMu.Lock()
 	wt.pollModeGraceTimer = nil
-	if wt.pollModePushed || wt.pollMode == PollModePaused {
+	if ctx.Err() != nil || wt.pollModePushed || wt.pollMode == PollModePaused {
 		wt.pollModeMu.Unlock()
 		return
 	}
 	wt.pollModeMu.Unlock()
 
-	wt.RefreshWorkspace(withWorkspaceTrigger(context.Background(), "startup_grace"), "startup_grace")
+	wt.RefreshWorkspace(withWorkspaceTrigger(ctx, "startup_grace"), "startup_grace")
+	if ctx.Err() != nil {
+		return
+	}
 
 	wt.pollModeMu.Lock()
-	if wt.pollModePushed {
+	if ctx.Err() != nil || wt.pollModePushed {
 		wt.pollModeMu.Unlock()
 		return
 	}

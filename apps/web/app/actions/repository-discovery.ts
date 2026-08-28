@@ -6,6 +6,8 @@ import type { DesktopDiscoveryRoot, RepositoryDiscoveryResponse } from "@/lib/ty
 
 const { apiBaseUrl } = getBackendConfig();
 
+export type RepositoryDiscoveryRefreshTrigger = "manual_refresh" | "stale_refresh";
+
 export async function getRepositoryDiscoveryAction(
   workspaceId: string,
   root?: string,
@@ -19,10 +21,13 @@ export async function getRepositoryDiscoveryAction(
 export async function refreshRepositoryDiscoveryAction(
   workspaceId: string,
   root?: string,
+  trigger: RepositoryDiscoveryRefreshTrigger = "manual_refresh",
 ): Promise<RepositoryDiscoveryResponse> {
-  const params = root ? `?root=${encodeURIComponent(root)}` : "";
+  const params = new URLSearchParams();
+  if (root) params.set("root", root);
+  params.set("trigger", trigger);
   return fetchJson<RepositoryDiscoveryResponse>(
-    `${apiBaseUrl}/api/v1/workspaces/${workspaceId}/repositories/discovery/refresh${params}`,
+    `${apiBaseUrl}/api/v1/workspaces/${workspaceId}/repositories/discovery/refresh?${params.toString()}`,
     { init: { method: "POST" } },
   );
 }

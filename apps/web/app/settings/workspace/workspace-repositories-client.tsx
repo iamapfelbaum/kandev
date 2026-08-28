@@ -29,7 +29,6 @@ import {
   type Workspace,
 } from "@/lib/types/http";
 import { useRequest } from "@/lib/http/use-request";
-import { useToast } from "@/components/toast-provider";
 import { useAppStore } from "@/components/state-provider";
 import type { ManualValidation } from "@/app/settings/workspace/workspace-repositories-dialog";
 import { WorkspaceNotFoundCard } from "@/app/settings/workspace/workspace-not-found-card";
@@ -43,7 +42,6 @@ import {
 } from "@/app/settings/workspace/workspace-repositories-dirty";
 import { defaultWorktreeBranchTemplate } from "@/lib/worktree-branch-template";
 import { isValidManualRepository } from "@/app/settings/workspace/workspace-repositories-validation";
-import { useDiscoveryRootActions } from "@/app/settings/workspace/use-discovery-root-actions";
 
 type RepositoryItem = RepositoryWithScripts & { __autoOpen?: boolean };
 type WorkspaceRepositoriesClientProps = {
@@ -339,11 +337,7 @@ function useRepositoryHandlers({
   };
 }
 
-function useDiscoverDialog(
-  workspace: Workspace | null,
-  toast: ReturnType<typeof useToast>["toast"],
-  t: TFunction,
-) {
+function useDiscoverDialog(workspace: Workspace | null, t: TFunction) {
   const [localRepoDialogOpen, setLocalRepoDialogOpen] = useState(false);
   const [repoSearch, setRepoSearch] = useState("");
   const [selectedRepoPath, setSelectedRepoPath] = useState<string | null>(null);
@@ -352,12 +346,6 @@ function useDiscoverDialog(
   const validateRequest = useRequest(validateRepositoryPathAction);
   const discovery = useRepositoryDiscovery(workspace?.id ?? null, localRepoDialogOpen);
   const discoveredRepositories = discovery.repositories;
-  const {
-    refreshDiscovery,
-    handleChooseDiscoveryRoot,
-    handleReconnectDiscoveryRoot,
-    handleRemoveDiscoveryRoot,
-  } = useDiscoveryRootActions(discovery, toast, t);
 
   const filteredRepositories = useMemo(() => {
     const query = repoSearch.trim().toLowerCase();
@@ -369,7 +357,7 @@ function useDiscoverDialog(
 
   const handleDiscover = async () => {
     if (!workspace) return;
-    await refreshDiscovery();
+    await discovery.refresh();
   };
 
   const openDialog = () => {
@@ -436,15 +424,8 @@ function useDiscoverDialog(
     openDialog,
     discoveredRepositories,
     desktopRuntime: discovery.desktopRuntime,
-    // Configured roots are policy-owned and remain read-only here. Only
-    // install-wide desktop selections have IDs and can be reconnected or
-    // removed by the operator.
-    discoveryRoots: discovery.rootStates.filter((root) => Boolean(root.id)),
-    homeConfirmationRequired: discovery.homeConfirmationRequired,
-    onChooseDiscoveryRoot: handleChooseDiscoveryRoot,
     onRefreshDiscovery: () => void handleDiscover(),
-    onReconnectDiscoveryRoot: handleReconnectDiscoveryRoot,
-    onRemoveDiscoveryRoot: handleRemoveDiscoveryRoot,
+    workspaceId: workspace?.id ?? null,
   };
 }
 export function useWorkspaceRepositoriesPage(
@@ -452,7 +433,6 @@ export function useWorkspaceRepositoriesPage(
   repositories: RepositoryWithScripts[],
 ) {
   const router = useRouter();
-  const { toast } = useToast();
   const { t } = useTranslation();
   const clearRepositoryScripts = useAppStore((state) => state.clearRepositoryScripts);
   const [repositoryItems, setRepositoryItems] = useState<RepositoryItem[]>(repositories);
@@ -480,7 +460,7 @@ export function useWorkspaceRepositoriesPage(
     handleDeleteRepository,
   } = handlers;
 
-  const discover = useDiscoverDialog(workspace, toast, t);
+  const discover = useDiscoverDialog(workspace, t);
   const {
     setLocalRepoDialogOpen,
     selectedRepoPath,
@@ -504,7 +484,6 @@ export function useWorkspaceRepositoriesPage(
 
   return {
     router,
-    toast,
     repositoryItems,
     savedRepositoriesById,
     handleUpdateRepository,

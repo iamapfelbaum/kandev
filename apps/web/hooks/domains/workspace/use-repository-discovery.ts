@@ -5,6 +5,7 @@ import {
   getRepositoryDiscoveryAction,
   refreshRepositoryDiscoveryAction,
 } from "@/app/actions/workspaces";
+import type { RepositoryDiscoveryRefreshTrigger } from "@/app/actions/repository-discovery";
 import type { RepositoryDiscoveryResponse } from "@/lib/types/http";
 
 export const REPOSITORY_DISCOVERY_REFRESH_AGE_MS = 30 * 60 * 1000;
@@ -18,7 +19,10 @@ export type RepositoryDiscoveryState = {
 
 export type RepositoryDiscoveryClient = {
   getSnapshot: (workspaceId: string) => Promise<RepositoryDiscoveryResponse>;
-  refresh: (workspaceId: string) => Promise<RepositoryDiscoveryResponse>;
+  refresh: (
+    workspaceId: string,
+    trigger?: RepositoryDiscoveryRefreshTrigger,
+  ) => Promise<RepositoryDiscoveryResponse>;
 };
 
 type VisibilityDocument = {
@@ -49,7 +53,8 @@ const EMPTY_FAILED_ROOTS: NonNullable<RepositoryDiscoveryResponse["failed_roots"
 
 const DEFAULT_CLIENT: RepositoryDiscoveryClient = {
   getSnapshot: (...args) => getRepositoryDiscoveryAction(...args),
-  refresh: (...args) => refreshRepositoryDiscoveryAction(...args),
+  refresh: (workspaceId, trigger) =>
+    refreshRepositoryDiscoveryAction(workspaceId, undefined, trigger),
 };
 
 function browserDocument(): VisibilityDocument | undefined {
@@ -148,9 +153,12 @@ export class RepositoryDiscoveryCoordinator {
     };
   }
 
-  async refresh(workspaceId: string): Promise<RepositoryDiscoveryResponse | null> {
+  async refresh(
+    workspaceId: string,
+    trigger: RepositoryDiscoveryRefreshTrigger = "manual_refresh",
+  ): Promise<RepositoryDiscoveryResponse | null> {
     const entry = this.entry(workspaceId);
-    await this.startRefresh(workspaceId, entry);
+    await this.startRefresh(workspaceId, entry, trigger);
     return entry.state.response;
   }
 
@@ -223,9 +231,10 @@ export class RepositoryDiscoveryCoordinator {
     if (
       entry.leases > 0 &&
       this.isVisible() &&
-      isStale(entry.state.response, this.now, this.refreshAge)
+      (entry.state.response?.refreshing === true ||
+        isStale(entry.state.response, this.now, this.refreshAge))
     ) {
-      void this.startRefresh(workspaceId, entry);
+      void this.startRefresh(workspaceId, entry, "stale_refresh");
     }
   }
 
@@ -249,22 +258,27 @@ export class RepositoryDiscoveryCoordinator {
         if (
           entry.leases > 0 &&
           this.isVisible() &&
-          isStale(entry.state.response, this.now, this.refreshAge)
+          (entry.state.response?.refreshing === true ||
+            isStale(entry.state.response, this.now, this.refreshAge))
         ) {
-          void this.startRefresh(workspaceId, entry);
+          void this.startRefresh(workspaceId, entry, "stale_refresh");
         }
       });
     return entry.snapshotPromise;
   }
 
-  private async startRefresh(workspaceId: string, entry: CoordinatorEntry): Promise<void> {
+  private async startRefresh(
+    workspaceId: string,
+    entry: CoordinatorEntry,
+    trigger: RepositoryDiscoveryRefreshTrigger,
+  ): Promise<void> {
     if (entry.refreshPromise) return entry.refreshPromise;
     this.setState(entry, {
       isRefreshing: true,
       error: null,
     });
     entry.refreshPromise = this.client
-      .refresh(workspaceId)
+      .refresh(workspaceId, trigger)
       .then((response) => {
         const normalized = normalizedResponse(response);
         this.setState(entry, {
@@ -331,7 +345,7 @@ export function useRepositoryDiscovery(workspaceId: string | null, enabled = tru
 
   const refresh = useCallback(async () => {
     if (!activeWorkspaceId) return null;
-    return repositoryDiscoveryCoordinator.refresh(activeWorkspaceId);
+    return repositoryDiscoveryCoordinator.refresh(activeWorkspaceId, "manual_refresh");
   }, [activeWorkspaceId]);
   const load = useCallback(async () => {
     if (!activeWorkspaceId) return null;

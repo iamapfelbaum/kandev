@@ -67,6 +67,9 @@ func (wt *WorkspaceTracker) updateFilesClass(ctx context.Context, class subproc.
 		wt.recordFilesystemFailure("workspace.file_monitor", workspaceTrigger(ctx, "poll"), err)
 		return
 	}
+	if err := ctx.Err(); err != nil || (wt.cancelCtx != nil && wt.cancelCtx.Err() != nil) {
+		return
+	}
 
 	wt.mu.Lock()
 	wt.currentFiles = files

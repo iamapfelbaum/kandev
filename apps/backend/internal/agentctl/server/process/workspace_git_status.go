@@ -107,6 +107,9 @@ func (wt *WorkspaceTracker) RefreshGitStatus(ctx context.Context) {
 // an explicit user retry. The update lock keeps the two snapshots coherent
 // with the normal polling loops.
 func (wt *WorkspaceTracker) RefreshWorkspace(ctx context.Context, trigger string) {
+	if err := ctx.Err(); err != nil {
+		return
+	}
 	wt.clearAccessDeniedForUserOperation(trigger)
 	if trigger == workspaceManualRefreshTrigger || trigger == workspaceUserSelectTrigger {
 		wt.SetPollMode(PollModeFast)
@@ -115,7 +118,13 @@ func (wt *WorkspaceTracker) RefreshWorkspace(ctx context.Context, trigger string
 	wt.updateMu.Lock()
 	defer wt.updateMu.Unlock()
 	wt.updateGitStatusClass(ctx, subproc.GitInteractive)
+	if err := ctx.Err(); err != nil {
+		return
+	}
 	wt.updateFilesClass(ctx, subproc.GitInteractive)
+	if err := ctx.Err(); err != nil {
+		return
+	}
 	wt.notifyWorkspaceStreamFileChange(types.FileChangeNotification{
 		Timestamp:      time.Now(),
 		RepositoryName: wt.repositoryName,

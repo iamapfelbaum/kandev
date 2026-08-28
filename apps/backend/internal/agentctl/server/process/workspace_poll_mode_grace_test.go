@@ -180,3 +180,35 @@ func TestPollModeGrace_StopDisarmsTimer(t *testing.T) {
 		t.Errorf("Stop changed the poll mode to %v, want it left at %v", got, PollModeFast)
 	}
 }
+
+// TestPollModeGrace_StopJoinsFinalScan verifies the timer callback is owned by
+// the tracker wait group. Stop must cancel an in-flight final scan, wait for
+// it to return, and prevent the callback from changing the mode afterward.
+func TestPollModeGrace_StopJoinsFinalScan(t *testing.T) {
+	wt := newGraceTestTracker(t, graceFiresQuickly)
+	var scanCount atomic.Int32
+	finalScanStarted := make(chan struct{})
+	finalScanFinished := make(chan struct{})
+	wt.gitStatusObserver = func(ctx context.Context) (types.GitStatusUpdate, error) {
+		if scanCount.Add(1) == 2 {
+			close(finalScanStarted)
+			<-ctx.Done()
+			close(finalScanFinished)
+			return types.GitStatusUpdate{}, ctx.Err()
+		}
+		return types.GitStatusUpdate{Timestamp: time.Now()}, nil
+	}
+
+	wt.Start(context.Background())
+	<-finalScanStarted
+	wt.Stop()
+
+	select {
+	case <-finalScanFinished:
+	default:
+		t.Fatal("Stop returned before the final scan exited")
+	}
+	if got := wt.GetPollMode(); got != PollModeFast {
+		t.Fatalf("poll mode after canceled final scan = %v, want %v", got, PollModeFast)
+	}
+}

@@ -53,6 +53,7 @@ import { useSubmitWorkspaceSources } from "./use-submit-workspace-sources";
 import { useWorkspaceRepositoryOptions } from "./use-workspace-repository-options";
 import { useWorkspaceSourceRows } from "./use-workspace-source-rows";
 import { WorkspaceChangeConsequences } from "./workspace-change-consequences";
+import { RepositoryDiscoveryControls } from "@/components/repository-discovery-controls";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import { t } from "@/lib/i18n";
@@ -152,6 +153,7 @@ export function AddWorkspaceSourcesDialog({
             sourceRows.update(key, patch);
           }}
           isMobile={isMobile}
+          open={open}
         />
       }
       submitting={submitting}
@@ -299,6 +301,7 @@ function SourceForm({
   onRemove,
   onUpdate,
   isMobile,
+  open,
 }: {
   rows: WorkspaceSourceRow[];
   repositories: Repository[];
@@ -312,10 +315,12 @@ function SourceForm({
   onRemove: (key: string) => void;
   onUpdate: (key: string, patch: Partial<WorkspaceSourceRow>) => void;
   isMobile: boolean;
+  open: boolean;
 }) {
   const { t } = useTranslation();
   return (
     <div className="space-y-4 py-1" data-testid="add-workspace-sources-form">
+      <RepositoryDiscoveryControls workspaceId={workspaceId} enabled={open} />
       <div className="flex flex-wrap items-center gap-2">
         <RepositorySourceMenu isMobile={isMobile} onAdd={onAdd} />
         <AddFolderButton isMobile={isMobile} capabilities={capabilities} onAdd={onAdd} />

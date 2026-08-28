@@ -150,8 +150,11 @@ func (h *RepositoryHandlers) httpGetDiscoverySnapshot(c *gin.Context) {
 }
 
 func (h *RepositoryHandlers) httpRefreshDiscovery(c *gin.Context) {
-	result, err := h.service.RefreshLocalRepositoryDiscoveryForWorkspace(
-		c.Request.Context(), c.Param("id"), c.Query("root"),
+	result, err := h.service.RefreshLocalRepositoryDiscoveryForWorkspaceWithTrigger(
+		c.Request.Context(),
+		c.Param("id"),
+		c.Query("root"),
+		service.NormalizeRepositoryDiscoveryTrigger(c.Query("trigger")),
 	)
 	if err != nil {
 		h.writeDiscoveryError(c, err)

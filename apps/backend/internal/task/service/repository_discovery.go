@@ -97,7 +97,7 @@ func (s *Service) DiscoverLocalRepositoriesForWorkspace(
 	ctx context.Context,
 	workspaceID, root string,
 ) (RepositoryDiscoveryResult, error) {
-	return s.refreshLocalRepositoryDiscovery(ctx, workspaceID, root)
+	return s.refreshLocalRepositoryDiscovery(ctx, workspaceID, root, discoveryTriggerManualRefresh)
 }
 
 func (s *Service) ValidateLocalRepositoryPath(ctx context.Context, path string) (RepositoryPathValidation, error) {

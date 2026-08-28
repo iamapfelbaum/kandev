@@ -33,12 +33,8 @@ export function AddLocalRepositoryDialog({
       canSave={state.canSave}
       onConfirm={state.handleConfirmLocalRepository}
       desktopRuntime={state.desktopRuntime}
-      discoveryRoots={state.discoveryRoots}
-      homeConfirmationRequired={state.homeConfirmationRequired}
-      onChooseDiscoveryRoot={state.onChooseDiscoveryRoot}
+      workspaceId={state.workspaceId}
       onRefreshDiscovery={state.onRefreshDiscovery}
-      onReconnectDiscoveryRoot={state.onReconnectDiscoveryRoot}
-      onRemoveDiscoveryRoot={state.onRemoveDiscoveryRoot}
     />
   );
 }

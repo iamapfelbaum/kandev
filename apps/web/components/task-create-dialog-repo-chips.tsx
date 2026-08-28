@@ -14,6 +14,7 @@ import { CreateLocalRepositorySurface } from "@/components/create-local-reposito
 import { RepositorySetsControl } from "@/components/task-create-dialog-repository-sets-control";
 import { SaveRepositorySetDialog } from "@/components/task-create-dialog-repository-sets-save";
 import { SaveRepositorySetMenuAction } from "@/components/task-create-dialog-repository-sets-save-action";
+import { RepositoryDiscoveryControls } from "@/components/repository-discovery-controls";
 import type { DirectLocalExecutorSelection } from "@/components/task-create-dialog-handlers";
 import { useTranslation } from "react-i18next";
 import { t } from "@/lib/i18n";
@@ -131,7 +132,6 @@ export function RepoChipsRow({
   //   - "Fork a new branch" toggle is a separate flow that creates a NEW branch
   //     from the selected base
   // Other executors: branch is fully editable (no special pre-fill).
-  const branchLocked = false;
   // No early returns above hooks. URL mode and started-state checks happen below.
   if (isTaskStarted) return null;
 
@@ -153,11 +153,12 @@ export function RepoChipsRow({
       className="flex min-h-9 flex-wrap items-center gap-2"
       data-testid="repo-chips-row"
     >
+      <RepositoryDiscoverySurface workspaceId={workspaceId} />
       <ModeBody
         fs={fs}
         repositories={repositories}
         workspaceId={workspaceId}
-        branchLocked={branchLocked}
+        branchLocked={false}
         isLocalExecutor={!!isLocalExecutor}
         canAddMore={canAddMore}
         addHint={addHint}
@@ -203,6 +204,16 @@ export function RepoChipsRow({
         />
       ) : null}
     </div>
+  );
+}
+
+function RepositoryDiscoverySurface({ workspaceId }: { workspaceId: string | null }) {
+  return (
+    <RepositoryDiscoveryControls
+      workspaceId={workspaceId}
+      enabled={Boolean(workspaceId)}
+      className="basis-full"
+    />
   );
 }
 

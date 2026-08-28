@@ -18,6 +18,9 @@ import (
 	"github.com/kandev/kandev/internal/events/bus"
 	"github.com/kandev/kandev/internal/task/models"
 	"github.com/kandev/kandev/internal/task/repository"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestDiscoverLocalRepositoriesSkipsIgnoredRoots(t *testing.T) {
@@ -108,6 +111,47 @@ func TestDesktopDiscoveryWithoutRootDoesNotScanHome(t *testing.T) {
 	}
 	if scanCalls != 0 {
 		t.Fatalf("unconfigured desktop discovery scanned Home %d time(s)", scanCalls)
+	}
+}
+
+func TestRepositoryDiscoveryScanUsesValidatedTrigger(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		trigger string
+		want    string
+	}{
+		{name: "manual", trigger: "manual_refresh", want: "manual_refresh"},
+		{name: "stale", trigger: "stale_refresh", want: "stale_refresh"},
+		{name: "user selection", trigger: "user_select", want: "user_select"},
+		{name: "unknown", trigger: "not-a-trigger", want: "manual_refresh"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			svc := newDiscoveryService(t, root)
+			core, logs := observer.New(zapcore.InfoLevel)
+			observedLogger, err := logger.NewFromZap(zap.New(core))
+			if err != nil {
+				t.Fatalf("create observer logger: %v", err)
+			}
+			svc.logger = observedLogger
+			svc.discoveryConfig = RepositoryDiscoveryConfig{Roots: []string{root}, MaxDepth: 6}
+			svc.discoveryScanRoot = func(context.Context, string, int) ([]LocalRepository, error) {
+				return nil, nil
+			}
+
+			if _, err := svc.refreshLocalRepositoryDiscovery(
+				context.Background(), "", "", test.trigger,
+			); err != nil {
+				t.Fatalf("refresh discovery: %v", err)
+			}
+			entries := logs.FilterMessage("repository discovery scan started").All()
+			if len(entries) != 1 {
+				t.Fatalf("scan-start log entries = %d, want 1", len(entries))
+			}
+			if got := entries[0].ContextMap()["trigger"]; got != test.want {
+				t.Fatalf("scan trigger = %v, want %q", got, test.want)
+			}
+		})
 	}
 }
 

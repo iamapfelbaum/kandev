@@ -13,8 +13,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@kandev/ui/dialog";
-import type { DesktopDiscoveryRoot, LocalRepository } from "@/lib/types/http";
-import { RepositoryDiscoveryRootControls } from "./repository-discovery-root-controls";
+import type { LocalRepository } from "@/lib/types/http";
+import { RepositoryDiscoveryControls } from "@/components/repository-discovery-controls";
 
 export type ManualValidation = {
   status: "idle" | "loading" | "success" | "error";
@@ -40,12 +40,8 @@ type DiscoverRepoDialogProps = {
   canSave: boolean;
   onConfirm: () => void;
   desktopRuntime: boolean;
-  discoveryRoots: DesktopDiscoveryRoot[];
-  homeConfirmationRequired: boolean;
-  onChooseDiscoveryRoot: (path: string) => void;
+  workspaceId: string | null;
   onRefreshDiscovery: () => void;
-  onReconnectDiscoveryRoot: (oldPath: string, newPath: string) => void;
-  onRemoveDiscoveryRoot: (path: string) => void;
 };
 
 function RepoListContent({
@@ -150,12 +146,8 @@ export function DiscoverRepoDialog({
   canSave,
   onConfirm,
   desktopRuntime,
-  discoveryRoots,
-  homeConfirmationRequired,
-  onChooseDiscoveryRoot,
+  workspaceId,
   onRefreshDiscovery,
-  onReconnectDiscoveryRoot,
-  onRemoveDiscoveryRoot,
 }: DiscoverRepoDialogProps) {
   const { t } = useTranslation();
   return (
@@ -167,15 +159,7 @@ export function DiscoverRepoDialog({
         </DialogHeader>
         <div className="space-y-4">
           {desktopRuntime && (
-            <RepositoryDiscoveryRootControls
-              isLoading={isLoading}
-              discoveryRoots={discoveryRoots}
-              homeConfirmationRequired={homeConfirmationRequired}
-              onChooseDiscoveryRoot={onChooseDiscoveryRoot}
-              onRefreshDiscovery={onRefreshDiscovery}
-              onReconnectDiscoveryRoot={onReconnectDiscoveryRoot}
-              onRemoveDiscoveryRoot={onRemoveDiscoveryRoot}
-            />
+            <RepositoryDiscoveryControls workspaceId={workspaceId} enabled={open} />
           )}
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">

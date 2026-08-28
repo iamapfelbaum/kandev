@@ -130,6 +130,10 @@ vi.mock("@/components/task-create-dialog-workspace-repo-chips", () => ({
   ),
 }));
 
+vi.mock("@/components/repository-discovery-controls", () => ({
+  RepositoryDiscoveryControls: () => <div data-testid="repository-discovery-controls" />,
+}));
+
 import { ConfigSection, getExecutorItemDisabledReason } from "./config-section";
 
 function renderConfig(overrides: Partial<ComponentProps<typeof ConfigSection>> = {}) {
@@ -184,6 +188,7 @@ describe("ConfigSection shared task selectors", () => {
     renderConfig();
 
     expect(screen.getByTestId("shared-repository-chips")).toBeTruthy();
+    expect(screen.getByTestId("repository-discovery-controls")).toBeTruthy();
     expect(screen.queryByText("Use workspace default")).toBeNull();
     expect(
       screen.getByText("Run without repository files in a task-owned scratch workspace."),
