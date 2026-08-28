@@ -11,16 +11,16 @@ owners:
 
 ## Purpose
 
-The UI system owns web presentation behavior for desktop and mobile surfaces.
+The UI system owns desktop and mobile web presentation.
 
 ## Ownership
 
-This system owns navigation, settings, boards, task/review surfaces,
-walkthroughs, chat controls, visual feedback, and responsive interaction
-contracts without backend-state ownership.
+It owns navigation, settings, boards, task/review surfaces, walkthroughs, chat
+controls, visual feedback, and responsive interaction contracts, but not
+backend state.
 
-Controls that configure or display provider/task state remain owned by that
-system. The UI system owns only independent, reusable presentation contracts.
+Provider/task systems own their stateful controls. UI owns reusable,
+independent presentation contracts.
 
 ## Exclusions
 

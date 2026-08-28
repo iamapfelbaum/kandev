@@ -58,7 +58,6 @@ interface MarkdownPreviewToolbarProps {
   onTogglePreview?: () => void;
   toolbarModeControl?: ReactNode;
   toolbarActions?: ReactNode;
-  showToolbar?: boolean;
 }
 
 function MarkdownPreviewToolbar({
@@ -147,6 +146,7 @@ interface MarkdownPreviewContentProps {
   onOpenLink?: (url: string) => boolean | void;
   toolbarModeControl?: ReactNode;
   toolbarActions?: ReactNode;
+  showToolbar?: boolean;
 }
 
 type PositionedNode = {
