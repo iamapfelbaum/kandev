@@ -50,7 +50,7 @@ export function MobileViewerBody({
   onComment: (comment: MarkdownCommentSubmission) => void;
   onSourceFallback?: () => void;
   onOpenFile?: (path: string) => void;
-  onOpenLink?: (url: string) => void;
+  onOpenLink?: (url: string) => boolean | void;
 }) {
   const markdownFile = isMarkdownFile(file.path);
   return (
@@ -125,7 +125,7 @@ function MobileMarkdownSurface({
   onComment: (comment: MarkdownCommentSubmission) => void;
   onSourceFallback?: () => void;
   onOpenFile?: (path: string) => void;
-  onOpenLink?: (url: string) => void;
+  onOpenLink?: (url: string) => boolean | void;
 }) {
   return (
     <>

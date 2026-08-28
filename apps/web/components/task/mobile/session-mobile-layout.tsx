@@ -83,6 +83,7 @@ export function resolveMobileReviewSource(
 
 const TOP_NAV_HEIGHT = "3.5rem";
 const BOTTOM_NAV_HEIGHT = "3.25rem";
+type MobileNavigationAction = () => void | Promise<void>;
 
 type SessionMobileLayoutProps = {
   workspaceId: string | null;
@@ -184,7 +185,30 @@ export type PendingMobileNavigation = {
   fileIdentity: string;
   nextFile?: OpenFileTab;
   nextMarkdownMode?: MarkdownFileMode;
+  action?: MobileNavigationAction;
 };
+
+function useMobileNavigationRequest(
+  selectedFileRef: React.MutableRefObject<OpenFileTab | null>,
+  setPendingNavigation: React.Dispatch<React.SetStateAction<PendingMobileNavigation | null>>,
+) {
+  return useCallback(
+    (action: MobileNavigationAction) => {
+      const current = selectedFileRef.current;
+      if (current?.isDirty) {
+        setPendingNavigation({
+          panel: "files",
+          filePath: current.path,
+          fileIdentity: getMobileFileIdentity(current),
+          action,
+        });
+        return;
+      }
+      void action();
+    },
+    [selectedFileRef, setPendingNavigation],
+  );
+}
 
 type MobileFilesPanelProps = Pick<
   MobilePanelAreaProps,
@@ -567,6 +591,8 @@ function useMobilePanelNavigation({
     [clearSelectedFileAndChange, selectedFileRef],
   );
 
+  const requestNavigation = useMobileNavigationRequest(selectedFileRef, setPendingNavigation);
+
   const cancelPendingNavigation = useCallback(() => {
     setPendingNavigation(null);
   }, []);
@@ -576,12 +602,16 @@ function useMobilePanelNavigation({
     if (!pending) return;
 
     const current = selectedFileRef.current;
-    if (current?.isDirty && getMobileFileIdentity(current) !== pending.fileIdentity) {
+    if (!current || getMobileFileIdentity(current) !== pending.fileIdentity) {
       setPendingNavigation(null);
       return;
     }
 
     setPendingNavigation(null);
+    if (pending.action) {
+      void pending.action();
+      return;
+    }
     if (pending.nextFile) {
       commitFileOpen(pending.nextFile, pending.nextMarkdownMode);
       return;
@@ -597,6 +627,7 @@ function useMobilePanelNavigation({
     pendingNavigation,
     requestFileOpen,
     requestPanelChange,
+    requestNavigation,
     confirmPendingNavigation,
     cancelPendingNavigation,
   };
@@ -686,6 +717,7 @@ export function useMobilePanelHandlers({
     handleSelectedFileModeChange,
     handleSelectedFileReload,
     handlePanelChangeAndClearSheet,
+    requestNavigation: navigation.requestNavigation,
     pendingNavigation: navigation.pendingNavigation,
     confirmPendingNavigation: navigation.confirmPendingNavigation,
     cancelPendingNavigation: navigation.cancelPendingNavigation,
@@ -783,6 +815,7 @@ export const SessionMobileLayout = memo(function SessionMobileLayout(
     handleSelectedFileModeChange,
     handleSelectedFileReload,
     handlePanelChangeAndClearSheet,
+    requestNavigation,
     pendingNavigation,
     confirmPendingNavigation,
     cancelPendingNavigation,
@@ -858,6 +891,7 @@ export const SessionMobileLayout = memo(function SessionMobileLayout(
         workspaceId={props.workspaceId}
         workflowId={props.workflowId}
         presentation="drawer"
+        onRequestNavigation={requestNavigation}
       />
       <SessionMobileReviewDialog
         sessionId={effectiveSessionId}

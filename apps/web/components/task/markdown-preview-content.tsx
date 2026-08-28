@@ -134,7 +134,7 @@ interface MarkdownPreviewContentProps {
   showExternalVcsLink?: boolean;
   onTogglePreview?: () => void;
   onOpenFile?: (path: string) => void;
-  onOpenLink?: (url: string) => void;
+  onOpenLink?: (url: string) => boolean | void;
 }
 
 type PositionedNode = {
