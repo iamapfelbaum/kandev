@@ -135,6 +135,10 @@ func (h *canvasHTTPHandler) writeError(c *gin.Context, err error) {
 		status, code = http.StatusConflict, "canvas_storage_limit_exceeded"
 	case errors.Is(err, instances.ErrInvalidRelease):
 		status, code = http.StatusConflict, "invalid_release"
+	case errors.Is(err, canvasservice.ErrStalePromotionReview):
+		status, code = http.StatusConflict, "promotion_review_stale"
+	case errors.Is(err, canvasservice.ErrStaleCanvasEdit):
+		status, code = http.StatusConflict, "canvas_edit_stale"
 	case errors.Is(err, canvasservice.ErrInvalidCanvas), errors.Is(err, canvasservice.ErrInvalidCanvasState):
 		status, code = http.StatusBadRequest, "invalid_canvas"
 	case errors.Is(err, errCanvasWebAppNotDeclared):

@@ -268,6 +268,12 @@ origin with no path, credentials, wildcard, query string, or fragment. Kandev
 reviews each declared origin as a separate grant before the app can contact
 it.
 
+The runtime sets `form-action 'none'`, so packaged forms cannot submit to an
+external origin. Requests to an approved `network_origins` value go directly
+from the browser. The host tears down the app iframe immediately after a
+release, grant, scope, archive, disable, or removal authority change, then
+requires a fresh runtime binding before mounting it again.
+
 ## Managed vs. legacy manifests
 
 Setting `runtime.type: binary` makes a manifest **runtime-managed**: kandev

@@ -41,6 +41,8 @@
   "approveRelease": "批准版本",
   "rejectRelease": "拒绝版本",
   "rollbackRelease": "回滚版本",
+  "permissionDeclaration": "已声明的权限",
+  "missingPermissions": "仍需的权限",
   "retry": "重试",
   "refresh": "刷新",
   "statusActive": "活动",

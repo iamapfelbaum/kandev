@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Canvas } from "@/lib/api/domains/canvas-api";
+import { registerCanvasesHandlers } from "@/lib/ws/handlers/canvases";
 
 const { mockGetCanvas, mockGetCanvasRuntime, mockPush } = vi.hoisted(() => ({
   mockGetCanvas: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock("@/components/plugins/canvas-page", () => ({
 
 vi.mock("@/components/settings/canvas-lifecycle-dialogs", () => ({
   CanvasPromotionDialog: () => null,
+  CanvasReleaseDialog: () => null,
 }));
 
 vi.mock("@/hooks/use-responsive-breakpoint", () => ({
@@ -129,6 +131,39 @@ describe("CanvasHostRoute runtime recovery", () => {
       expect(mockGetCanvasRuntime).toHaveBeenCalledTimes(2);
       expect(screen.getByTestId(FRAME_TEST_ID).getAttribute(RUNTIME_URL_ATTRIBUTE)).toBe(
         "/runtime/refreshed",
+      );
+    });
+  });
+
+  it("refreshes the visible host when a canvas lifecycle event arrives", async () => {
+    const updated = { ...canvas, active_release_id: "release-2" };
+    mockGetCanvas.mockReset().mockResolvedValueOnce(canvas).mockResolvedValueOnce(updated);
+    mockGetCanvasRuntime
+      .mockReset()
+      .mockResolvedValueOnce({
+        runtime_url: "/runtime/release-1",
+        release_id: "release-1",
+        expires_in_seconds: 900,
+      })
+      .mockResolvedValueOnce({
+        runtime_url: "/runtime/release-2",
+        release_id: "release-2",
+        expires_in_seconds: 900,
+      });
+
+    render(<CanvasHostRoute canvasId="canvas-1" />);
+    await waitFor(() =>
+      expect(screen.getByTestId(FRAME_TEST_ID).getAttribute(RUNTIME_URL_ATTRIBUTE)).toBe(
+        "/runtime/release-1",
+      ),
+    );
+
+    registerCanvasesHandlers({} as never)["canvas.release.activated"]?.({} as never);
+
+    await waitFor(() => {
+      expect(mockGetCanvas).toHaveBeenCalledTimes(2);
+      expect(screen.getByTestId(FRAME_TEST_ID).getAttribute(RUNTIME_URL_ATTRIBUTE)).toBe(
+        "/runtime/release-2",
       );
     });
   });

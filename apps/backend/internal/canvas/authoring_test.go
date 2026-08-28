@@ -64,6 +64,130 @@ func TestPublishPackageFirstReleaseRequiresMatchingGrants(t *testing.T) {
 	}
 }
 
+func TestFirstTaskReleaseCanBeReviewedAndApproved(t *testing.T) {
+	service, instanceStore, _ := newCanvasService(t)
+	canvas := createCanvas(t, service, CreateCanvasRequest{
+		WorkspaceID: "workspace-1",
+		TaskID:      "task-1",
+		Title:       "First approval",
+	})
+	published := publishTestPackage(t, service, canvas.ID, "first-approved", []string{"tasks"})
+	if published.Activated || !published.PermissionRequired {
+		t.Fatalf("first release result = %+v, want pending permission review", published)
+	}
+	before, err := service.Get(context.Background(), canvas.ID)
+	if err != nil {
+		t.Fatalf("get pending canvas: %v", err)
+	}
+	if before.PendingRelease == nil || before.PendingRelease.Permissions == nil || len(before.PendingRelease.Permissions.Reads) != 1 || len(before.PendingRelease.MissingPermissions) != 1 {
+		t.Fatalf("pending release review projection = %+v, want declared and missing tasks permission", before.PendingRelease)
+	}
+	if before.PendingRelease.Permissions.Reads[0] != "tasks" || before.PendingRelease.MissingPermissions[0] != "api_read:tasks" {
+		t.Fatalf("pending permission projection = %+v, want api_read:tasks", before.PendingRelease)
+	}
+
+	approved, err := service.ApproveRelease(context.Background(), canvas.ID, published.Release.ID, "user-1")
+	if err != nil {
+		t.Fatalf("approve first task release: %v", err)
+	}
+	if approved.ActiveReleaseID != published.Release.ID || approved.ActiveReleaseStatus != plugininstances.ValidationValid {
+		t.Fatalf("approved canvas = %+v, want active valid release", approved)
+	}
+	grants, err := instanceStore.ListGrants(context.Background(), canvas.PluginInstanceID)
+	if err != nil {
+		t.Fatalf("list approved grants: %v", err)
+	}
+	if len(grants) != 1 || grants[0].PermissionKind != "api_read" || grants[0].Resource != "tasks" {
+		t.Fatalf("approved grants = %+v, want api_read:tasks", grants)
+	}
+}
+
+func TestPublishPackageRejectsStaleEditBaseRelease(t *testing.T) {
+	service, instanceStore, _ := newCanvasService(t)
+	canvas := createCanvas(t, service, CreateCanvasRequest{
+		WorkspaceID: "workspace-1",
+		Title:       "Concurrent edits",
+	})
+	first := publishTestPackage(t, service, canvas.ID, "edit-base-a", nil)
+	second := publishTestPackage(t, service, canvas.ID, "edit-base-b", nil)
+
+	_, err := service.PublishPackage(context.Background(), PublishRequest{
+		CanvasID:              canvas.ID,
+		Package:               testCanvasPackage("edit-stale", nil),
+		Artifact:              webapp.Artifact{Digest: "edit-stale", RelativePath: "releases/edit-stale", Bytes: 1},
+		SourceActorKind:       "agent",
+		ExpectedBaseReleaseID: first.Release.ID,
+	})
+	if !errors.Is(err, ErrStaleCanvasEdit) {
+		t.Fatalf("stale edit publish error = %v, want ErrStaleCanvasEdit", err)
+	}
+	instance, err := instanceStore.Get(context.Background(), canvas.PluginInstanceID)
+	if err != nil {
+		t.Fatalf("get instance: %v", err)
+	}
+	if instance.ActiveReleaseID != second.Release.ID {
+		t.Fatalf("active release = %q, want newer edit %q", instance.ActiveReleaseID, second.Release.ID)
+	}
+}
+
+func TestPromotionRejectsStaleReleaseReview(t *testing.T) {
+	service, instanceStore, _ := newCanvasService(t)
+	canvas := createCanvas(t, service, CreateCanvasRequest{
+		WorkspaceID: "workspace-1",
+		TaskID:      "task-1",
+		Title:       "Review race",
+	})
+	first := publishTestPackage(t, service, canvas.ID, "review-a", nil)
+	preview, err := service.PromotionPreview(context.Background(), canvas.ID)
+	if err != nil {
+		t.Fatalf("promotion preview: %v", err)
+	}
+	if preview.ActiveReleaseID != first.Release.ID {
+		t.Fatalf("preview release = %q, want %q", preview.ActiveReleaseID, first.Release.ID)
+	}
+	second := publishTestPackage(t, service, canvas.ID, "review-b", nil)
+
+	_, err = service.PromoteCanvasReviewed(context.Background(), canvas.ID, "user-1", preview.ActiveReleaseID, preview.PermissionDigest, preview.GrantGeneration)
+	if !errors.Is(err, ErrStalePromotionReview) {
+		t.Fatalf("stale promotion error = %v, want ErrStalePromotionReview", err)
+	}
+	instance, err := instanceStore.Get(context.Background(), canvas.PluginInstanceID)
+	if err != nil {
+		t.Fatalf("get instance: %v", err)
+	}
+	if instance.ActiveReleaseID != second.Release.ID || instance.ScopeKind != plugininstances.ScopeTask {
+		t.Fatalf("instance after stale promotion = %+v, want task scope and release %q", instance, second.Release.ID)
+	}
+}
+
+func TestPromotionRejectsChangedGrantGeneration(t *testing.T) {
+	service, instanceStore, _ := newCanvasService(t)
+	canvas := createCanvas(t, service, CreateCanvasRequest{
+		WorkspaceID: "workspace-1",
+		TaskID:      "task-1",
+		Title:       "Grant review race",
+	})
+	publishTestPackage(t, service, canvas.ID, "grant-review", nil)
+	preview, err := service.PromotionPreview(context.Background(), canvas.ID)
+	if err != nil {
+		t.Fatalf("promotion preview: %v", err)
+	}
+	if err := instanceStore.AddGrant(context.Background(), plugininstances.Grant{
+		InstanceID:     canvas.PluginInstanceID,
+		PermissionKind: "api_read",
+		Resource:       "tasks",
+		ScopeCeiling:   plugininstances.ScopeTask,
+		ApprovedBy:     "user-1",
+	}); err != nil {
+		t.Fatalf("add grant: %v", err)
+	}
+
+	_, err = service.PromoteCanvasReviewed(context.Background(), canvas.ID, "user-1", preview.ActiveReleaseID, preview.PermissionDigest, preview.GrantGeneration)
+	if !errors.Is(err, ErrStalePromotionReview) {
+		t.Fatalf("changed grant generation error = %v, want ErrStalePromotionReview", err)
+	}
+}
+
 func TestPermissionsFitHonorsInstanceScope(t *testing.T) {
 	permissions := PermissionSummary{Reads: []string{"tasks"}}
 	grants := []plugininstances.Grant{{
@@ -76,6 +200,33 @@ func TestPermissionsFitHonorsInstanceScope(t *testing.T) {
 	}
 	if permissionsFit(permissions, plugininstances.ScopeWorkspace, grants) {
 		t.Fatal("task grant covered workspace-scoped release")
+	}
+}
+
+func TestCanvasProjectionIncludesEffectiveGrantedPermissions(t *testing.T) {
+	service, instanceStore, _ := newCanvasService(t)
+	canvas := createCanvas(t, service, CreateCanvasRequest{
+		WorkspaceID: "workspace-1",
+		TaskID:      "task-1",
+		Title:       "Effective grants",
+	})
+	if err := instanceStore.AddGrant(context.Background(), plugininstances.Grant{
+		InstanceID:     canvas.PluginInstanceID,
+		PermissionKind: "api_read",
+		Resource:       "tasks",
+		ScopeCeiling:   plugininstances.ScopeTask,
+		ApprovedBy:     "user-1",
+	}); err != nil {
+		t.Fatalf("add grant: %v", err)
+	}
+	publishTestPackage(t, service, canvas.ID, "effective-grants", []string{"tasks"})
+
+	got, err := service.Get(context.Background(), canvas.ID)
+	if err != nil {
+		t.Fatalf("get canvas: %v", err)
+	}
+	if len(got.EffectiveGrants) != 1 || got.EffectiveGrants[0].PermissionKind != "api_read" || got.EffectiveGrants[0].Resource != "tasks" {
+		t.Fatalf("effective grants = %+v, want api_read:tasks", got.EffectiveGrants)
 	}
 }
 
@@ -176,7 +327,21 @@ func TestPublishPackageRetainsPriorValidReleaseForRollback(t *testing.T) {
 
 func publishTestPackage(t *testing.T, service *Service, canvasID, digest string, reads []string) *PublishResult {
 	t.Helper()
-	pkg := &webapp.Package{
+	pkg := testCanvasPackage(digest, reads)
+	result, err := service.PublishPackage(context.Background(), PublishRequest{
+		CanvasID:        canvasID,
+		Package:         pkg,
+		Artifact:        webapp.Artifact{Digest: digest, RelativePath: "releases/" + digest, Bytes: 1},
+		SourceActorKind: "agent",
+	})
+	if err != nil {
+		t.Fatalf("publish %s: %v", digest, err)
+	}
+	return result
+}
+
+func testCanvasPackage(digest string, reads []string) *webapp.Package {
+	return &webapp.Package{
 		Manifest: &manifest.Manifest{
 			ID:         "canvas-board",
 			APIVersion: manifest.CurrentAPIVersion,
@@ -191,16 +356,6 @@ func publishTestPackage(t *testing.T, service *Service, canvasID, digest string,
 		},
 		Digest: digest,
 	}
-	result, err := service.PublishPackage(context.Background(), PublishRequest{
-		CanvasID:        canvasID,
-		Package:         pkg,
-		Artifact:        webapp.Artifact{Digest: digest, RelativePath: "releases/" + digest, Bytes: 1},
-		SourceActorKind: "agent",
-	})
-	if err != nil {
-		t.Fatalf("publish %s: %v", digest, err)
-	}
-	return result
 }
 
 func setAuthoringTestClock(service *Service) {

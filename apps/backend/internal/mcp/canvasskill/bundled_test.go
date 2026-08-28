@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kandev/kandev/internal/plugins/manifest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,4 +60,55 @@ func TestInventory_IsStableAndContainsSupportingReferences(t *testing.T) {
 	require.Contains(t, inventory, "SKILL.md")
 	require.Contains(t, inventory, "references/manifest.md")
 	require.NotEmpty(t, Version)
+}
+
+func TestAuthoringReferencesMatchValidatedManifestAndProtocol(t *testing.T) {
+	home := t.TempDir()
+	require.NoError(t, EnsureMaterialized(home))
+
+	manifestText, err := ReadMaterialized(home, "references/manifest.md")
+	require.NoError(t, err)
+	manifestSource := string(manifestText)
+	start := strings.Index(manifestSource, "```yaml\n")
+	require.GreaterOrEqual(t, start, 0, "manifest reference must contain a YAML example")
+	start += len("```yaml\n")
+	end := strings.Index(manifestSource[start:], "\n```")
+	require.GreaterOrEqual(t, end, 0, "manifest YAML example must be closed")
+	parsed, err := manifest.Parse([]byte(manifestSource[start : start+end]))
+	require.NoError(t, err)
+	require.NoError(t, parsed.Validate())
+	require.Equal(t, manifest.CurrentAPIVersion, parsed.APIVersion)
+	require.Len(t, parsed.UI.WebApps, 1)
+	require.Equal(t, "ui/index.html", parsed.UI.WebApps[0].Entry)
+
+	browserAPI, err := ReadMaterialized(home, "references/browser-api.md")
+	require.NoError(t, err)
+	browserSource := string(browserAPI)
+	for _, route := range []string{
+		"GET ./_kandev/v1/context",
+		"GET | `./_kandev/v1/data/tasks`",
+		"GET | `./_kandev/v1/data/tasks/{task_id}`",
+		"PATCH | `./_kandev/v1/data/tasks/{task_id}`",
+		"POST | `./_kandev/v1/data/tasks/{task_id}/messages`",
+		"GET | `./_kandev/v1/data/workflows`",
+		"GET | `./_kandev/v1/data/workflows/{workflow_id}/steps`",
+		"GET | `./_kandev/v1/state`",
+		"GET | `./_kandev/v1/state/{key}`",
+		"PUT | `./_kandev/v1/state/{key}`",
+		"DELETE | `./_kandev/v1/state/{key}`",
+		"GET ./_kandev/v1/events",
+		"POST ./_kandev/v1/actions/{key}",
+	} {
+		require.Contains(t, browserSource, route, "browser API reference is missing %q", route)
+	}
+	for _, contract := range []string{
+		"If-Match",
+		"plugin_state_conflict",
+		"runtime.resync_required",
+		"workflow_step_id",
+		"Last-Event-ID",
+		"permission",
+	} {
+		require.Contains(t, browserSource, contract)
+	}
 }

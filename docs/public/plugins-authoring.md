@@ -144,6 +144,12 @@ Network access uses exact HTTPS origins that a user approves. Wildcards,
 origin paths, query strings, credentials, and remote scripts are not allowed.
 Keep scripts, styles, fonts, and images in the package.
 
+Forms cannot submit to external origins. The runtime sets `form-action 'none'`.
+External requests to approved origins are sent directly by the browser. Kandev
+cannot inspect them after they leave the browser, so a release, grant, scope,
+archive, disable, or removal notification immediately tears down the matching
+iframe. A replacement iframe gets a fresh runtime binding.
+
 The validator rejects unsafe paths and unsupported files. It also limits a
 package to 10 MiB compressed, 25 MiB expanded, 512 files, and 5 MiB per file.
 The manifest limit is 64 KiB and the normalized path limit is 240 bytes.

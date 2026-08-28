@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -162,12 +163,28 @@ func (rt *Runtime) Handler(token, requestPath string) http.Handler {
 }
 
 func runtimeFilePath(requestPath, entry string) (string, error) {
+	entryName, err := normalizePackagePath(strings.TrimPrefix(strings.TrimSpace(entry), "/"), MaxPathBytes)
+	if err != nil {
+		return "", err
+	}
 	name := strings.TrimPrefix(strings.TrimSpace(requestPath), "/")
 	if name == "" {
-		name = entry
+		return entryName, nil
 	}
 	if strings.HasPrefix(name, "_kandev/") || name == "_kandev" {
 		return "", ErrUnsafePath
+	}
+	name, err = normalizePackagePath(name, MaxPathBytes)
+	if err != nil {
+		return "", err
+	}
+	// The capability URL is rooted at the application entry directory. This
+	// keeps ordinary relative references such as ./app.js and ./app.css
+	// working when the manifest entry is nested (for example ui/index.html),
+	// while still allowing an explicit package-root path such as ui/app.js.
+	entryDir := path.Dir(entryName)
+	if entryDir != "." && !strings.HasPrefix(name, entryDir+"/") {
+		name = path.Join(entryDir, name)
 	}
 	return normalizePackagePath(name, MaxPathBytes)
 }

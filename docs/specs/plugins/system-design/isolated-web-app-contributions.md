@@ -117,6 +117,8 @@ backend lifecycle. Add explicit plugin instances for scoped activation.
 - nullable trusted scope identifiers
 - `status` as `pending`, `active`, `disabled`, `archived`, `error`, or `removed`
 - nullable `active_release_id`
+- monotonic `grant_generation` incremented on scope, release, status, or grant
+  changes
 - timestamps
 
 Only identifiers required by `scope_kind` can be set. A database constraint and
@@ -192,6 +194,11 @@ and source-map files. It uses content sniffing and file extensions. It rejects
 device files, links, duplicate normalized paths, traversal, absolute paths,
 and files outside the package root.
 
+The capability path is rooted at the declared entry directory for ordinary
+relative asset requests. For example, `ui/index.html` can load `./app.js` and
+`./app.css` from `ui/`. The reserved `_kandev/v1` path remains rooted at the
+capability URL and is dispatched before ordinary asset mapping.
+
 `pkgtar` provides the extraction pattern. Web packages use a separate validator
 because they can omit a managed backend executable.
 
@@ -264,7 +271,8 @@ The component renders an iframe with these rules:
 The runtime response also applies the sandbox through the CSP `sandbox`
 directive. This directive protects a capability URL that a person opens as a
 top-level document. The response permits only `allow-scripts` and
-`allow-forms`. It does not permit `allow-same-origin`.
+`allow-forms`. It does not permit `allow-same-origin`, and `form-action
+'none'` denies form submissions to external origins.
 
 The desktop shell adds a narrow `frame-src` rule for the loopback backend. The
 runtime `frame-ancestors` policy permits the configured web host,
@@ -294,6 +302,15 @@ The capability binds these values:
 Each request loads the current instance and compares these bindings. A scope,
 grant, release, status, or access change revokes the old capability on its next
 request.
+
+Approved external origins are a deliberate direct-browser exception to this
+per-request runtime check. Kandev cannot inspect a request after the browser
+has sent it to a third-party origin. The WebSocket lifecycle broadcaster sends
+an authority-change notification to the host, and the host unmounts the
+matching iframe immediately. The replacement iframe is mounted only after a
+fresh HTTP metadata and runtime-binding load. This is the revocation boundary
+for direct external requests; Kandev runtime and protocol requests still run
+the binding validator on every request.
 
 The runtime route accepts the capability without an ambient session cookie.
 The route sets explicit CORS responses for the sandboxed opaque origin. It
@@ -413,7 +430,8 @@ add another handler type without changing the browser protocol.
 The runtime document response uses this minimum header policy:
 
 - `Content-Security-Policy` includes `sandbox allow-scripts allow-forms`,
-  `default-src 'none'`, `base-uri 'none'`, and `object-src 'none'`
+  `default-src 'none'`, `form-action 'none'`, `base-uri 'none'`, and
+  `object-src 'none'`
 - `frame-ancestors` contains only normalized Kandev web and Tauri host origins
 - `X-Content-Type-Options` is `nosniff`
 - `Referrer-Policy` is `no-referrer`
@@ -430,7 +448,9 @@ The response uses a restrictive resource policy:
 - data images can load within a bounded policy
 - data connections can reach the runtime API
 - approved HTTPS origins can receive explicit `connect-src`, image, or font
-  access
+  access while the iframe binding is current
+- direct external requests are not server-proxied in this version; lifecycle
+  authority notifications tear down the iframe before a replacement load
 - framing is limited to the Kandev host
 
 The implementation must build the policy from normalized grants. It must not
@@ -528,8 +548,9 @@ state values, bodies, payloads, runtime capabilities, and user credentials.
 - Service tests cover release activation and grant intersection.
 - HTTP tests cover capability binding, stale tokens, CORS, limits, and stable
   errors.
-- Security tests cover sandbox flags, content policy, remote script denial,
-  cookie absence, and top-navigation denial.
+- Security tests cover sandbox flags, content policy, form-action denial,
+  remote script denial, cookie absence, nested asset resolution, authority
+  revocation after load, and top-navigation denial.
 - Host data contract tests compare browser and gRPC projections.
 - Event tests cover scope filtering, reconnect replay, generation changes, and
   resync.

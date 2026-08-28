@@ -41,6 +41,8 @@
   "approveRelease": "Approve release",
   "rejectRelease": "Reject release",
   "rollbackRelease": "Roll back release",
+  "permissionDeclaration": "Declared permissions",
+  "missingPermissions": "Permissions still needed",
   "retry": "Try again",
   "refresh": "Refresh",
   "statusActive": "Active",

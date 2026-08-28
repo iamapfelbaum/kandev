@@ -312,9 +312,21 @@ func canvasEditPrompt(item canvasservice.Canvas, sourceRoot, requestedPrompt str
 	if requestedPrompt == "" {
 		requestedPrompt = "Review the current canvas and make a useful improvement."
 	}
+	grants := "none"
+	if len(item.EffectiveGrants) > 0 {
+		values := make([]string, 0, len(item.EffectiveGrants))
+		for _, grant := range item.EffectiveGrants {
+			resource := grant.Resource
+			if grant.PermissionKind == "network" {
+				resource = grant.NetworkOrigin
+			}
+			values = append(values, grant.PermissionKind+":"+resource+" (scope "+grant.ScopeCeiling+")")
+		}
+		grants = strings.Join(values, ", ")
+	}
 	return fmt.Sprintf(
-		"Edit canvas %q. Read the canvas authoring skill with read_canvas_authoring_skill_kandev, inspect the current source in %s, apply the requested change, validate the result, and publish it with publish_canvas_kandev using canvas_id %s and source_path %s. Requested change: %s",
-		item.Title, sourceRoot, item.ID, sourceRoot, requestedPrompt,
+		"Edit canvas %q. Read the canvas authoring skill with read_canvas_authoring_skill_kandev, inspect the current source in %s, use only these effective grants: %s, apply the requested change, validate the result, and publish it with publish_canvas_kandev using canvas_id %s and source_path %s. Requested change: %s",
+		item.Title, sourceRoot, grants, item.ID, sourceRoot, requestedPrompt,
 	)
 }
 
@@ -366,33 +378,43 @@ func registerCanvasRoutes(p routeParams) {
 }
 
 type canvasHTTPResponse struct {
-	ID                  string                 `json:"id"`
-	PluginInstanceID    string                 `json:"plugin_instance_id"`
-	PluginID            string                 `json:"plugin_id"`
-	WorkspaceID         string                 `json:"workspace_id"`
-	TaskID              string                 `json:"task_id,omitempty"`
-	OriginTaskID        string                 `json:"origin_task_id,omitempty"`
-	ScopeKind           string                 `json:"scope_kind"`
-	Title               string                 `json:"title"`
-	CreatedBySessionID  string                 `json:"created_by_session_id,omitempty"`
-	PromotedByUserID    string                 `json:"promoted_by_user_id,omitempty"`
-	PromotedAt          *time.Time             `json:"promoted_at,omitempty"`
-	Status              string                 `json:"status"`
-	ActiveReleaseID     string                 `json:"active_release_id,omitempty"`
-	ActiveReleaseStatus string                 `json:"active_release_status,omitempty"`
-	ActiveReleaseError  string                 `json:"active_release_error,omitempty"`
-	ActiveRelease       *canvasReleaseResponse `json:"active_release,omitempty"`
-	PendingRelease      *canvasReleaseResponse `json:"pending_release,omitempty"`
-	CreatedAt           time.Time              `json:"created_at"`
-	UpdatedAt           time.Time              `json:"updated_at"`
+	ID                  string                          `json:"id"`
+	PluginInstanceID    string                          `json:"plugin_instance_id"`
+	PluginID            string                          `json:"plugin_id"`
+	WorkspaceID         string                          `json:"workspace_id"`
+	TaskID              string                          `json:"task_id,omitempty"`
+	OriginTaskID        string                          `json:"origin_task_id,omitempty"`
+	ScopeKind           string                          `json:"scope_kind"`
+	Title               string                          `json:"title"`
+	CreatedBySessionID  string                          `json:"created_by_session_id,omitempty"`
+	PromotedByUserID    string                          `json:"promoted_by_user_id,omitempty"`
+	PromotedAt          *time.Time                      `json:"promoted_at,omitempty"`
+	Status              string                          `json:"status"`
+	ActiveReleaseID     string                          `json:"active_release_id,omitempty"`
+	ActiveReleaseStatus string                          `json:"active_release_status,omitempty"`
+	ActiveReleaseError  string                          `json:"active_release_error,omitempty"`
+	GrantGeneration     int64                           `json:"grant_generation,omitempty"`
+	EffectiveGrants     []canvasservice.GrantProjection `json:"effective_grants,omitempty"`
+	ActiveRelease       *canvasReleaseResponse          `json:"active_release,omitempty"`
+	PendingRelease      *canvasReleaseResponse          `json:"pending_release,omitempty"`
+	CreatedAt           time.Time                       `json:"created_at"`
+	UpdatedAt           time.Time                       `json:"updated_at"`
 }
 
 type canvasReleaseResponse struct {
-	ID               string    `json:"id"`
-	PackageDigest    string    `json:"package_digest,omitempty"`
-	ValidationStatus string    `json:"validation_status"`
-	ValidationError  string    `json:"validation_error,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
+	ID                 string                           `json:"id"`
+	PackageDigest      string                           `json:"package_digest,omitempty"`
+	ValidationStatus   string                           `json:"validation_status"`
+	ValidationError    string                           `json:"validation_error,omitempty"`
+	Permissions        *canvasservice.PermissionSummary `json:"permissions,omitempty"`
+	MissingPermissions []string                         `json:"missing_permissions,omitempty"`
+	PermissionDigest   string                           `json:"permission_digest,omitempty"`
+	SourceActorKind    string                           `json:"source_actor_kind,omitempty"`
+	SourceUserID       string                           `json:"source_user_id,omitempty"`
+	SourceTaskID       string                           `json:"source_task_id,omitempty"`
+	SourceSessionID    string                           `json:"source_session_id,omitempty"`
+	ProtocolVersion    int                              `json:"protocol_version,omitempty"`
+	CreatedAt          time.Time                        `json:"created_at"`
 }
 
 func canvasResponse(value canvasservice.Canvas) canvasHTTPResponse {
@@ -412,26 +434,16 @@ func canvasResponse(value canvasservice.Canvas) canvasHTTPResponse {
 		ActiveReleaseID:     value.ActiveReleaseID,
 		ActiveReleaseStatus: value.ActiveReleaseStatus,
 		ActiveReleaseError:  value.ActiveReleaseError,
+		GrantGeneration:     value.GrantGeneration,
+		EffectiveGrants:     value.EffectiveGrants,
 		CreatedAt:           value.CreatedAt,
 		UpdatedAt:           value.UpdatedAt,
 	}
 	if value.ActiveRelease != nil {
-		result.ActiveRelease = &canvasReleaseResponse{
-			ID:               value.ActiveRelease.ID,
-			PackageDigest:    value.ActiveRelease.PackageDigest,
-			ValidationStatus: value.ActiveRelease.ValidationStatus,
-			ValidationError:  value.ActiveRelease.ValidationError,
-			CreatedAt:        value.ActiveRelease.CreatedAt,
-		}
+		result.ActiveRelease = releaseResponseFromMetadata(value.ActiveRelease)
 	}
 	if value.PendingRelease != nil {
-		result.PendingRelease = &canvasReleaseResponse{
-			ID:               value.PendingRelease.ID,
-			PackageDigest:    value.PendingRelease.PackageDigest,
-			ValidationStatus: value.PendingRelease.ValidationStatus,
-			ValidationError:  value.PendingRelease.ValidationError,
-			CreatedAt:        value.PendingRelease.CreatedAt,
-		}
+		result.PendingRelease = releaseResponseFromMetadata(value.PendingRelease)
 	}
 	return result
 }
@@ -508,23 +520,53 @@ func (h *canvasHTTPHandler) releases(c *gin.Context) {
 	if !h.authorizeWorkspace(c, canvas.WorkspaceID) {
 		return
 	}
-	list, err := h.plugins.Instances().ListReleases(c.Request.Context(), canvas.PluginInstanceID)
+	instanceStore := h.plugins.Instances()
+	instance, err := instanceStore.Get(c.Request.Context(), canvas.PluginInstanceID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	grants, err := instanceStore.ListGrants(c.Request.Context(), canvas.PluginInstanceID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	list, err := instanceStore.ListReleases(c.Request.Context(), canvas.PluginInstanceID)
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
 	result := make([]canvasReleaseResponse, 0, len(list))
 	for _, release := range list {
-		result = append(result, releaseResponse(release))
+		result = append(result, releaseResponse(release, instance.ScopeKind, grants))
 	}
 	writeCanvasJSON(c, http.StatusOK, map[string]interface{}{"releases": result})
 }
 
-func releaseResponse(release instances.Release) canvasReleaseResponse {
+func releaseResponse(release instances.Release, scope string, grants []instances.Grant) canvasReleaseResponse {
+	permissions := canvasservice.ReleasePermissionSummary(release)
 	return canvasReleaseResponse{
 		ID: release.ID, PackageDigest: release.PackageDigest,
 		ValidationStatus: release.ValidationStatus, ValidationError: release.ValidationError,
+		Permissions: &permissions, MissingPermissions: canvasservice.MissingPermissionKeys(permissions, scope, grants),
+		PermissionDigest: canvasservice.PermissionDigest(release), SourceActorKind: release.SourceActorKind,
+		SourceUserID: release.SourceUserID, SourceTaskID: release.SourceTaskID,
+		SourceSessionID: release.SourceSessionID, ProtocolVersion: release.ProtocolVersion,
 		CreatedAt: release.CreatedAt,
+	}
+}
+
+func releaseResponseFromMetadata(value *canvasservice.ReleaseMetadata) *canvasReleaseResponse {
+	if value == nil {
+		return nil
+	}
+	return &canvasReleaseResponse{
+		ID: value.ID, PackageDigest: value.PackageDigest, ValidationStatus: value.ValidationStatus,
+		ValidationError: value.ValidationError, Permissions: value.Permissions,
+		MissingPermissions: value.MissingPermissions, PermissionDigest: value.PermissionDigest,
+		SourceActorKind: value.SourceActorKind, SourceUserID: value.SourceUserID,
+		SourceTaskID: value.SourceTaskID, SourceSessionID: value.SourceSessionID,
+		ProtocolVersion: value.ProtocolVersion, CreatedAt: value.CreatedAt,
 	}
 }
 
@@ -555,6 +597,9 @@ func (h *canvasHTTPHandler) promotionPreview(c *gin.Context) {
 		"source_task_id":    preview.SourceTaskID,
 		"source_session_id": preview.SourceSessionID,
 		"permissions":       preview.Permissions,
+		"active_release_id": preview.ActiveReleaseID,
+		"permission_digest": preview.PermissionDigest,
+		"grant_generation":  preview.GrantGeneration,
 		"current_scope":     preview.CurrentScope,
 		"target_scope":      preview.TargetScope,
 		"placement":         preview.Placement,
@@ -565,13 +610,13 @@ func releaseResponseFromCanvas(value *canvasservice.Canvas) *canvasReleaseRespon
 	if value == nil || value.ActiveRelease == nil {
 		return nil
 	}
-	result := canvasReleaseResponse{
-		ID: value.ActiveRelease.ID, PackageDigest: value.ActiveRelease.PackageDigest,
-		ValidationStatus: value.ActiveRelease.ValidationStatus,
-		ValidationError:  value.ActiveRelease.ValidationError,
-		CreatedAt:        value.ActiveRelease.CreatedAt,
-	}
-	return &result
+	return releaseResponseFromMetadata(value.ActiveRelease)
+}
+
+type canvasPromotionRequest struct {
+	ExpectedReleaseID        string `json:"expected_release_id"`
+	ExpectedPermissionDigest string `json:"expected_permission_digest"`
+	ExpectedGrantGeneration  *int64 `json:"expected_grant_generation"`
 }
 
 func (h *canvasHTTPHandler) promote(c *gin.Context) {
@@ -583,7 +628,12 @@ func (h *canvasHTTPHandler) promote(c *gin.Context) {
 	if !h.authorizeWorkspace(c, canvas.WorkspaceID) {
 		return
 	}
-	updated, err := h.canvases.PromoteCanvas(c.Request.Context(), canvas.ID, canvasRuntimeUser(c))
+	var request canvasPromotionRequest
+	if c.Request.Body == nil || c.ShouldBindJSON(&request) != nil || strings.TrimSpace(request.ExpectedReleaseID) == "" || strings.TrimSpace(request.ExpectedPermissionDigest) == "" || request.ExpectedGrantGeneration == nil || *request.ExpectedGrantGeneration < 0 {
+		writeCanvasError(c, http.StatusBadRequest, "promotion_review_required", nil)
+		return
+	}
+	updated, err := h.canvases.PromoteCanvasReviewed(c.Request.Context(), canvas.ID, canvasRuntimeUser(c), request.ExpectedReleaseID, request.ExpectedPermissionDigest, *request.ExpectedGrantGeneration)
 	if err != nil {
 		h.writeError(c, err)
 		return

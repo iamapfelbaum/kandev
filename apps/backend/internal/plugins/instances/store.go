@@ -8,6 +8,7 @@ package instances
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -64,6 +65,8 @@ var (
 	ErrWorkspaceStorageLimit    = errors.New("canvas workspace storage limit exceeded")
 	ErrInstallationStorageLimit = errors.New("canvas installation storage limit exceeded")
 	ErrInvalidRelease           = errors.New("invalid plugin release")
+	ErrStalePromotionReview     = errors.New("canvas promotion review is stale")
+	ErrStaleCanvasEdit          = errors.New("canvas edit base release is stale")
 )
 
 // ScopeIdentifiers contains only the trusted identifiers required by a scope.
@@ -974,29 +977,26 @@ func (s *Store) PromoteScopeAndGrants(ctx context.Context, instanceID, workspace
 // existing transaction. Canvas metadata promotion uses the same transaction
 // through this helper to keep the two authorities consistent after a crash.
 func (s *Store) PromoteScopeAndGrantsTx(ctx context.Context, tx *sqlx.Tx, instanceID, workspaceID, approvedBy string, grants []Grant) error {
+	return s.promoteScopeAndGrantsReviewedTx(ctx, tx, instanceID, workspaceID, approvedBy, grants, "", "", 0)
+}
+
+// PromoteScopeAndGrantsReviewedTx applies a human-reviewed promotion only if
+// the release, permission declaration, and grant generation are unchanged
+// since the review was shown. All checks and mutations share one transaction.
+func (s *Store) PromoteScopeAndGrantsReviewedTx(ctx context.Context, tx *sqlx.Tx, instanceID, workspaceID, approvedBy string, grants []Grant, expectedReleaseID, expectedPermissionDigest string, expectedGrantGeneration int64) error {
+	return s.promoteScopeAndGrantsReviewedTx(ctx, tx, instanceID, workspaceID, approvedBy, grants, expectedReleaseID, expectedPermissionDigest, expectedGrantGeneration)
+}
+
+func (s *Store) promoteScopeAndGrantsReviewedTx(ctx context.Context, tx *sqlx.Tx, instanceID, workspaceID, approvedBy string, grants []Grant, expectedReleaseID, expectedPermissionDigest string, expectedGrantGeneration int64) error {
 	if err := validatePromotionRequest(instanceID, workspaceID, approvedBy); err != nil {
 		return err
 	}
-	var current instanceRow
-	if err := tx.GetContext(ctx, &current, tx.Rebind(
-		`SELECT id, plugin_id, source_kind, scope_kind, workspace_id, task_id, session_id, repository_id, status, active_release_id, grant_generation, created_at, updated_at FROM plugin_instances WHERE id = ?`,
-	), instanceID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
+	current, declaredJSON, err := loadPromotionState(ctx, tx, instanceID)
+	if err != nil {
 		return err
 	}
-	if current.Status == StatusRemoved {
-		return ErrNotFound
-	}
-	if current.ActiveReleaseID == "" {
-		return ErrInvalidRelease
-	}
-	var declaredJSON string
-	if err := tx.GetContext(ctx, &declaredJSON, tx.Rebind(
-		`SELECT declared_permissions_json FROM plugin_releases WHERE id = ? AND instance_id = ?`,
-	), current.ActiveReleaseID, instanceID); err != nil {
-		return ErrInvalidRelease
+	if err := validatePromotionReview(current, declaredJSON, expectedReleaseID, expectedPermissionDigest, expectedGrantGeneration); err != nil {
+		return err
 	}
 	if err := validateGrantsForDeclaration(declaredJSON, ScopeWorkspace, grants); err != nil {
 		return err
@@ -1004,20 +1004,79 @@ func (s *Store) PromoteScopeAndGrantsTx(ctx context.Context, tx *sqlx.Tx, instan
 	if err := s.checkAdmissionExcept(ctx, tx, ScopeWorkspace, workspaceID, "", instanceID); err != nil {
 		return err
 	}
+	return s.updatePromotedInstance(ctx, tx, instanceID, workspaceID, approvedBy, grants, expectedReleaseID, expectedPermissionDigest, expectedGrantGeneration)
+}
+
+func loadPromotionState(ctx context.Context, tx *sqlx.Tx, instanceID string) (instanceRow, string, error) {
+	var current instanceRow
+	if err := tx.GetContext(ctx, &current, tx.Rebind(
+		`SELECT id, plugin_id, source_kind, scope_kind, workspace_id, task_id, session_id, repository_id, status, active_release_id, grant_generation, created_at, updated_at FROM plugin_instances WHERE id = ?`,
+	), instanceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return instanceRow{}, "", ErrNotFound
+		}
+		return instanceRow{}, "", err
+	}
+	if current.Status == StatusRemoved {
+		return instanceRow{}, "", ErrNotFound
+	}
+	if current.ActiveReleaseID == "" {
+		return instanceRow{}, "", ErrInvalidRelease
+	}
+	var declaredJSON string
+	if err := tx.GetContext(ctx, &declaredJSON, tx.Rebind(
+		`SELECT declared_permissions_json FROM plugin_releases WHERE id = ? AND instance_id = ?`,
+	), current.ActiveReleaseID, instanceID); err != nil {
+		return instanceRow{}, "", ErrInvalidRelease
+	}
+	return current, declaredJSON, nil
+}
+
+func validatePromotionReview(current instanceRow, declaredJSON, expectedReleaseID, expectedPermissionDigest string, expectedGrantGeneration int64) error {
+	if expectedReleaseID != "" && current.ActiveReleaseID != expectedReleaseID {
+		return ErrStalePromotionReview
+	}
+	if (expectedReleaseID != "" || expectedPermissionDigest != "") && current.GrantGeneration != expectedGrantGeneration {
+		return ErrStalePromotionReview
+	}
+	if expectedPermissionDigest != "" && permissionDigest(declaredJSON) != expectedPermissionDigest {
+		return ErrStalePromotionReview
+	}
+	return nil
+}
+
+func (s *Store) updatePromotedInstance(ctx context.Context, tx *sqlx.Tx, instanceID, workspaceID, approvedBy string, grants []Grant, expectedReleaseID, expectedPermissionDigest string, expectedGrantGeneration int64) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	result, err := tx.ExecContext(ctx, tx.Rebind(
-		`UPDATE plugin_instances SET scope_kind = ?, workspace_id = ?, task_id = '', session_id = '', repository_id = '', grant_generation = grant_generation + 1, updated_at = ? WHERE id = ? AND status <> ?`,
-	), ScopeWorkspace, workspaceID, now, instanceID, StatusRemoved)
+	updateQuery := `UPDATE plugin_instances SET scope_kind = ?, workspace_id = ?, task_id = '', session_id = '', repository_id = '', grant_generation = grant_generation + 1, updated_at = ? WHERE id = ? AND status <> ?`
+	updateArgs := []any{ScopeWorkspace, workspaceID, now, instanceID, StatusRemoved}
+	reviewed := expectedReleaseID != "" || expectedPermissionDigest != ""
+	if reviewed {
+		// Recheck the review identity while taking the instance row lock. A
+		// release activation or grant change that races this statement causes
+		// the conditional update to affect no rows instead of being silently
+		// overwritten by the promotion.
+		updateQuery += ` AND active_release_id = ? AND grant_generation = ?`
+		updateArgs = append(updateArgs, expectedReleaseID, expectedGrantGeneration)
+	}
+	result, err := tx.ExecContext(ctx, tx.Rebind(updateQuery), updateArgs...)
 	if err != nil {
 		return err
 	}
 	if affected, _ := result.RowsAffected(); affected == 0 {
+		if reviewed {
+			return ErrStalePromotionReview
+		}
 		return ErrNotFound
 	}
 	if err := insertInstanceGrantsTx(ctx, tx, instanceID, approvedBy, grants); err != nil {
 		return err
 	}
 	return nil
+}
+
+func permissionDigest(declaredJSON string) string {
+	digest := sha256.Sum256([]byte(strings.TrimSpace(declaredJSON)))
+	return fmt.Sprintf("%x", digest[:])
 }
 
 func validatePromotionRequest(instanceID, workspaceID, approvedBy string) error {
@@ -1132,6 +1191,39 @@ func (s *Store) CreateReleaseTx(ctx context.Context, tx *sqlx.Tx, release Releas
 	}
 	_, err := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO plugin_releases (id, plugin_id, instance_id, package_digest, source_kind, source_actor_kind, source_user_id, source_task_id, source_session_id, manifest_json, declared_permissions_json, artifact_path, artifact_bytes, protocol_version, validation_status, validation_error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`), release.ID, release.PluginID, release.InstanceID, release.PackageDigest, release.SourceKind, release.SourceActorKind, release.SourceUserID, release.SourceTaskID, release.SourceSessionID, string(release.ManifestJSON), string(release.DeclaredPermissionsJSON), release.ArtifactPath, release.ArtifactBytes, release.ProtocolVersion, release.ValidationStatus, release.ValidationError, created.Format(time.RFC3339Nano))
 	return err
+}
+
+// CreateReleaseIfActiveReleaseTx inserts a release only when the editor's
+// source was materialized from the currently active release. The check and
+// insert are intentionally one transaction so two edit sessions cannot
+// silently overwrite each other's work.
+func (s *Store) CreateReleaseIfActiveReleaseTx(ctx context.Context, tx *sqlx.Tx, instanceID, expectedReleaseID string, release Release) error {
+	if strings.TrimSpace(instanceID) == "" || strings.TrimSpace(expectedReleaseID) == "" {
+		return ErrStaleCanvasEdit
+	}
+	// The no-op update both verifies the base release and holds the instance
+	// row lock until the surrounding edit publish transaction commits. A
+	// separate SELECT would allow an active release to change between the
+	// check and the release insert.
+	result, err := tx.ExecContext(ctx, tx.Rebind(
+		`UPDATE plugin_instances SET updated_at = updated_at WHERE id = ? AND active_release_id = ? AND status <> ?`,
+	), instanceID, expectedReleaseID, StatusRemoved)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		var exists int
+		if err := tx.GetContext(ctx, &exists, tx.Rebind(
+			`SELECT COUNT(*) FROM plugin_instances WHERE id = ?`,
+		), instanceID); err != nil {
+			return err
+		}
+		if exists == 0 {
+			return ErrNotFound
+		}
+		return ErrStaleCanvasEdit
+	}
+	return s.CreateReleaseTx(ctx, tx, release)
 }
 
 // PruneReleases keeps the active release, the newest non-active valid release,

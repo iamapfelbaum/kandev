@@ -188,6 +188,10 @@ func (s *canvasAuthoringService) PublishCanvas(ctx context.Context, request mcph
 	if err != nil {
 		return nil, err
 	}
+	target, editSession, err := s.canvasEditTarget(ctx, task, request.Agent)
+	if err != nil {
+		return nil, canvasOperationError("execution_invalid", "the canvas edit session is no longer valid", err)
+	}
 	item, err := s.authorizedCanvas(ctx, task, request.Agent, request.CanvasID)
 	if err != nil {
 		return nil, err
@@ -199,7 +203,11 @@ func (s *canvasAuthoringService) PublishCanvas(ctx context.Context, request mcph
 		return nil, err
 	}
 	defer s.endPublish(request.Agent.SessionID, item.ID)
-	return s.publishCanvasSource(ctx, execution, task, item, request)
+	expectedBaseReleaseID := ""
+	if editSession {
+		expectedBaseReleaseID = target.ReleaseID
+	}
+	return s.publishCanvasSource(ctx, execution, task, item, request, expectedBaseReleaseID)
 }
 
 func validateCanvasPublishSource(item *canvas.Canvas, request mcphandlers.CanvasPublishRequest) error {
@@ -209,7 +217,7 @@ func validateCanvasPublishSource(item *canvas.Canvas, request mcphandlers.Canvas
 	return nil
 }
 
-func (s *canvasAuthoringService) publishCanvasSource(ctx context.Context, execution *canvasAgentExecution, task *models.Task, item *canvas.Canvas, request mcphandlers.CanvasPublishRequest) (any, error) {
+func (s *canvasAuthoringService) publishCanvasSource(ctx context.Context, execution *canvasAgentExecution, task *models.Task, item *canvas.Canvas, request mcphandlers.CanvasPublishRequest, expectedBaseReleaseID string) (any, error) {
 	client := execution.GetAgentCtlClient()
 	if client == nil {
 		return nil, canvasOperationError("agent_unavailable", "the task agent is not ready", nil)
@@ -254,7 +262,7 @@ func (s *canvasAuthoringService) publishCanvasSource(ctx context.Context, execut
 		}
 	}()
 	result, err := s.canvases.PublishPackage(ctx, canvas.PublishRequest{
-		CanvasID: item.ID, Package: pkg, Artifact: artifact,
+		CanvasID: item.ID, Package: pkg, Artifact: artifact, ExpectedBaseReleaseID: expectedBaseReleaseID,
 		SourceActorKind: canvasSourceActor, SourceUserID: s.workspaceOwner(ctx, task.WorkspaceID),
 		SourceTaskID: task.ID, SourceSessionID: request.Agent.SessionID,
 	})
@@ -390,18 +398,22 @@ func (s *canvasAuthoringService) authorizedCanvasWithTarget(ctx context.Context,
 	return item, nil
 }
 
-func (s *canvasAuthoringService) authorizedTaskCanvas(ctx context.Context, task *models.Task, agent mcphandlers.CanvasAgentContext, canvasID string) (*canvas.Canvas, error) {
+func (s *canvasAuthoringService) authorizedTaskCanvas(ctx context.Context, task *models.Task, _ mcphandlers.CanvasAgentContext, canvasID string) (*canvas.Canvas, error) {
 	if strings.TrimSpace(canvasID) == "" {
 		return nil, canvasOperationError("canvas_not_found", "canvas was not found", nil)
 	}
 	item, err := s.canvases.GetCanvas(ctx, canvasID)
-	if err != nil || item == nil || item.WorkspaceID != task.WorkspaceID || item.TaskID != task.ID || item.ScopeKind != canvas.ScopeTask {
-		return nil, canvasOperationError("canvas_not_found", "canvas was not found for this task", nil)
-	}
-	if item.CreatedBySessionID == "" || item.CreatedBySessionID != agent.SessionID {
+	if err != nil || !taskCanvasMatchesTask(item, task) {
 		return nil, canvasOperationError("canvas_not_found", "canvas was not found for this task", nil)
 	}
 	return item, nil
+}
+
+func taskCanvasMatchesTask(item *canvas.Canvas, task *models.Task) bool {
+	return item != nil && task != nil &&
+		item.WorkspaceID == task.WorkspaceID &&
+		item.TaskID == task.ID &&
+		item.ScopeKind == canvas.ScopeTask
 }
 
 // canvasEditTarget loads the server-written target binding for an edit
@@ -538,6 +550,10 @@ func canvasErrorCode(err error) string {
 		return "canvas_storage_limit_exceeded"
 	case errors.Is(err, instances.ErrInvalidRelease):
 		return canvasInvalidRelease
+	case errors.Is(err, canvas.ErrStalePromotionReview):
+		return "promotion_review_stale"
+	case errors.Is(err, canvas.ErrStaleCanvasEdit):
+		return "canvas_edit_stale"
 	case errors.Is(err, canvas.ErrCanvasNotFound):
 		return "canvas_not_found"
 	default:

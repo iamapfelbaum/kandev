@@ -1,0 +1,22 @@
+import type { StoreApi } from "zustand";
+import type { AppState } from "@/lib/state/store";
+import { invalidateCanvasLifecycle } from "@/lib/canvas-lifecycle";
+import type { WsHandlers } from "@/lib/ws/handlers/types";
+
+/**
+ * Canvas lifecycle notifications carry identity and status only. Visible
+ * task, workspace, and direct-host projections refetch their own scoped HTTP
+ * snapshot so no WebSocket payload becomes a second canvas source of truth.
+ */
+export function registerCanvasesHandlers(_store: StoreApi<AppState>): WsHandlers {
+  const invalidate = () => invalidateCanvasLifecycle();
+  return {
+    "canvas.created": invalidate,
+    "canvas.release.activated": invalidate,
+    "canvas.release.permission_required": invalidate,
+    "canvas.promoted": invalidate,
+    "canvas.archived": invalidate,
+    "canvas.restored": invalidate,
+    "canvas.removed": invalidate,
+  };
+}

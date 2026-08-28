@@ -41,6 +41,8 @@
   "approveRelease": "Aprovar versão",
   "rejectRelease": "Rejeitar versão",
   "rollbackRelease": "Reverter versão",
+  "permissionDeclaration": "Permissões declaradas",
+  "missingPermissions": "Permissões ainda necessárias",
   "retry": "Tentar novamente",
   "refresh": "Atualizar",
   "statusActive": "Ativo",

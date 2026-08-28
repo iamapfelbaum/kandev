@@ -181,12 +181,21 @@ The isolated web-app boundary has these rules:
 - External network access uses exact HTTPS origins approved by a user. A
   wildcard, origin path, query string, credential, or remote script is not
   accepted.
+- Forms cannot submit to an external origin. The runtime policy sets
+  `form-action 'none'`.
 - Kandev applies a response Content Security Policy to the entry and asset
   routes. It also applies `no-store`, `nosniff`, `no-referrer`, and
   cross-origin resource protections.
 - Runtime requests use a short-lived capability token. The host binds the
   token to the user, instance, release, app key, placement, scope, and grant
   generation, then checks those values on every request.
+
+External origin requests are direct browser requests and cannot be checked by
+Kandev after they leave the browser. When a release, grant, scope, archive,
+disable, or removal event changes authority, the host immediately unmounts the
+matching iframe. It loads a replacement only after a fresh metadata and
+runtime-binding check. Kandev runtime and protocol requests continue to
+revalidate on every request.
 
 Opaque origin storage is not a durable app store. `localStorage`,
 `sessionStorage`, IndexedDB, and service workers are unavailable. Use the

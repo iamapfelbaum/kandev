@@ -41,6 +41,8 @@
   "approveRelease": "批准版本",
   "rejectRelease": "拒絕版本",
   "rollbackRelease": "回復版本",
+  "permissionDeclaration": "已聲明的權限",
+  "missingPermissions": "仍需的權限",
   "retry": "重試",
   "refresh": "重新整理",
   "statusActive": "使用中",

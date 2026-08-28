@@ -56,7 +56,7 @@ func TestRuntimeServesEntryWithSecurityHeadersAndNoCookies(t *testing.T) {
 	if !strings.Contains(response.Body.String(), "safe") {
 		t.Fatalf("body = %q", response.Body.String())
 	}
-	if got := response.Header().Get("Content-Security-Policy"); !strings.Contains(got, "sandbox allow-scripts allow-forms") || !strings.Contains(got, "frame-ancestors http://127.0.0.1:38429") {
+	if got := response.Header().Get("Content-Security-Policy"); !strings.Contains(got, "sandbox allow-scripts allow-forms") || !strings.Contains(got, "form-action 'none'") || !strings.Contains(got, "frame-ancestors http://127.0.0.1:38429") {
 		t.Fatalf("CSP = %q", got)
 	}
 	for key, want := range map[string]string{
@@ -75,6 +75,61 @@ func TestRuntimeServesEntryWithSecurityHeadersAndNoCookies(t *testing.T) {
 	}
 }
 
+func TestRuntimeResolvesNestedEntryAssetsAndKeepsProtocolRoot(t *testing.T) {
+	archive := canvasArchive(t, map[string]string{
+		"manifest.yaml": staticManifestYAML,
+		"ui/index.html": `<script src="./app.js"></script><link rel="stylesheet" href="./app.css">`,
+		"ui/app.js":     `fetch("./_kandev/v1/context")`,
+		"ui/app.css":    `body { color: red; }`,
+	})
+	pkg, err := ValidatePackage(bytes.NewReader(archive))
+	if err != nil {
+		t.Fatalf("ValidatePackage: %v", err)
+	}
+	artifacts, err := NewArtifactStore(filepath.Join(t.TempDir(), "artifacts"))
+	if err != nil {
+		t.Fatalf("NewArtifactStore: %v", err)
+	}
+	artifact, err := artifacts.Put(pkg)
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	manager := NewTokenManager(nil)
+	binding := CapabilityBinding{
+		UserID: "user-1", InstanceID: "instance-1", ReleaseID: "release-1", WebAppKey: "main",
+		Placement: "task-canvas", Artifact: artifact, Entry: "ui/index.html",
+	}
+	token, err := manager.Issue(binding, 0)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	runtime := NewRuntime(manager, artifacts, nil, nil)
+	runtime.SetProtocolHandler(func(w http.ResponseWriter, _ *http.Request, _ string, _ CapabilityBinding, protocolPath string) {
+		if protocolPath != "v1/context" {
+			t.Errorf("protocol path = %q, want v1/context", protocolPath)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"protocol":true}`))
+	})
+
+	for requestPath, want := range map[string]string{
+		"app.js":  `fetch("./_kandev/v1/context")`,
+		"app.css": `body { color: red; }`,
+	} {
+		response := httptest.NewRecorder()
+		runtime.Serve(response, httptest.NewRequest(http.MethodGet, "/", nil), token, requestPath)
+		if response.Code != http.StatusOK || response.Body.String() != want {
+			t.Fatalf("%s response = %d %q, want 200 %q", requestPath, response.Code, response.Body.String(), want)
+		}
+	}
+
+	protocolResponse := httptest.NewRecorder()
+	runtime.Serve(protocolResponse, httptest.NewRequest(http.MethodGet, "/", nil), token, "_kandev/v1/context")
+	if protocolResponse.Code != http.StatusOK || protocolResponse.Body.String() != `{"protocol":true}` {
+		t.Fatalf("protocol response = %d %q", protocolResponse.Code, protocolResponse.Body.String())
+	}
+}
+
 func TestRuntimeRejectsStaleCapabilityBeforeReadingArtifact(t *testing.T) {
 	manager := NewTokenManager(nil)
 	token, err := manager.Issue(CapabilityBinding{UserID: "u", InstanceID: "i", ReleaseID: "r", WebAppKey: "main", Artifact: Artifact{Digest: strings.Repeat("c", 64), RelativePath: "releases/" + strings.Repeat("c", 64)}, Entry: "ui/index.html"}, 0)
@@ -89,6 +144,52 @@ func TestRuntimeRejectsStaleCapabilityBeforeReadingArtifact(t *testing.T) {
 	}
 	if body, _ := io.ReadAll(response.Body); len(body) == 0 {
 		t.Fatal("stale token response has no safe error")
+	}
+}
+
+func TestRuntimeRevalidatesBindingAfterAuthorityRevocation(t *testing.T) {
+	archive := canvasArchive(t, map[string]string{
+		"manifest.yaml": staticManifestYAML,
+		"ui/index.html": "entry",
+		"ui/app.js":     "script",
+	})
+	pkg, err := ValidatePackage(bytes.NewReader(archive))
+	if err != nil {
+		t.Fatalf("ValidatePackage: %v", err)
+	}
+	artifacts, err := NewArtifactStore(filepath.Join(t.TempDir(), "artifacts"))
+	if err != nil {
+		t.Fatalf("NewArtifactStore: %v", err)
+	}
+	artifact, err := artifacts.Put(pkg)
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	manager := NewTokenManager(nil)
+	token, err := manager.Issue(CapabilityBinding{
+		UserID: "user-1", InstanceID: "instance-1", ReleaseID: "release-1", WebAppKey: "main",
+		Placement: "task-canvas", Artifact: artifact, Entry: "ui/index.html",
+	}, 0)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	revoked := false
+	runtime := NewRuntime(manager, artifacts, func(_ context.Context, _ CapabilityBinding) error {
+		if revoked {
+			return ErrRuntimeTokenStale
+		}
+		return nil
+	}, nil)
+	first := httptest.NewRecorder()
+	runtime.Serve(first, httptest.NewRequest(http.MethodGet, "/", nil), token, "")
+	if first.Code != http.StatusOK {
+		t.Fatalf("initial entry response = %d %q, want 200", first.Code, first.Body.String())
+	}
+	revoked = true
+	second := httptest.NewRecorder()
+	runtime.Serve(second, httptest.NewRequest(http.MethodGet, "/", nil), token, "app.js")
+	if second.Code != http.StatusUnauthorized || !strings.Contains(second.Body.String(), "runtime_token_stale") {
+		t.Fatalf("post-revocation asset response = %d %q, want stale-token denial", second.Code, second.Body.String())
 	}
 }
 

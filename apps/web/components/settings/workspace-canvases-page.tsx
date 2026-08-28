@@ -34,6 +34,7 @@ import {
   type Canvas,
 } from "@/lib/api/domains/canvas-api";
 import { canvasErrorMessage } from "@/lib/api/domains/canvas-error-copy";
+import { useCanvasLifecycleRevision } from "@/lib/canvas-lifecycle";
 import { SettingsErrorText, SettingsPageHeader } from "./settings-typography";
 import { CanvasReleaseDialog } from "./canvas-lifecycle-dialogs";
 
@@ -58,6 +59,7 @@ function useWorkspaceCanvasState(workspaceId: string) {
   const [removeTarget, setRemoveTarget] = useState<Canvas | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const requestRef = useRef(0);
+  const lifecycleRevision = useCanvasLifecycleRevision();
 
   const reload = useCallback(() => {
     const requestId = ++requestRef.current;
@@ -83,7 +85,7 @@ function useWorkspaceCanvasState(workspaceId: string) {
     return () => {
       requestRef.current += 1;
     };
-  }, [reload]);
+  }, [lifecycleRevision, reload]);
 
   const edit = async (canvas: Canvas) => {
     setBusyId(canvas.id);

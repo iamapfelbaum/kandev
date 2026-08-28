@@ -110,6 +110,9 @@ describe("canvas host and lifecycle endpoints", () => {
       current_scope: "task",
       target_scope: "workspace",
       placement: "workspace_sidebar",
+      active_release_id: "release-7",
+      permission_digest: "digest-7",
+      grant_generation: 4,
     };
     fetchSpy.mockResolvedValueOnce(jsonResponse(preview));
 
@@ -126,13 +129,29 @@ describe("canvas host and lifecycle endpoints", () => {
 
     await getCanvasRuntime("canvas-1", { baseUrl: API_BASE_URL });
     await requestCanvasPromotion("canvas-1", { baseUrl: API_BASE_URL });
-    await confirmCanvasPromotion("canvas-1", { baseUrl: API_BASE_URL });
+    await confirmCanvasPromotion(
+      "canvas-1",
+      {
+        expected_release_id: "release-7",
+        expected_permission_digest: "digest-7",
+        expected_grant_generation: 4,
+      },
+      { baseUrl: API_BASE_URL },
+    );
 
     expect(fetchSpy.mock.calls.map(([url]) => url)).toEqual([
       `${API_BASE_URL}/api/v1/canvases/canvas-1/runtime`,
       `${API_BASE_URL}/api/v1/canvases/canvas-1/promotion-preview`,
       `${API_BASE_URL}/api/v1/canvases/canvas-1/promotion`,
     ]);
+    expect(fetchSpy.mock.calls[2][1]).toMatchObject({
+      method: "POST",
+      body: JSON.stringify({
+        expected_release_id: "release-7",
+        expected_permission_digest: "digest-7",
+        expected_grant_generation: 4,
+      }),
+    });
   });
 
   it("archives with a mutation request and preserves the API response", async () => {

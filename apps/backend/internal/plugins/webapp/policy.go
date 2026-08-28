@@ -47,6 +47,7 @@ func BuildContentSecurityPolicy(networkOrigins, frameAncestors []string) (string
 	return strings.Join([]string{
 		"sandbox allow-scripts allow-forms",
 		"default-src 'none'",
+		"form-action 'none'",
 		"base-uri 'none'",
 		"object-src 'none'",
 		"script-src 'self'",

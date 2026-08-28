@@ -15,6 +15,7 @@ import {
   type Canvas,
 } from "@/lib/api/domains/canvas-api";
 import { cn } from "@/lib/utils";
+import { useCanvasLifecycleRevision } from "@/lib/canvas-lifecycle";
 import {
   APP_SIDEBAR_SECTION_IDS,
   SIDEBAR_ITEM_ACTIVE,
@@ -41,6 +42,7 @@ export function useWorkspaceCanvases(
     canvases: EMPTY_CANVASES,
   });
   const requestRef = useRef(0);
+  const lifecycleRevision = useCanvasLifecycleRevision();
 
   useEffect(() => {
     const requestId = ++requestRef.current;
@@ -61,7 +63,7 @@ export function useWorkspaceCanvases(
       .catch(() => {
         if (requestRef.current === requestId) setLoaded({ workspaceId, canvases: EMPTY_CANVASES });
       });
-  }, [includeArchived, workspaceId]);
+  }, [includeArchived, lifecycleRevision, workspaceId]);
 
   return loaded.workspaceId === workspaceId ? loaded.canvases : EMPTY_CANVASES;
 }

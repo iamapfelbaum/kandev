@@ -9,6 +9,14 @@ export type CanvasRelease = {
   package_digest?: string;
   validation_status: CanvasReleaseStatus | string;
   validation_error?: string;
+  permissions?: CanvasPermissionReview;
+  missing_permissions?: string[];
+  permission_digest?: string;
+  source_actor_kind?: string;
+  source_user_id?: string;
+  source_task_id?: string;
+  source_session_id?: string;
+  protocol_version?: number;
   created_at?: string;
 };
 
@@ -26,6 +34,8 @@ export type Canvas = {
   active_release_id?: string;
   active_release_status?: CanvasReleaseStatus | string;
   active_release_error?: string;
+  grant_generation?: number;
+  effective_grants?: CanvasGrantProjection[];
   active_release?: CanvasRelease;
   pending_release?: CanvasRelease;
   created_at?: string;
@@ -59,6 +69,13 @@ export type CanvasPermissionReview = {
   external_origins?: string[];
 };
 
+export type CanvasGrantProjection = {
+  permission_kind: string;
+  resource?: string;
+  network_origin?: string;
+  scope_ceiling: string;
+};
+
 export type CanvasPromotionPreview = {
   canvas_id: string;
   title?: string;
@@ -69,6 +86,9 @@ export type CanvasPromotionPreview = {
   source_session_id?: string;
   active_release?: CanvasRelease;
   permissions?: CanvasPermissionReview;
+  active_release_id?: string;
+  permission_digest?: string;
+  grant_generation?: number;
   current_scope?: CanvasScopeKind | string;
   target_scope?: CanvasScopeKind | string;
   placement?: string;
@@ -147,9 +167,14 @@ export function requestCanvasPromotion(
 
 export function confirmCanvasPromotion(
   canvasId: string,
+  review: {
+    expected_release_id: string;
+    expected_permission_digest: string;
+    expected_grant_generation: number;
+  },
   options?: ApiRequestOptions,
 ): Promise<Canvas> {
-  return mutate<Canvas>(canvasPath(canvasId, "/promotion"), "POST", undefined, options);
+  return mutate<Canvas>(canvasPath(canvasId, "/promotion"), "POST", review, options);
 }
 
 export function listCanvasReleases(

@@ -6,7 +6,7 @@ system: plugins
 owners:
   - kandev
 created: 2026-08-26
-last_updated: 2026-08-27
+last_updated: 2026-08-28
 ---
 
 # Isolated plugin web-application contributions Requirements
@@ -84,12 +84,18 @@ user grant, and current resource access.
 - **AC-PLUGINS-ISOLATED-WEB-APPS-003.1:** The effective permission set shall be
   the intersection of package declarations, instance grants, and current
   Kandev authorization.
-- **AC-PLUGINS-ISOLATED-WEB-APPS-003.2:** Each data, state, event, action, and
-  network request shall revalidate the active instance and effective
-  permission set.
+- **AC-PLUGINS-ISOLATED-WEB-APPS-003.2:** Each Kandev data, state, event, and
+  action request shall revalidate the active instance and effective
+  permission set. A direct browser request to an approved external origin
+  cannot be intercepted by Kandev after it leaves the browser. The host shall
+  therefore tear down the iframe immediately after every authority-changing
+  lifecycle notification, and a new iframe shall receive a newly validated
+  binding before it can make another request.
 - **AC-PLUGINS-ISOLATED-WEB-APPS-003.3:** When an instance becomes disabled,
   archived, removed, or inaccessible, its existing runtime tokens shall stop
-  authorizing new requests.
+  authorizing new Kandev requests, and the host shall tear down any matching
+  iframe immediately. In-flight direct external requests are not treated as
+  newly authorized requests.
 - **AC-PLUGINS-ISOLATED-WEB-APPS-003.4:** A new release shall not gain a
   permission that the user did not approve.
 - **AC-PLUGINS-ISOLATED-WEB-APPS-003.5:** A denial shall return a stable safe
@@ -174,8 +180,8 @@ escape its approved network and presentation boundary.
 - **AC-PLUGINS-ISOLATED-WEB-APPS-007.3:** Kandev shall not use ambient browser
   credentials to authorize iframe data requests.
 - **AC-PLUGINS-ISOLATED-WEB-APPS-007.4:** The content policy shall allow
-  packaged scripts and styles but deny remote scripts and undeclared network
-  origins.
+  packaged scripts and styles but deny remote scripts, undeclared network
+  origins, and form submissions.
 - **AC-PLUGINS-ISOLATED-WEB-APPS-007.5:** A network permission shall name exact
   HTTPS origins and shall require user approval.
 - **AC-PLUGINS-ISOLATED-WEB-APPS-007.6:** The host shall keep navigation,
@@ -185,6 +191,9 @@ escape its approved network and presentation boundary.
   an iframe.
 - **AC-PLUGINS-ISOLATED-WEB-APPS-007.8:** Supported web and desktop hosts shall
   frame runtime documents, and every other ancestor shall be denied.
+- **AC-PLUGINS-ISOLATED-WEB-APPS-007.9:** The runtime shall resolve ordinary
+  relative asset requests beside a nested entry document while reserving the
+  `_kandev/v1` path at the capability root.
 
 ### REQ-PLUGINS-ISOLATED-WEB-APPS-008: Scoped instance lifecycle
 

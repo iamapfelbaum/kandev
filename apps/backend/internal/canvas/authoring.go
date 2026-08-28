@@ -2,9 +2,11 @@ package canvas
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,13 +31,17 @@ type PermissionSummary struct {
 // PublishRequest contains a package already read from the trusted execution
 // source stream. The request has no user-controlled scope identifiers.
 type PublishRequest struct {
-	CanvasID        string
-	Package         *webapp.Package
-	Artifact        webapp.Artifact
-	SourceActorKind string
-	SourceUserID    string
-	SourceTaskID    string
-	SourceSessionID string
+	CanvasID string
+	Package  *webapp.Package
+	Artifact webapp.Artifact
+	// ExpectedBaseReleaseID is set for a trusted edit session. The release
+	// publish transaction rejects the package if the active release changed
+	// after the editor materialized its source.
+	ExpectedBaseReleaseID string
+	SourceActorKind       string
+	SourceUserID          string
+	SourceTaskID          string
+	SourceSessionID       string
 }
 
 // PublishResult describes the release outcome without exposing package files.
@@ -53,15 +59,18 @@ type PublishResult struct {
 // PromotionPreview is shown to a human before a task canvas becomes a
 // workspace canvas.
 type PromotionPreview struct {
-	Canvas          *Canvas
-	SourceActorKind string            `json:"source_actor_kind"`
-	SourceUserID    string            `json:"source_user_id,omitempty"`
-	SourceTaskID    string            `json:"source_task_id,omitempty"`
-	SourceSessionID string            `json:"source_session_id,omitempty"`
-	Permissions     PermissionSummary `json:"permissions"`
-	CurrentScope    string            `json:"current_scope"`
-	TargetScope     string            `json:"target_scope"`
-	Placement       string            `json:"placement"`
+	Canvas           *Canvas
+	SourceActorKind  string            `json:"source_actor_kind"`
+	SourceUserID     string            `json:"source_user_id,omitempty"`
+	SourceTaskID     string            `json:"source_task_id,omitempty"`
+	SourceSessionID  string            `json:"source_session_id,omitempty"`
+	Permissions      PermissionSummary `json:"permissions"`
+	ActiveReleaseID  string            `json:"active_release_id"`
+	PermissionDigest string            `json:"permission_digest"`
+	GrantGeneration  int64             `json:"grant_generation"`
+	CurrentScope     string            `json:"current_scope"`
+	TargetScope      string            `json:"target_scope"`
+	Placement        string            `json:"placement"`
 }
 
 // authoringInstanceStore is the release/governance extension implemented by
@@ -87,6 +96,14 @@ type transactionalAuthoringStore interface {
 	ActivateReleaseTx(context.Context, *sqlx.Tx, string, string) error
 }
 
+type reviewedPromotionStore interface {
+	PromoteScopeAndGrantsReviewedTx(context.Context, *sqlx.Tx, string, string, string, []plugininstances.Grant, string, string, int64) error
+}
+
+type conditionalReleaseStore interface {
+	CreateReleaseIfActiveReleaseTx(context.Context, *sqlx.Tx, string, string, plugininstances.Release) error
+}
+
 // releaseRetentionStore is optional so the authoring service remains
 // compatible with the narrow fakes used by lifecycle tests. The durable
 // plugin instance store implements it to remove superseded release ownership
@@ -110,7 +127,7 @@ func (s *Service) PublishPackage(ctx context.Context, request PublishRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	persisted, err := persistPublishedRelease(ctx, store, instance.ID, release, activated)
+	persisted, err := persistPublishedRelease(ctx, store, instance.ID, release, activated, request.ExpectedBaseReleaseID)
 	if err != nil {
 		if persisted {
 			return &PublishResult{Release: release, Activated: activated, PermissionRequired: !activated, ReleasePersisted: true}, err
@@ -185,7 +202,16 @@ func (s *Service) preparePublishedRelease(ctx context.Context, store authoringIn
 	return instance, release, activated, nil
 }
 
-func persistPublishedRelease(ctx context.Context, store authoringInstanceStore, instanceID string, release plugininstances.Release, activated bool) (bool, error) {
+func persistPublishedRelease(ctx context.Context, store authoringInstanceStore, instanceID string, release plugininstances.Release, activated bool, expectedBaseReleaseID string) (bool, error) {
+	if expectedBaseReleaseID != "" {
+		transactional, ok := store.(transactionalAuthoringStore)
+		conditional, supportsConditional := store.(conditionalReleaseStore)
+		if !ok || !supportsConditional {
+			return false, ErrStaleCanvasEdit
+		}
+		err := persistConditionalRelease(ctx, transactional, conditional, instanceID, release, activated, expectedBaseReleaseID)
+		return err == nil, err
+	}
 	if !activated {
 		if err := store.CreateRelease(ctx, release); err != nil {
 			return false, err
@@ -198,6 +224,21 @@ func persistPublishedRelease(ctx context.Context, store authoringInstanceStore, 
 		return err == nil, err
 	}
 	return persistActivatedReleaseFallback(ctx, store, instanceID, release)
+}
+
+func persistConditionalRelease(ctx context.Context, transactional transactionalAuthoringStore, conditional conditionalReleaseStore, instanceID string, release plugininstances.Release, activated bool, expectedBaseReleaseID string) error {
+	return transactional.WithTransaction(ctx, func(tx *sqlx.Tx) error {
+		if err := conditional.CreateReleaseIfActiveReleaseTx(ctx, tx, instanceID, expectedBaseReleaseID, release); err != nil {
+			return err
+		}
+		if !activated {
+			return nil
+		}
+		if err := transactional.SetPluginIDTx(ctx, tx, instanceID, release.PluginID); err != nil {
+			return err
+		}
+		return transactional.ActivateReleaseTx(ctx, tx, instanceID, release.ID)
+	})
 }
 
 func persistActivatedRelease(ctx context.Context, store transactionalAuthoringStore, instanceID string, release plugininstances.Release) error {
@@ -268,15 +309,18 @@ func (s *Service) PromotionPreview(ctx context.Context, canvasID string) (*Promo
 		return nil, err
 	}
 	return &PromotionPreview{
-		Canvas:          canvas,
-		SourceActorKind: release.SourceActorKind,
-		SourceUserID:    release.SourceUserID,
-		SourceTaskID:    release.SourceTaskID,
-		SourceSessionID: release.SourceSessionID,
-		Permissions:     ManifestPermissions(m),
-		CurrentScope:    ScopeTask,
-		TargetScope:     ScopeWorkspace,
-		Placement:       manifest.WebAppPlacementWorkspace,
+		Canvas:           canvas,
+		SourceActorKind:  release.SourceActorKind,
+		SourceUserID:     release.SourceUserID,
+		SourceTaskID:     release.SourceTaskID,
+		SourceSessionID:  release.SourceSessionID,
+		Permissions:      ManifestPermissions(m),
+		ActiveReleaseID:  release.ID,
+		PermissionDigest: PermissionDigest(release),
+		GrantGeneration:  canvas.GrantGeneration,
+		CurrentScope:     ScopeTask,
+		TargetScope:      ScopeWorkspace,
+		Placement:        manifest.WebAppPlacementWorkspace,
 	}, nil
 }
 
@@ -284,6 +328,12 @@ func (s *Service) PromotionPreview(ctx context.Context, canvasID string) (*Promo
 // instance scope with the canvas metadata provenance. The durable store
 // transaction keeps both lifecycle authorities consistent after a crash.
 func (s *Service) PromoteCanvas(ctx context.Context, canvasID, userID string) (*Canvas, error) {
+	return s.PromoteCanvasReviewed(ctx, canvasID, userID, "", "", 0)
+}
+
+// PromoteCanvasReviewed atomically applies a promotion only when the release
+// and permission projection still match the human review response.
+func (s *Service) PromoteCanvasReviewed(ctx context.Context, canvasID, userID, expectedReleaseID, expectedPermissionDigest string, expectedGrantGeneration int64) (*Canvas, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
@@ -300,22 +350,8 @@ func (s *Service) PromoteCanvas(ctx context.Context, canvasID, userID string) (*
 	}
 	grants := grantsForManifest(preview.Permissions, userID, ScopeWorkspace)
 	promotedAt := s.nowUTC()
-	if transactional, ok := s.instances.(transactionalPluginInstanceStore); ok {
-		if err := transactional.WithTransaction(ctx, func(tx *sqlx.Tx) error {
-			if err := transactional.PromoteScopeAndGrantsTx(ctx, tx, preview.Canvas.PluginInstanceID, preview.Canvas.WorkspaceID, userID, grants); err != nil {
-				return err
-			}
-			return s.repo.PromoteTx(ctx, tx, canvasID, userID, promotedAt)
-		}); err != nil {
-			return nil, err
-		}
-	} else {
-		if err := store.PromoteScopeAndGrants(ctx, preview.Canvas.PluginInstanceID, preview.Canvas.WorkspaceID, userID, grants); err != nil {
-			return nil, err
-		}
-		if err := s.repo.Promote(ctx, canvasID, userID, promotedAt); err != nil {
-			return nil, errors.Join(ErrCanvasMetadataBroken, err)
-		}
+	if err := s.promoteInstanceForReview(ctx, store, preview, canvasID, userID, grants, promotedAt, expectedReleaseID, expectedPermissionDigest, expectedGrantGeneration); err != nil {
+		return nil, err
 	}
 	updated, err := s.Get(ctx, canvasID)
 	if err != nil {
@@ -326,6 +362,41 @@ func (s *Service) PromoteCanvas(ctx context.Context, canvasID, userID string) (*
 	s.mu.Unlock()
 	publishEvent(ctx, publisher, lifecycleEvent(EventPromoted, *updated))
 	return updated, nil
+}
+
+func (s *Service) promoteInstanceForReview(ctx context.Context, store authoringInstanceStore, preview *PromotionPreview, canvasID, userID string, grants []plugininstances.Grant, promotedAt time.Time, expectedReleaseID, expectedPermissionDigest string, expectedGrantGeneration int64) error {
+	reviewed := expectedReleaseID != "" || expectedPermissionDigest != "" || expectedGrantGeneration > 0
+	transactional, isTransactional := store.(transactionalPluginInstanceStore)
+	if isTransactional {
+		err := transactional.WithTransaction(ctx, func(tx *sqlx.Tx) error {
+			if err := promoteInstanceTx(ctx, tx, transactional, preview, userID, grants, reviewed, expectedReleaseID, expectedPermissionDigest, expectedGrantGeneration); err != nil {
+				return err
+			}
+			return s.repo.PromoteTx(ctx, tx, canvasID, userID, promotedAt)
+		})
+		return err
+	}
+	if reviewed {
+		return ErrStalePromotionReview
+	}
+	if err := store.PromoteScopeAndGrants(ctx, preview.Canvas.PluginInstanceID, preview.Canvas.WorkspaceID, userID, grants); err != nil {
+		return err
+	}
+	if err := s.repo.Promote(ctx, canvasID, userID, promotedAt); err != nil {
+		return errors.Join(ErrCanvasMetadataBroken, err)
+	}
+	return nil
+}
+
+func promoteInstanceTx(ctx context.Context, tx *sqlx.Tx, store transactionalPluginInstanceStore, preview *PromotionPreview, userID string, grants []plugininstances.Grant, reviewed bool, expectedReleaseID, expectedPermissionDigest string, expectedGrantGeneration int64) error {
+	if reviewed {
+		reviewedStore, ok := store.(reviewedPromotionStore)
+		if !ok {
+			return ErrStalePromotionReview
+		}
+		return reviewedStore.PromoteScopeAndGrantsReviewedTx(ctx, tx, preview.Canvas.PluginInstanceID, preview.Canvas.WorkspaceID, userID, grants, expectedReleaseID, expectedPermissionDigest, expectedGrantGeneration)
+	}
+	return store.PromoteScopeAndGrantsTx(ctx, tx, preview.Canvas.PluginInstanceID, preview.Canvas.WorkspaceID, userID, grants)
 }
 
 // ApproveRelease grants the requested permissions and activates one pending
@@ -521,22 +592,76 @@ func manifestFromRelease(release plugininstances.Release) (*manifest.Manifest, e
 	return &m, nil
 }
 
+// ReleasePermissionSummary returns the review-safe declaration persisted with
+// a release. Older rows used a flat permission-key array, which remains
+// readable so a release review never falls back to an empty declaration.
+func ReleasePermissionSummary(release plugininstances.Release) PermissionSummary {
+	var summary PermissionSummary
+	if err := json.Unmarshal(release.DeclaredPermissionsJSON, &summary); err == nil {
+		return summary
+	}
+	var legacy []string
+	if err := json.Unmarshal(release.DeclaredPermissionsJSON, &legacy); err != nil {
+		return summary
+	}
+	for _, permission := range legacy {
+		parts := strings.SplitN(permission, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		switch parts[0] {
+		case permissionKindAPIRead:
+			summary.Reads = append(summary.Reads, parts[1])
+		case permissionKindAPIWrite:
+			summary.Writes = append(summary.Writes, parts[1])
+		case permissionKindEvents:
+			summary.Events = append(summary.Events, parts[1])
+		case permissionKindNetwork:
+			summary.ExternalOrigins = append(summary.ExternalOrigins, parts[1])
+		case permissionKindState:
+			summary.SharedState = true
+		}
+	}
+	return summary
+}
+
+// PermissionDigest returns the digest of the exact persisted declaration. It
+// is safe to show to a reviewer and lets confirmation reject a changed
+// declaration without exposing its manifest or source package.
+func PermissionDigest(release plugininstances.Release) string {
+	digest := sha256.Sum256([]byte(strings.TrimSpace(string(release.DeclaredPermissionsJSON))))
+	return fmt.Sprintf("%x", digest[:])
+}
+
+// MissingPermissionKeys reports declaration keys not covered by the current
+// grants at the release scope. The result is sorted for stable API output.
+func MissingPermissionKeys(summary PermissionSummary, scope string, grants []plugininstances.Grant) []string {
+	missing := make([]string, 0)
+	for _, permission := range permissionKeys(summary) {
+		if !grantCovers(permission, scope, grants) {
+			missing = append(missing, permission)
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
 func permissionKeys(summary PermissionSummary) []string {
 	keys := make([]string, 0, len(summary.Reads)+len(summary.Writes)+len(summary.Events)+len(summary.ExternalOrigins)+1)
 	for _, value := range summary.Reads {
-		keys = append(keys, "api_read:"+value)
+		keys = append(keys, permissionKindAPIRead+":"+value)
 	}
 	for _, value := range summary.Writes {
-		keys = append(keys, "api_write:"+value)
+		keys = append(keys, permissionKindAPIWrite+":"+value)
 	}
 	for _, value := range summary.Events {
-		keys = append(keys, "events:"+value)
+		keys = append(keys, permissionKindEvents+":"+value)
 	}
 	for _, value := range summary.ExternalOrigins {
-		keys = append(keys, "network:"+value)
+		keys = append(keys, permissionKindNetwork+":"+value)
 	}
 	if summary.SharedState {
-		keys = append(keys, "state")
+		keys = append(keys, permissionKindState)
 	}
 	return keys
 }
@@ -560,7 +685,7 @@ func grantCovers(permission, scope string, grants []plugininstances.Grant) bool 
 		resource = parts[1]
 	}
 	for _, grant := range grants {
-		if kind == "network" {
+		if kind == permissionKindNetwork {
 			if grant.PermissionKind == kind && grant.NetworkOrigin == resource && grantScopeCovers(grant.ScopeCeiling, scope) {
 				return true
 			}
@@ -590,7 +715,7 @@ func grantsForManifest(summary PermissionSummary, userID, scope string) []plugin
 		networkOrigin := ""
 		if len(parts) == 2 {
 			resource = parts[1]
-			if parts[0] == "network" {
+			if parts[0] == permissionKindNetwork {
 				networkOrigin = resource
 				resource = ""
 			}

@@ -17,6 +17,8 @@ const CANVAS_API_ERROR_TRANSLATIONS: Record<string, string> = {
   canvas_release_unavailable: CANVAS_UNAVAILABLE_KEY,
   artifact_unavailable: CANVAS_UNAVAILABLE_KEY,
   active_release_missing: CANVAS_UNAVAILABLE_KEY,
+  promotion_review_stale: "canvases:actionFailed",
+  canvas_edit_stale: "canvases:actionFailed",
 };
 
 function apiErrorCode(error: ApiError): string | null {

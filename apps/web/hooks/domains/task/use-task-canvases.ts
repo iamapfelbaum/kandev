@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listTaskCanvases, type Canvas } from "@/lib/api/domains/canvas-api";
 import type { Task } from "@/lib/types/http";
+import { useCanvasLifecycleRevision } from "@/lib/canvas-lifecycle";
 
 const EMPTY_CANVASES: Canvas[] = [];
 
@@ -17,6 +18,7 @@ export function useTaskCanvases(
     canvases: EMPTY_CANVASES,
   });
   const requestRef = useRef(0);
+  const lifecycleRevision = useCanvasLifecycleRevision();
 
   useEffect(() => {
     const requestId = ++requestRef.current;
@@ -39,7 +41,7 @@ export function useTaskCanvases(
     return () => {
       if (requestRef.current === requestId) requestRef.current += 1;
     };
-  }, [enabled, taskId, workspaceId]);
+  }, [enabled, lifecycleRevision, taskId, workspaceId]);
 
   const key = taskId && workspaceId ? `${workspaceId}\u0000${taskId}` : null;
   return loaded.key === key ? loaded.canvases : EMPTY_CANVASES;

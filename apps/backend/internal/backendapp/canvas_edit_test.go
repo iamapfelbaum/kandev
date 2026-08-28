@@ -35,6 +35,29 @@ func TestCanvasEditTargetDoesNotAuthorizeAnotherCanvas(t *testing.T) {
 	}
 }
 
+func TestTaskCanvasAuthorizationUsesTaskIdentityNotCreatorSession(t *testing.T) {
+	task := &models.Task{ID: "task-current", WorkspaceID: "workspace-a"}
+	item := &canvas.Canvas{
+		ID:                 "canvas-task",
+		WorkspaceID:        task.WorkspaceID,
+		TaskID:             task.ID,
+		ScopeKind:          canvas.ScopeTask,
+		CreatedBySessionID: "replacement-session-source",
+	}
+	if !taskCanvasMatchesTask(item, task) {
+		t.Fatal("same-task replacement session was denied by creator-session provenance")
+	}
+	item.TaskID = "other-task"
+	if taskCanvasMatchesTask(item, task) {
+		t.Fatal("canvas from another task was authorized")
+	}
+	item.TaskID = task.ID
+	item.WorkspaceID = "other-workspace"
+	if taskCanvasMatchesTask(item, task) {
+		t.Fatal("canvas from another workspace was authorized")
+	}
+}
+
 func TestCanvasEditSourceEntriesUseAssignedCanvasRoot(t *testing.T) {
 	entries := canvasEditSourceEntries("canvas-a", map[string][]byte{
 		"manifest.yaml": []byte("manifest"),
@@ -141,6 +164,9 @@ func TestCanvasEditMaterializesSourceAndDispatchesPrompt(t *testing.T) {
 	if launcher.prompt == "" || !containsCanvasEditText(launcher.prompt, "change the title") {
 		t.Fatalf("prompt = %q, want requested edit", launcher.prompt)
 	}
+	if !containsCanvasEditText(launcher.prompt, "api_read:tasks") || !containsCanvasEditText(launcher.prompt, "scope workspace") {
+		t.Fatalf("prompt = %q, want the effective grant projection", launcher.prompt)
+	}
 	target, ok := sessions.values[canvasEditSessionTargetMetadataKey].(canvasEditSessionTarget)
 	if !ok || !canvasEditTargetMatches(target, "task-edit", "canvas-a") {
 		t.Fatalf("trusted target metadata = %#v", sessions.values[canvasEditSessionTargetMetadataKey])
@@ -207,6 +233,9 @@ func newCanvasEditTestDependencies() (*fakeCanvasEditTaskStore, *fakeCanvasEditC
 			Status:              instances.StatusActive,
 			ActiveReleaseID:     "release-a",
 			ActiveReleaseStatus: instances.ValidationValid,
+			EffectiveGrants: []canvas.GrantProjection{{
+				PermissionKind: "api_read", Resource: "tasks", ScopeCeiling: instances.ScopeWorkspace,
+			}},
 		}}, &fakeCanvasEditReleaseStore{release: instances.Release{
 			ID:               "release-a",
 			InstanceID:       "instance-a",

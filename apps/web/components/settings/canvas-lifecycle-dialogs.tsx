@@ -23,6 +23,7 @@ import {
   type CanvasRelease,
 } from "@/lib/api/domains/canvas-api";
 import { canvasErrorCodeMessage, canvasErrorMessage } from "@/lib/api/domains/canvas-error-copy";
+import { useCanvasLifecycleRevision } from "@/lib/canvas-lifecycle";
 
 const CANVAS_ACTION_FAILED_KEY = "canvases:actionFailed";
 
@@ -70,6 +71,7 @@ function useCanvasPromotion(
   onCompleted?: (canvas: Canvas) => void,
 ) {
   const { t } = useTranslation();
+  const lifecycleRevision = useCanvasLifecycleRevision();
   const [preview, setPreview] = useState<CanvasPromotionPreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -94,14 +96,24 @@ function useCanvasPromotion(
     return () => {
       cancelled = true;
     };
-  }, [canvas, open, t]);
+  }, [canvas, lifecycleRevision, open, t]);
 
   const confirm = useCallback(async () => {
-    if (!canvas) return;
+    if (
+      !canvas ||
+      !preview?.active_release_id ||
+      !preview.permission_digest ||
+      preview.grant_generation === undefined
+    )
+      return;
     setConfirming(true);
     setError(null);
     try {
-      const promoted = await confirmCanvasPromotion(canvas.id);
+      const promoted = await confirmCanvasPromotion(canvas.id, {
+        expected_release_id: preview.active_release_id,
+        expected_permission_digest: preview.permission_digest,
+        expected_grant_generation: preview.grant_generation,
+      });
       onCompleted?.(promoted);
       onOpenChange(false);
     } catch (reason: unknown) {
@@ -109,7 +121,7 @@ function useCanvasPromotion(
     } finally {
       setConfirming(false);
     }
-  }, [canvas, onCompleted, onOpenChange, t]);
+  }, [canvas, onCompleted, onOpenChange, preview, t]);
 
   const permissionGroups = buildPermissionGroups(preview?.permissions, t);
 
@@ -186,7 +198,13 @@ export function CanvasPromotionDialog({
           </Button>
           <Button
             className="min-h-11 cursor-pointer md:min-h-7"
-            disabled={!preview || confirming}
+            disabled={
+              !preview ||
+              !preview.active_release_id ||
+              !preview.permission_digest ||
+              preview.grant_generation === undefined ||
+              confirming
+            }
             onClick={() => void confirm()}
           >
             {confirming ? t("canvases:promotingCanvas") : t("canvases:confirmPromotion")}
@@ -281,6 +299,7 @@ function useCanvasReleases(
   onChanged?: (canvas: Canvas) => void,
 ) {
   const { t } = useTranslation();
+  const lifecycleRevision = useCanvasLifecycleRevision();
   const [releases, setReleases] = useState<CanvasRelease[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -304,7 +323,7 @@ function useCanvasReleases(
     return () => {
       cancelled = true;
     };
-  }, [canvas, open, t]);
+  }, [canvas, lifecycleRevision, open, t]);
 
   const releaseAction = useCallback(
     async (releaseId: string, action: CanvasReleaseAction) => {
@@ -334,6 +353,165 @@ function CanvasReleaseValidationError({ code }: { code: string }) {
     <p className="mt-1 text-destructive">
       {canvasErrorCodeMessage(code, t, CANVAS_ACTION_FAILED_KEY)}
     </p>
+  );
+}
+
+function CanvasReleasePermissions({ release }: { release: CanvasRelease }) {
+  const { t } = useTranslation();
+  const permissionGroups = buildPermissionGroups(release.permissions, t);
+  if (permissionGroups.length === 0) return null;
+
+  return (
+    <div
+      className="mt-3 space-y-2 rounded-md bg-muted/40 p-2"
+      data-testid={`canvas-release-permissions-${release.id}`}
+    >
+      <p className="font-medium">{t("canvases:permissionDeclaration")}</p>
+      {permissionGroups.map((group) => (
+        <section key={group.id}>
+          <h3 className="font-medium">{group.label}</h3>
+          {group.values.length > 0 && (
+            <ul className="mt-1 space-y-1">
+              {group.values.map((permission) => (
+                <li key={permission} className="break-words text-muted-foreground">
+                  {permission}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function CanvasReleaseProvenance({ release }: { release: CanvasRelease }) {
+  const { t } = useTranslation();
+  if (!release.source_actor_kind && !release.source_task_id && !release.source_session_id) {
+    return null;
+  }
+
+  return (
+    <dl className="mt-2 grid gap-1 text-xs">
+      {release.source_actor_kind && (
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2">
+          <dt className="text-muted-foreground">{t("canvases:promotionSourceActor")}</dt>
+          <dd className="break-words">{release.source_actor_kind}</dd>
+        </div>
+      )}
+      {release.source_task_id && (
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2">
+          <dt className="text-muted-foreground">{t("canvases:promotionSourceTask")}</dt>
+          <dd className="break-words">{release.source_task_id}</dd>
+        </div>
+      )}
+      {release.source_session_id && (
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2">
+          <dt className="text-muted-foreground">{t("canvases:promotionSourceSession")}</dt>
+          <dd className="break-words">{release.source_session_id}</dd>
+        </div>
+      )}
+    </dl>
+  );
+}
+
+function CanvasReleaseActions({
+  release,
+  activeReleaseId,
+  busyId,
+  releaseAction,
+}: {
+  release: CanvasRelease;
+  activeReleaseId?: string;
+  busyId: string | null;
+  releaseAction: (releaseId: string, action: CanvasReleaseAction) => void;
+}) {
+  const { t } = useTranslation();
+  const busy = busyId === release.id;
+  const pending = release.validation_status === "pending_permission";
+  const canRollback = release.validation_status === "valid" && release.id !== activeReleaseId;
+
+  if (!pending && !canRollback) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-2">
+      {pending && (
+        <>
+          <Button
+            className="min-h-11 cursor-pointer md:min-h-7"
+            size="sm"
+            disabled={busy}
+            onClick={() => releaseAction(release.id, "approve")}
+          >
+            {t("canvases:approveRelease")}
+          </Button>
+          <Button
+            variant="outline"
+            className="min-h-11 cursor-pointer md:min-h-7"
+            size="sm"
+            disabled={busy}
+            onClick={() => releaseAction(release.id, "reject")}
+          >
+            {t("canvases:rejectRelease")}
+          </Button>
+        </>
+      )}
+      {canRollback && (
+        <Button
+          variant="outline"
+          className="min-h-11 cursor-pointer md:min-h-7"
+          size="sm"
+          disabled={busy}
+          onClick={() => releaseAction(release.id, "rollback")}
+        >
+          {t("canvases:rollbackRelease")}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function CanvasReleaseCard({
+  release,
+  activeReleaseId,
+  busyId,
+  releaseAction,
+}: {
+  release: CanvasRelease;
+  activeReleaseId?: string;
+  busyId: string | null;
+  releaseAction: (releaseId: string, action: CanvasReleaseAction) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="rounded-md border p-3 text-sm">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate font-medium">{release.id}</span>
+        <span className="shrink-0 text-muted-foreground">
+          {releaseStatusLabel(release.validation_status, t)}
+        </span>
+      </div>
+      {release.validation_error && <CanvasReleaseValidationError code={release.validation_error} />}
+      <CanvasReleasePermissions release={release} />
+      {release.missing_permissions && release.missing_permissions.length > 0 && (
+        <div className="mt-2 rounded-md border border-destructive/40 p-2">
+          <p className="font-medium text-destructive">{t("canvases:missingPermissions")}</p>
+          <ul className="mt-1 space-y-1 text-muted-foreground">
+            {release.missing_permissions.map((permission) => (
+              <li key={permission} className="break-words">
+                {permission}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <CanvasReleaseProvenance release={release} />
+      <CanvasReleaseActions
+        release={release}
+        activeReleaseId={activeReleaseId}
+        busyId={busyId}
+        releaseAction={releaseAction}
+      />
+    </div>
   );
 }
 
@@ -372,57 +550,15 @@ export function CanvasReleaseDialog({
           <p className="text-sm text-muted-foreground">{t("canvases:noReleases")}</p>
         )}
         <div className="max-h-72 space-y-2 overflow-y-auto">
-          {releases.map((release) => {
-            const pending = release.validation_status === "pending_permission";
-            return (
-              <div key={release.id} className="rounded-md border p-3 text-sm">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate font-medium">{release.id}</span>
-                  <span className="shrink-0 text-muted-foreground">
-                    {releaseStatusLabel(release.validation_status, t)}
-                  </span>
-                </div>
-                {release.validation_error && (
-                  <CanvasReleaseValidationError code={release.validation_error} />
-                )}
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {pending && (
-                    <>
-                      <Button
-                        className="min-h-11 cursor-pointer md:min-h-7"
-                        size="sm"
-                        disabled={busyId === release.id}
-                        onClick={() => void releaseAction(release.id, "approve")}
-                      >
-                        {t("canvases:approveRelease")}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        className="min-h-11 cursor-pointer md:min-h-7"
-                        size="sm"
-                        disabled={busyId === release.id}
-                        onClick={() => void releaseAction(release.id, "reject")}
-                      >
-                        {t("canvases:rejectRelease")}
-                      </Button>
-                    </>
-                  )}
-                  {release.validation_status === "valid" &&
-                    release.id !== canvas?.active_release_id && (
-                      <Button
-                        variant="outline"
-                        className="min-h-11 cursor-pointer md:min-h-7"
-                        size="sm"
-                        disabled={busyId === release.id}
-                        onClick={() => void releaseAction(release.id, "rollback")}
-                      >
-                        {t("canvases:rollbackRelease")}
-                      </Button>
-                    )}
-                </div>
-              </div>
-            );
-          })}
+          {releases.map((release) => (
+            <CanvasReleaseCard
+              key={release.id}
+              release={release}
+              activeReleaseId={canvas?.active_release_id}
+              busyId={busyId}
+              releaseAction={(releaseId, action) => void releaseAction(releaseId, action)}
+            />
+          ))}
         </div>
         <DialogFooter>
           <Button

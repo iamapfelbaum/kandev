@@ -685,18 +685,18 @@ func (s *Service) buildCanvas(ctx context.Context, metadata CanvasMetadata, inst
 		return Canvas{}, err
 	}
 	canvas := canvasFromMetadataInstance(metadata, instance)
+	grants, err := s.listGrants(ctx, instance.ID)
+	if err != nil {
+		return Canvas{}, err
+	}
 	if instance.ActiveReleaseID == "" {
-		return s.addPendingRelease(ctx, &canvas, instance.ID)
+		return s.addPendingRelease(ctx, &canvas, instance.ID, instance.ScopeKind, grants)
 	}
 	release, err := s.instances.GetRelease(ctx, instance.ActiveReleaseID)
 	if errors.Is(err, plugininstances.ErrNotFound) {
 		canvas.ActiveReleaseStatus = ValidationUnavailable
 		canvas.ActiveReleaseError = "active_release_missing"
-		canvas.ActiveRelease = &ReleaseMetadata{
-			ID:               instance.ActiveReleaseID,
-			ValidationStatus: ValidationUnavailable,
-			ValidationError:  canvas.ActiveReleaseError,
-		}
+		canvas.ActiveRelease = &ReleaseMetadata{ID: instance.ActiveReleaseID, ValidationStatus: ValidationUnavailable, ValidationError: canvas.ActiveReleaseError}
 		return canvas, nil
 	}
 	if err != nil {
@@ -707,13 +707,8 @@ func (s *Service) buildCanvas(ctx context.Context, metadata CanvasMetadata, inst
 	}
 	canvas.ActiveReleaseStatus = release.ValidationStatus
 	canvas.ActiveReleaseError = release.ValidationError
-	canvas.ActiveRelease = &ReleaseMetadata{
-		ID:               release.ID,
-		PackageDigest:    release.PackageDigest,
-		ValidationStatus: release.ValidationStatus,
-		ValidationError:  release.ValidationError,
-		CreatedAt:        release.CreatedAt,
-	}
+	canvas.EffectiveGrants = effectiveGrantProjection(instance, ReleasePermissionSummary(release), grants)
+	canvas.ActiveRelease = releaseMetadata(release, instance.ScopeKind, grants)
 	return canvas, nil
 }
 
@@ -721,7 +716,7 @@ type releaseLister interface {
 	ListReleases(context.Context, string) ([]plugininstances.Release, error)
 }
 
-func (s *Service) addPendingRelease(ctx context.Context, canvas *Canvas, instanceID string) (Canvas, error) {
+func (s *Service) addPendingRelease(ctx context.Context, canvas *Canvas, instanceID, scope string, grants []plugininstances.Grant) (Canvas, error) {
 	lister, ok := s.instances.(releaseLister)
 	if !ok {
 		return *canvas, nil
@@ -734,14 +729,22 @@ func (s *Service) addPendingRelease(ctx context.Context, canvas *Canvas, instanc
 		if release.ValidationStatus != ValidationPendingPermission {
 			continue
 		}
-		canvas.PendingRelease = &ReleaseMetadata{
-			ID: release.ID, PackageDigest: release.PackageDigest,
-			ValidationStatus: release.ValidationStatus,
-			ValidationError:  release.ValidationError, CreatedAt: release.CreatedAt,
-		}
+		canvas.PendingRelease = releaseMetadata(release, scope, grants)
 		break
 	}
 	return *canvas, nil
+}
+
+type grantLister interface {
+	ListGrants(context.Context, string) ([]plugininstances.Grant, error)
+}
+
+func (s *Service) listGrants(ctx context.Context, instanceID string) ([]plugininstances.Grant, error) {
+	lister, ok := s.instances.(grantLister)
+	if !ok {
+		return nil, nil
+	}
+	return lister.ListGrants(ctx, instanceID)
 }
 
 func (s *Service) compensateCreate(instanceID string) error {
@@ -821,6 +824,7 @@ func canvasFromMetadataInstance(metadata CanvasMetadata, instance plugininstance
 		PromotedAt:         metadata.PromotedAt,
 		Status:             instance.Status,
 		ActiveReleaseID:    instance.ActiveReleaseID,
+		GrantGeneration:    instance.GrantGeneration,
 		CreatedAt:          metadata.CreatedAt,
 		UpdatedAt:          updatedAt,
 	}

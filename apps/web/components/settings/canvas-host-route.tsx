@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { IconDots, IconEdit, IconExternalLink, IconSparkles } from "@tabler/icons-react";
+import {
+  IconDots,
+  IconEdit,
+  IconExternalLink,
+  IconListDetails,
+  IconSparkles,
+} from "@tabler/icons-react";
 import { Button } from "@kandev/ui/button";
 import { PageShell } from "@/components/page-shell";
 import { CanvasPage } from "@/components/plugins/canvas-page";
@@ -18,7 +24,8 @@ import {
   type CanvasRuntimeResponse,
 } from "@/lib/api/domains/canvas-api";
 import { canvasErrorMessage } from "@/lib/api/domains/canvas-error-copy";
-import { CanvasPromotionDialog } from "./canvas-lifecycle-dialogs";
+import { useCanvasLifecycleRevision } from "@/lib/canvas-lifecycle";
+import { CanvasPromotionDialog, CanvasReleaseDialog } from "./canvas-lifecycle-dialogs";
 
 type CanvasHostState =
   | "loading_metadata"
@@ -111,6 +118,7 @@ function useCanvasHost(canvasId: string) {
   const requestRef = useRef(0);
   const renewingRef = useRef(false);
   const { clearRuntimeRenewal, scheduleRuntimeRenewal, renewRuntimeRef } = useRuntimeRenewal();
+  const lifecycleRevision = useCanvasLifecycleRevision();
 
   const applyRuntime = useCallback(
     (runtime: CanvasRuntimeResponse) => {
@@ -190,13 +198,14 @@ function useCanvasHost(canvasId: string) {
       requestRef.current += 1;
       clearRuntimeRenewal();
     };
-  }, [clearRuntimeRenewal, load]);
+  }, [clearRuntimeRenewal, lifecycleRevision, load]);
 
   return {
     canvas,
     runtimeUrl,
     state,
     error,
+    lifecycleRevision,
     load,
     renewRuntime,
     setHostError: setError,
@@ -207,10 +216,11 @@ export function CanvasHostRoute({ canvasId }: { canvasId: string }) {
   const { t } = useTranslation();
   const router = useRouter();
   const { isMobile } = useResponsiveBreakpoint();
-  const { canvas, runtimeUrl, state, error, load, renewRuntime, setHostError } =
+  const { canvas, runtimeUrl, state, error, lifecycleRevision, load, renewRuntime, setHostError } =
     useCanvasHost(canvasId);
   const [menuOpen, setMenuOpen] = useState(false);
   const [promotionOpen, setPromotionOpen] = useState(false);
+  const [releasesOpen, setReleasesOpen] = useState(false);
   const [editing, setEditing] = useState(false);
 
   const edit = async () => {
@@ -239,6 +249,7 @@ export function CanvasHostRoute({ canvasId }: { canvasId: string }) {
       editing={editing}
       onEdit={() => void edit()}
       onPromote={() => setPromotionOpen(true)}
+      onReleases={() => setReleasesOpen(true)}
     />
   ) : null;
 
@@ -265,7 +276,12 @@ export function CanvasHostRoute({ canvasId }: { canvasId: string }) {
         />
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {state === "ready" && runtimeUrl ? (
-            <CanvasPage runtimeUrl={runtimeUrl} title={title} onError={() => void renewRuntime()} />
+            <CanvasPage
+              key={`${canvasId}:${lifecycleRevision}:${runtimeUrl}`}
+              runtimeUrl={runtimeUrl}
+              title={title}
+              onError={() => void renewRuntime()}
+            />
           ) : (
             <CanvasHostStatePanel state={state} error={error} onRetry={load} />
           )}
@@ -277,6 +293,7 @@ export function CanvasHostRoute({ canvasId }: { canvasId: string }) {
         onOpenChange={setMenuOpen}
         onEdit={() => void edit()}
         onPromote={() => setPromotionOpen(true)}
+        onReleases={() => setReleasesOpen(true)}
         editing={editing}
       />
       <CanvasPromotionDialog
@@ -284,6 +301,12 @@ export function CanvasHostRoute({ canvasId }: { canvasId: string }) {
         open={promotionOpen}
         onOpenChange={setPromotionOpen}
         onCompleted={() => router.push(canvas ? canvasHref(canvas.id) : "/")}
+      />
+      <CanvasReleaseDialog
+        canvas={canvas}
+        open={releasesOpen}
+        onOpenChange={setReleasesOpen}
+        onChanged={load}
       />
     </PageShell>
   );
@@ -294,26 +317,34 @@ function CanvasDesktopActions({
   editing,
   onEdit,
   onPromote,
+  onReleases,
 }: {
   canvas: Canvas;
   editing: boolean;
   onEdit: () => void;
   onPromote: () => void;
+  onReleases: () => void;
 }) {
   const { t } = useTranslation();
   return (
     <div className="flex items-center gap-2">
-      <Button
-        variant="outline"
-        size="sm"
-        className="cursor-pointer"
-        disabled={editing}
-        onClick={onEdit}
-      >
-        <IconEdit className="mr-1.5 h-3.5 w-3.5" />
-        {t("canvases:editCanvas")}
+      {canvas.scope_kind === "workspace" && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="cursor-pointer"
+          disabled={editing}
+          onClick={onEdit}
+        >
+          <IconEdit className="mr-1.5 h-3.5 w-3.5" />
+          {t("canvases:editCanvas")}
+        </Button>
+      )}
+      <Button variant="outline" size="sm" className="cursor-pointer" onClick={onReleases}>
+        <IconListDetails className="mr-1.5 h-3.5 w-3.5" />
+        {t("canvases:releasesAndPermissions")}
       </Button>
-      {canvas.scope_kind === "task" && (
+      {canvas.scope_kind === "task" && canvas.active_release_status === "valid" && (
         <Button size="sm" className="cursor-pointer" onClick={onPromote}>
           <IconSparkles className="mr-1.5 h-3.5 w-3.5" />
           {t("canvases:promoteCanvas")}
@@ -402,6 +433,7 @@ function MobileCanvasActions({
   onOpenChange,
   onEdit,
   onPromote,
+  onReleases,
   editing,
 }: {
   canvas: Canvas | null;
@@ -409,6 +441,7 @@ function MobileCanvasActions({
   onOpenChange: (open: boolean) => void;
   onEdit: () => void;
   onPromote: () => void;
+  onReleases: () => void;
   editing: boolean;
 }) {
   const { t } = useTranslation();
@@ -421,16 +454,26 @@ function MobileCanvasActions({
       contentTestId="canvas-mobile-actions-sheet"
     >
       <div className="flex flex-col gap-1 pb-2">
+        {canvas?.scope_kind === "workspace" && (
+          <Button
+            variant="ghost"
+            className="min-h-11 justify-start cursor-pointer"
+            disabled={editing}
+            onClick={onEdit}
+          >
+            <IconEdit className="mr-2 h-4 w-4" />
+            {t("canvases:editCanvas")}
+          </Button>
+        )}
         <Button
           variant="ghost"
           className="min-h-11 justify-start cursor-pointer"
-          disabled={editing}
-          onClick={onEdit}
+          onClick={onReleases}
         >
-          <IconEdit className="mr-2 h-4 w-4" />
-          {t("canvases:editCanvas")}
+          <IconListDetails className="mr-2 h-4 w-4" />
+          {t("canvases:releasesAndPermissions")}
         </Button>
-        {canvas?.scope_kind === "task" && (
+        {canvas?.scope_kind === "task" && canvas.active_release_status === "valid" && (
           <Button
             variant="ghost"
             className="min-h-11 justify-start cursor-pointer"

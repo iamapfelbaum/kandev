@@ -29,6 +29,8 @@ const translate = vi.hoisted(() => {
     "canvases:loadingPermissions": "Loading requested permissions",
     "canvases:promotionScopeChange": "Promotion changes the canvas scope.",
     "canvases:noAdditionalPermissions": "No additional permissions were requested.",
+    "canvases:permissionDeclaration": "Declared permissions",
+    "canvases:missingPermissions": "Permissions still needed",
     "canvases:promotingCanvas": "Promoting canvas",
     "canvases:confirmPromotion": "Confirm promotion",
     "canvases:releasesAndPermissions": "Releases and permissions",
@@ -110,6 +112,9 @@ const COPY = {
   cancel: "Cancel",
 } as const;
 
+const TASKS_READ_PERMISSION = "tasks.read";
+const EXTERNAL_ORIGIN = "https://example.test";
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -141,11 +146,11 @@ beforeEach(() => {
     target_scope: "workspace",
     placement: "workspace_sidebar",
     permissions: {
-      reads: ["tasks.read"],
+      reads: [TASKS_READ_PERMISSION],
       writes: ["tasks.write"],
       events: ["task.updated"],
       shared_state: true,
-      external_origins: ["https://example.test"],
+      external_origins: [EXTERNAL_ORIGIN],
     },
   });
   mockConfirmCanvasPromotion.mockReset();
@@ -202,6 +207,9 @@ describe("CanvasPromotionDialog", () => {
       canvas_id: string;
       current_scope: string;
       target_scope: string;
+      active_release_id: string;
+      permission_digest: string;
+      grant_generation: number;
       permissions: { reads: string[] };
     }>();
     const confirmation = deferred<Canvas>();
@@ -227,12 +235,21 @@ describe("CanvasPromotionDialog", () => {
       canvas_id: canvas.id,
       current_scope: "task",
       target_scope: "workspace",
+      active_release_id: "release-1",
+      permission_digest: "digest-1",
+      grant_generation: 7,
       permissions: { reads: [] },
     });
     await waitFor(() => expect((confirmButton as HTMLButtonElement).disabled).toBe(false));
 
     fireEvent.click(confirmButton);
-    await waitFor(() => expect(mockConfirmCanvasPromotion).toHaveBeenCalledWith(canvas.id));
+    await waitFor(() =>
+      expect(mockConfirmCanvasPromotion).toHaveBeenCalledWith(canvas.id, {
+        expected_release_id: "release-1",
+        expected_permission_digest: "digest-1",
+        expected_grant_generation: 7,
+      }),
+    );
     expect(
       (screen.getByRole("button", { name: COPY.promotingCanvas }) as HTMLButtonElement).disabled,
     ).toBe(true);
@@ -251,7 +268,9 @@ describe("CanvasPromotionDialog", () => {
     expect(mockConfirmCanvasPromotion).not.toHaveBeenCalled();
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
+});
 
+describe("CanvasReleaseDialog validation", () => {
   it("localizes stable release validation codes", async () => {
     mockListCanvasReleases.mockResolvedValue({
       releases: [
@@ -268,6 +287,39 @@ describe("CanvasPromotionDialog", () => {
     await waitFor(() =>
       expect(screen.getByText("The runtime token expired. Try again.")).toBeTruthy(),
     );
+  });
+});
+
+describe("CanvasReleaseDialog permission review", () => {
+  it("shows declared and missing permissions before approving a pending release", async () => {
+    mockListCanvasReleases.mockResolvedValue({
+      releases: [
+        release({
+          permissions: {
+            reads: [TASKS_READ_PERMISSION],
+            writes: ["messages.write"],
+            external_origins: [EXTERNAL_ORIGIN],
+          },
+          missing_permissions: ["api_read:tasks"],
+          source_actor_kind: "task_agent",
+          source_task_id: "task-1",
+          source_session_id: "session-1",
+        }),
+      ],
+    });
+
+    render(<CanvasReleaseDialog canvas={canvas} open onOpenChange={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("canvas-release-permissions-release-pending")).toBeTruthy(),
+    );
+    expect(screen.getByText("Declared permissions")).toBeTruthy();
+    expect(screen.getByText(TASKS_READ_PERMISSION)).toBeTruthy();
+    expect(screen.getByText("messages.write")).toBeTruthy();
+    expect(screen.getByText(EXTERNAL_ORIGIN)).toBeTruthy();
+    expect(screen.getByText("Permissions still needed")).toBeTruthy();
+    expect(screen.getByText("api_read:tasks")).toBeTruthy();
+    expect(screen.getByRole("button", { name: COPY.approveRelease })).toBeTruthy();
   });
 });
 

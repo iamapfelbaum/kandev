@@ -45,6 +45,19 @@ The host shows canvas controls outside the app frame. The app runs in a sandboxe
 - External network access uses exact HTTPS origins that a user approved.
 - Remote scripts are not allowed. Scripts and styles must come from the package.
 
+The **Releases and permissions** control is available on task and workspace
+canvas hosts. It shows each release's declared reads, writes, events, shared
+state, exact external origins, missing grants, protocol version, and safe
+source provenance. Use it to approve or reject the first task release. A task
+canvas cannot run until its pending permissions are approved.
+
+The host receives canvas lifecycle notifications through WebSocket. It
+refreshes visible task, workspace, release, and direct-host projections after
+creation, release activation, promotion, archive, restore, or removal. It
+tears down the old iframe before it loads a replacement runtime after an
+authority change. This also limits the lifetime of direct browser requests to
+approved external origins.
+
 Kandev calculates effective access from the package declaration, instance grant, trusted task or workspace scope, and current caller authorization. A release receives only the intersection of those permissions. See [Security and trust](security.md#isolated-web-applications) for the security boundary.
 
 ## Promote a task canvas
@@ -55,6 +68,10 @@ Only a user can promote a task canvas. An agent cannot promote, demote, grant pe
 2. Read the review dialog before you continue.
 3. Review every Kandev data read and write, event subscription, shared-state permission, and exact external HTTPS origin.
 4. Confirm the task-to-workspace scope change and workspace placement.
+
+The confirmation includes the active release ID, permission declaration
+digest, and grant generation that you reviewed. If any of these changes before
+confirmation, Kandev rejects the request as stale and requires a new review.
 
 The promotion keeps the canvas identity, active release, state, and release history. A workspace canvas then appears in workspace navigation. Canceling the review leaves the task canvas unchanged.
 
@@ -77,7 +94,11 @@ Reject a pending release to keep the current app. Use rollback to select the ret
 
 Kandev starts a normal Quick Chat with a trusted canvas target. The agent receives the canvas identity, manifest, active source, validation result, and current grants. The target is fixed to the selected canvas.
 
-The agent publishes through the canvas release flow. The active release changes only after validation and permission review. A new permission request uses the same review as promotion. An expired Quick Chat does not remove the active or prior release.
+The agent publishes through the canvas release flow. The active release changes
+only after validation and permission review. A new permission request uses the
+same review as promotion. If another edit publishes first, the stale edit is
+rejected and cannot silently replace the newer release. An expired Quick Chat
+does not remove the active or prior release.
 
 ## Recover, archive, and remove a canvas
 
