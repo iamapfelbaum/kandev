@@ -3,10 +3,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const getWebSocketClientMock = vi.hoisted(() => vi.fn(() => ({})));
 const updateFileContentMock = vi.hoisted(() => vi.fn());
+const commentMocks = vi.hoisted(() => ({
+  addComment: vi.fn(),
+  comments: [] as Array<{
+    id: string;
+    source: "diff";
+    sessionId: string;
+    filePath: string;
+    startLine: number;
+    endLine: number;
+    side: "additions";
+    codeContent: string;
+    text: string;
+    createdAt: string;
+    status: "pending";
+  }>,
+}));
 const MOBILE_EDIT_CONTENT = "# mobile edit";
 const MOBILE_NEWER_EDIT_CONTENT = "# newer mobile edit";
 const MOBILE_MARKDOWN_PATH = "README.md";
 const MOBILE_MARKDOWN_CONTENT = "# README";
+const MOBILE_MARKDOWN_PREVIEW_MODE_TEST_ID = "mobile-markdown-mode-preview";
 const TRUE_VALUE = true;
 const SELECTED_ATTRIBUTE = String(TRUE_VALUE);
 const EDITABLE_ATTRIBUTE = "data-editable";
@@ -43,6 +60,16 @@ vi.mock("@/lib/ws/workspace-files", () => ({
   updateFileContent: (...args: unknown[]) => updateFileContentMock(...args),
 }));
 
+vi.mock("@/hooks/domains/comments/use-diff-comments", () => ({
+  useDiffFileComments: () => commentMocks.comments,
+}));
+
+vi.mock("@/lib/state/slices/comments", () => ({
+  useCommentsStore: (
+    selector: (state: { addComment: typeof commentMocks.addComment }) => unknown,
+  ) => selector({ addComment: commentMocks.addComment }),
+}));
+
 vi.mock("@/components/editors/external-vcs-file-link", () => ({
   ExternalVcsFileLink: (props: Record<string, unknown>) => (
     <span data-testid="external-vcs-file-link-props" data-props={JSON.stringify(props)} />
@@ -70,15 +97,29 @@ vi.mock("../file-viewer-content", () => ({
 }));
 vi.mock("@/components/editors/markdown/hybrid-markdown-editor", () => ({
   HybridMarkdownEditor: ({
+    comments,
+    onComment,
     onChange,
     onSourceFallback,
   }: {
+    comments?: readonly unknown[];
+    onComment?: (comment: { text: string; start: number; endExclusive: number }) => void;
     onChange: (content: string) => void;
     onSourceFallback?: () => void;
   }) => (
-    <div data-testid="mobile-hybrid-editor">
+    <div
+      data-testid="mobile-hybrid-editor"
+      className="h-full min-h-0 overflow-y-auto overscroll-contain"
+    >
+      <span data-testid="mobile-hybrid-comment-count">{comments?.length ?? 0}</span>
       <button type="button" onClick={() => onChange("# hybrid mobile edit")}>
         Change mobile hybrid
+      </button>
+      <button
+        type="button"
+        onClick={() => onComment?.({ text: "Review mobile", start: 0, endExclusive: 8 })}
+      >
+        Add mobile hybrid comment
       </button>
       <button type="button" onClick={() => onSourceFallback?.()}>
         Fallback to source
@@ -103,6 +144,11 @@ const MOBILE_PREVIEW_TEST_ID = "markdown-preview";
 const SAVED_HASH = "saved-hash";
 
 afterEach(cleanup);
+
+afterEach(() => {
+  commentMocks.addComment.mockReset();
+  commentMocks.comments = [];
+});
 
 beforeEach(() => {
   getWebSocketClientMock.mockReset();
@@ -136,7 +182,7 @@ describe("MobileFileViewerPanel workspace path", () => {
 
 // eslint-disable-next-line max-lines-per-function -- this fixture covers the complete mobile editor workflow.
 describe("MobileFileViewerPanel Markdown editing", () => {
-  it("opens a Markdown file in Source mode with an editable mobile surface", () => {
+  it("opens a newly selected Markdown file in Preview mode", () => {
     render(
       <MobileFileViewerPanel
         file={{
@@ -146,17 +192,15 @@ describe("MobileFileViewerPanel Markdown editing", () => {
           originalContent: MOBILE_MARKDOWN_CONTENT,
           originalHash: "hash",
           isDirty: false,
-          markdownMode: "source",
         }}
         sessionId="session-1"
         onClose={vi.fn()}
       />,
     );
 
-    expect(screen.getByTestId(FILE_CONTENT_TEST_ID).getAttribute(EDITABLE_ATTRIBUTE)).toBe(
-      SELECTED_ATTRIBUTE,
-    );
-    expect(screen.getByTestId("mobile-markdown-mode-source")).toBeTruthy();
+    expect(screen.getByTestId(MOBILE_PREVIEW_TEST_ID)).toBeTruthy();
+    expect(screen.getByTestId(MOBILE_MARKDOWN_PREVIEW_MODE_TEST_ID)).toBeTruthy();
+    expect(screen.queryByTestId(FILE_CONTENT_TEST_ID)).toBeNull();
   });
 
   it("switches between mobile Source and Edit while keeping changes in the file buffer", () => {
@@ -180,13 +224,61 @@ describe("MobileFileViewerPanel Markdown editing", () => {
 
     fireEvent.click(screen.getByTestId("mobile-markdown-mode-edit"));
     expect(screen.getByTestId("mobile-hybrid-editor")).toBeTruthy();
+    expect(screen.getByTestId("mobile-hybrid-editor").className).toContain("overflow-y-auto");
     fireEvent.click(screen.getByRole("button", { name: "Change mobile hybrid" }));
     expect(onFileChange).toHaveBeenCalledWith("# hybrid mobile edit");
     expect((screen.getByTestId(MOBILE_SAVE_TEST_ID) as HTMLButtonElement).disabled).toBe(false);
 
-    fireEvent.click(screen.getByTestId("mobile-markdown-mode-preview"));
+    fireEvent.click(screen.getByTestId(MOBILE_MARKDOWN_PREVIEW_MODE_TEST_ID));
     expect(screen.getByTestId("mobile-markdown-hybrid-editor-host").className).toBe("hidden");
     expect(screen.getByTestId(MOBILE_PREVIEW_TEST_ID)).toBeTruthy();
+  });
+
+  it("maps existing comments and stores a submitted hybrid selection", () => {
+    commentMocks.comments = [
+      {
+        id: "mobile-comment-1",
+        source: "diff",
+        sessionId: "session-1",
+        filePath: MOBILE_MARKDOWN_PATH,
+        startLine: 1,
+        endLine: 1,
+        side: "additions",
+        codeContent: MOBILE_MARKDOWN_CONTENT,
+        text: "Existing mobile review",
+        createdAt: new Date().toISOString(),
+        status: "pending",
+      },
+    ];
+    render(
+      <MobileFileViewerPanel
+        file={{
+          path: MOBILE_MARKDOWN_PATH,
+          name: MOBILE_MARKDOWN_PATH,
+          content: MOBILE_MARKDOWN_CONTENT,
+          originalContent: MOBILE_MARKDOWN_CONTENT,
+          originalHash: "hash",
+          isDirty: false,
+          markdownMode: "edit",
+        }}
+        sessionId="session-1"
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("mobile-hybrid-comment-count").textContent).toBe("1");
+    fireEvent.click(screen.getByRole("button", { name: "Add mobile hybrid comment" }));
+
+    expect(commentMocks.addComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filePath: MOBILE_MARKDOWN_PATH,
+        sessionId: "session-1",
+        startLine: 1,
+        endLine: 1,
+        codeContent: MOBILE_MARKDOWN_CONTENT,
+        text: "Review mobile",
+      }),
+    );
   });
 
   it("saves the canonical mobile buffer and clears the dirty state", async () => {
@@ -361,7 +453,7 @@ describe("MobileFileViewerPanel Markdown editing", () => {
       />,
     );
 
-    expect(screen.getByTestId("mobile-markdown-mode-preview")).toBeTruthy();
+    expect(screen.getByTestId(MOBILE_MARKDOWN_PREVIEW_MODE_TEST_ID)).toBeTruthy();
     expect(screen.getByTestId("mobile-markdown-mode-source")).toBeTruthy();
     expect(screen.queryByTestId("mobile-markdown-mode-edit")).toBeNull();
   });
@@ -462,7 +554,7 @@ describe("MobileFileViewerPanel external file action", () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId("mobile-markdown-mode-preview"));
+    fireEvent.click(screen.getByTestId(MOBILE_MARKDOWN_PREVIEW_MODE_TEST_ID));
     expect(screen.getByTestId(MOBILE_PREVIEW_TEST_ID)).toBeTruthy();
 
     rerender(
@@ -481,7 +573,7 @@ describe("MobileFileViewerPanel external file action", () => {
       />,
     );
 
-    expect(screen.getByTestId(FILE_CONTENT_TEST_ID)).toBeTruthy();
-    expect(screen.queryByTestId(MOBILE_PREVIEW_TEST_ID)).toBeNull();
+    expect(screen.getByTestId(MOBILE_PREVIEW_TEST_ID)).toBeTruthy();
+    expect(screen.queryByTestId(FILE_CONTENT_TEST_ID)).toBeNull();
   });
 });
