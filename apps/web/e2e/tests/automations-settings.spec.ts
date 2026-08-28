@@ -168,12 +168,15 @@ test.describe("Automations settings page", () => {
     await automations.openByName("To Be Deleted");
     await expect(testPage).toHaveURL(/automations\/[a-f0-9-]+$/, { timeout: 10_000 });
 
-    // Delete it
+    // The confirmation must identify the persisted automation, not an
+    // unsaved draft name from the editor.
+    await automations.nameInput.fill("Unsaved Draft Name");
     await automations.deleteButton.click();
     await expect(automations.deleteConfirmation).toBeVisible();
     await expect(automations.deleteConfirmation).toContainText(
       "This will permanently delete To Be Deleted. This action cannot be undone.",
     );
+    await expect(automations.deleteConfirmation).not.toContainText("Unsaved Draft Name");
 
     // Cancelling must leave the editor and the automation untouched.
     await automations.deleteConfirmation.getByRole("button", { name: "Cancel" }).click();

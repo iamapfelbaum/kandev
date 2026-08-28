@@ -2,7 +2,6 @@
 
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -10,6 +9,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@kandev/ui/alert-dialog";
+import { Button } from "@kandev/ui/button";
 import { useTranslation } from "react-i18next";
 
 type AutomationDeleteConfirmDialogProps = {
@@ -48,7 +48,8 @@ export function AutomationDeleteConfirmDialog({
           >
             {t("common:cancel")}
           </AlertDialogCancel>
-          <AlertDialogAction
+          <Button
+            type="button"
             variant="destructive"
             disabled={isDeleting}
             data-testid="automation-delete-confirm"
@@ -56,7 +57,7 @@ export function AutomationDeleteConfirmDialog({
             onClick={onConfirm}
           >
             {t("automations:delete")}
-          </AlertDialogAction>
+          </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

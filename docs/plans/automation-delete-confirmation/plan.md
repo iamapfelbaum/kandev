@@ -99,6 +99,8 @@ same desktop, keyboard, and phone outcome.
   catalogs and the pseudo catalog.
 - Passed focused Chromium E2E: 2 tests.
 - Passed focused mobile Chrome E2E: 1 test.
+- Passed focused automation unit tests: 6 tests, including failed-deletion
+  dialog retention and controlled dialog behavior.
 - Passed specification tests and all-file specification lint.
 - Passed `git diff --check`.
 

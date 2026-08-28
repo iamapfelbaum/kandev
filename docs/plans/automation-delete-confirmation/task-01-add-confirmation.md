@@ -51,12 +51,12 @@ mobile Playwright flow.
 ## Verification
 
 ```bash
-cd apps && pnpm --filter @kandev/web run i18n:check
-cd apps/web && pnpm e2e:run --project chromium tests/automations-settings.spec.ts -- --grep "delete automation"
-cd apps/web && pnpm e2e:run --project mobile-chrome tests/settings/mobile-automations-settings.spec.ts
-python3 scripts/lint-spec-files.test.py
-python3 scripts/lint-spec-files.py --all
-git diff --check -- docs/specs docs/plans
+(cd apps && pnpm --filter @kandev/web run i18n:check)
+(cd apps/web && pnpm e2e:run --project chromium tests/automations-settings.spec.ts -- --grep "delete automation")
+(cd apps/web && pnpm e2e:run --project mobile-chrome tests/settings/mobile-automations-settings.spec.ts)
+(python3 scripts/lint-spec-files.test.py)
+(python3 scripts/lint-spec-files.py --all)
+(git diff --check -- docs/specs docs/plans)
 ```
 
 ## Files likely touched
@@ -104,6 +104,8 @@ None.
 - Passed `pnpm --filter @kandev/web run i18n:check`.
 - Passed focused Chromium E2E: 2 tests.
 - Passed focused mobile Chrome E2E: 1 test.
+- Added unit regression coverage for failed deletion keeping the confirmation
+  open, and for the dialog not closing before the async confirmation settles.
 - Passed `python3 scripts/lint-spec-files.test.py` and
   `python3 scripts/lint-spec-files.py --all`.
 - Passed `git diff --check`.

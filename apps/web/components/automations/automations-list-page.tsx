@@ -61,9 +61,9 @@ export function AutomationsListPage({ workspaceId }: AutomationsListPageProps) {
       await remove(id);
       setAutomationToDelete(null);
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : t("automations:failedToDeleteAutomation"),
-      );
+      toast.error(t("automations:failedToDeleteAutomation"), {
+        description: error instanceof Error ? error.message : t("common:requestFailed"),
+      });
     } finally {
       setDeletingAutomationId(null);
     }
@@ -114,7 +114,9 @@ export function AutomationsListPage({ workspaceId }: AutomationsListPageProps) {
         automationName={automationToDelete?.name ?? ""}
         isDeleting={deletingAutomationId !== null}
         onOpenChange={(open) => {
-          if (!open && deletingAutomationId === null) setAutomationToDelete(null);
+          if (!open && deletingAutomationId !== automationToDelete?.id) {
+            setAutomationToDelete(null);
+          }
         }}
         onConfirm={handleConfirmDelete}
       />

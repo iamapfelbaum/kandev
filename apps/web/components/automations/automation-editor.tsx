@@ -516,7 +516,7 @@ export function AutomationEditor({ workspaceId, automationId }: AutomationEditor
       <AutomationDeleteControls
         saving={saving}
         isNew={isNew}
-        automationName={form.name}
+        automationName={savedForm.name}
         onDelete={handleRemove}
       />
       <CreatedWebhookDialogHost
