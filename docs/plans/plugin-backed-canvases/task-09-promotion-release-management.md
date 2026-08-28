@@ -1,7 +1,7 @@
 ---
 id: "09-promotion-release-management"
 title: "Canvas release governance"
-status: pending
+status: done
 wave: 9
 depends_on:
   - "08-agent-canvas-authoring"
@@ -91,4 +91,11 @@ cd apps && pnpm --filter @kandev/web test -- lib/api/domains/canvas-api
 
 ## Results
 
-Pending.
+Implemented human-only promotion and permission review, atomic metadata, scope,
+and grant changes, pending-release approval and rejection, release history,
+rollback, archive, restore, removal, retention, and authorization checks.
+
+Verification:
+
+- `go test ./internal/canvas/... ./internal/plugins/... ./internal/backendapp/... -count=1` — passed.
+- Focused canvas API tests — passed.

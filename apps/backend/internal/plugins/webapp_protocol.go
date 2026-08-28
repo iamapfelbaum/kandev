@@ -368,7 +368,89 @@ func (s *Service) validateWebAppBinding(ctx context.Context, binding webapp.Capa
 	if err := validateWebAppManifestBinding(release.ManifestJSON, binding); err != nil {
 		return webapp.ErrRuntimeTokenStale
 	}
+	if err := s.validateWebAppPermissions(ctx, binding, release.ManifestJSON); err != nil {
+		return webapp.ErrRuntimeTokenStale
+	}
 	return s.validateWebAppScope(webAppRequestContext(ctx, binding), binding)
+}
+
+func (s *Service) validateWebAppPermissions(ctx context.Context, binding webapp.CapabilityBinding, raw json.RawMessage) error {
+	var m manifest.Manifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return err
+	}
+	store := s.Instances()
+	if store == nil {
+		return errors.New("web app instance store is unavailable")
+	}
+	grants, err := store.ListGrants(ctx, binding.InstanceID)
+	if err != nil {
+		return err
+	}
+	for _, permission := range webAppDeclaredPermissions(m) {
+		if !webAppGrantCovers(permission, binding.ScopeKind, grants) {
+			return errors.New("web app permission grant is stale")
+		}
+	}
+	for _, origin := range binding.NetworkOrigins {
+		if !webAppOriginGranted(origin, binding.ScopeKind, grants) {
+			return errors.New("web app network grant is stale")
+		}
+	}
+	return nil
+}
+
+func webAppDeclaredPermissions(m manifest.Manifest) []string {
+	permissions := make([]string, 0, len(m.Capabilities.APIRead)+len(m.Capabilities.APIWrite)+len(m.Capabilities.Events)+1)
+	for _, resource := range m.Capabilities.APIRead {
+		permissions = append(permissions, "api_read:"+resource)
+	}
+	for _, resource := range m.Capabilities.APIWrite {
+		permissions = append(permissions, "api_write:"+resource)
+	}
+	for _, subject := range m.Capabilities.Events {
+		permissions = append(permissions, "events:"+subject)
+	}
+	if m.Capabilities.State {
+		permissions = append(permissions, "state")
+	}
+	if strings.TrimSpace(m.BaseURL) != "" {
+		permissions = append(permissions, "network:"+m.BaseURL)
+	}
+	return permissions
+}
+
+func webAppGrantCovers(permission, scope string, grants []instances.Grant) bool {
+	parts := strings.SplitN(permission, ":", 2)
+	kind, resource := parts[0], ""
+	if len(parts) == 2 {
+		resource = parts[1]
+	}
+	for _, grant := range grants {
+		if kind == "network" {
+			if grant.PermissionKind == kind && grant.NetworkOrigin == resource && webAppGrantScopeCovers(grant.ScopeCeiling, scope) {
+				return true
+			}
+			continue
+		}
+		if grant.PermissionKind == kind && grant.Resource == resource && webAppGrantScopeCovers(grant.ScopeCeiling, scope) {
+			return true
+		}
+	}
+	return false
+}
+
+func webAppOriginGranted(origin, scope string, grants []instances.Grant) bool {
+	for _, grant := range grants {
+		if grant.NetworkOrigin == origin && webAppGrantScopeCovers(grant.ScopeCeiling, scope) {
+			return true
+		}
+	}
+	return false
+}
+
+func webAppGrantScopeCovers(ceiling, scope string) bool {
+	return ceiling == instances.ScopeInstance || ceiling == scope
 }
 
 func validateWebAppManifestBinding(raw json.RawMessage, binding webapp.CapabilityBinding) error {

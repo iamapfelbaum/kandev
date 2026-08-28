@@ -1,7 +1,7 @@
 ---
 id: "11-workspace-mobile-surfaces"
 title: "Responsive workspace canvas management"
-status: pending
+status: done
 wave: 11
 depends_on:
   - "07-canvas-host-task-surfaces"
@@ -112,4 +112,12 @@ cd apps/web && pnpm e2e:run --project mobile-chrome tests/canvas/mobile-plugin-c
 
 ## Results
 
-Pending.
+Implemented workspace sidebar and settings management, promotion and release
+dialogs, mobile canvas navigation, focused phone routes, and the inset action
+drawer with safe-area and viewport containment rules.
+
+Verification:
+
+- Frontend lint, typecheck, i18n completeness, and new-code ratchet — passed.
+- Focused Vitest — 9 files and 59 tests passed.
+- Desktop and mobile canvas Playwright flows — passed.

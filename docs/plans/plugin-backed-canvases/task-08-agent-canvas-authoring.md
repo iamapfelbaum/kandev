@@ -1,7 +1,7 @@
 ---
 id: "08-agent-canvas-authoring"
 title: "Agent canvas authoring"
-status: pending
+status: done
 wave: 8
 depends_on:
   - "06-canvas-lifecycle"
@@ -100,4 +100,12 @@ cd apps/backend && go test ./internal/mcp/server/... ./internal/canvas/... ./int
 
 ## Results
 
-Pending.
+Implemented scoped Canvas MCP authoring and state tools, the separate
+canvas-authoring skill inventory, bounded authenticated agentctl tar transfer,
+trusted executor source resolution, publish admission and validation, and
+failure-safe pending/active release ownership.
+
+Verification:
+
+- `go test ./internal/mcp/server/... ./internal/canvas/... ./internal/agentctl/server/api/... ./internal/agent/runtime/... -count=1` — passed.
+- `make -C apps/backend lint` — passed.

@@ -1364,6 +1364,14 @@ func (s *Service) SetAttachmentReader(reader AttachmentReader) {
 	s.executor.SetAttachmentReader(reader)
 }
 
+// SetCanvasesEnabled applies the release gate to task MCP profiles before
+// agentctl receives them. Disabled profiles do not register canvas tools.
+func (s *Service) SetCanvasesEnabled(enabled bool) {
+	if s.executor != nil {
+		s.executor.SetCanvasesEnabled(enabled)
+	}
+}
+
 // SetOnPrimarySessionSet sets a callback on the executor for when the first session
 // of a task is marked primary. Used to publish a task.updated event so the frontend
 // receives the primary_session_id.

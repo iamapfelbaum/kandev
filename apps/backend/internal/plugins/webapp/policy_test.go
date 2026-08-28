@@ -36,3 +36,11 @@ func TestNormalizeNetworkOriginsRejectsNonHTTPSAndPaths(t *testing.T) {
 		t.Fatal("NormalizeNetworkOrigins(path) succeeded, want error")
 	}
 }
+
+func TestBuildContentSecurityPolicyRejectsWildcardFrameAncestors(t *testing.T) {
+	for _, origin := range []string{"http://localhost:*", "http://*:38429", "http://*"} {
+		if _, err := BuildContentSecurityPolicy(nil, []string{origin}); err == nil {
+			t.Fatalf("BuildContentSecurityPolicy(%q) succeeded, want wildcard rejection", origin)
+		}
+	}
+}

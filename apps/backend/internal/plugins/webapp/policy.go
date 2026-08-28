@@ -75,7 +75,7 @@ func normalizeFrameAncestors(origins []string) ([]string, error) {
 	for _, raw := range origins {
 		trimmed := strings.TrimSpace(raw)
 		parsed, err := url.Parse(trimmed)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		if err != nil || strings.Contains(trimmed, "*") || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 			return nil, fmt.Errorf("%w: frame ancestor %q", ErrInvalidNetworkOrigin, raw)
 		}
 		if parsed.Scheme != "http" && parsed.Scheme != "https" && parsed.Scheme != "tauri" {

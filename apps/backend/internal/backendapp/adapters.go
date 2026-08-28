@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -24,8 +25,98 @@ import (
 	"github.com/kandev/kandev/internal/task/models"
 	taskrepo "github.com/kandev/kandev/internal/task/repository/sqlite"
 	taskservice "github.com/kandev/kandev/internal/task/service"
+	"github.com/kandev/kandev/internal/worktree/copyfiles"
 	"github.com/kandev/kandev/pkg/api/v1"
 )
+
+// canvasAgentCtlClient is the small agentctl surface shared by canvas
+// authoring and browser-initiated canvas editing. The concrete runtime client
+// stays behind this adapter so higher-level services do not couple to the
+// lifecycle or agentctl implementation packages.
+type canvasAgentCtlClient interface {
+	CreateFile(context.Context, string, string) (*streams.FileCreateResponse, error)
+	StreamCanvasSource(context.Context, string) (io.ReadCloser, error)
+	CopyFiles(context.Context, string, []copyfiles.Entry) (canvasCopyFilesResult, error)
+}
+
+type canvasCopyFilesResult struct {
+	Warnings []string
+	Present  bool
+}
+
+type canvasEditAgentCtl interface {
+	CopyFiles(context.Context, string, []copyfiles.Entry) (canvasCopyFilesResult, error)
+}
+
+type canvasAgentExecution struct {
+	TaskID    string
+	SessionID string
+	client    canvasAgentCtlClient
+}
+
+func (e *canvasAgentExecution) GetAgentCtlClient() canvasAgentCtlClient {
+	if e == nil {
+		return nil
+	}
+	return e.client
+}
+
+type canvasExecutionResolver interface {
+	ResolveCanvasExecution(string) (*canvasAgentExecution, error)
+}
+
+type canvasEditExecutionResolver interface {
+	ResolveAgentCtl(string) (canvasEditAgentCtl, error)
+}
+
+// lifecycleCanvasExecutionResolver is the approved low-level adapter from
+// the lifecycle manager to the canvas services. Keep direct runtime imports
+// here, at the boundary, instead of spreading them through feature code.
+type lifecycleCanvasExecutionResolver struct {
+	manager *lifecycle.Manager
+}
+
+func (r lifecycleCanvasExecutionResolver) ResolveCanvasExecution(executionID string) (*canvasAgentExecution, error) {
+	if r.manager == nil || executionID == "" {
+		return nil, errors.New("agent execution is unavailable")
+	}
+	execution, ok := r.manager.GetExecution(executionID)
+	if !ok || execution == nil || execution.GetAgentCtlClient() == nil {
+		return nil, errors.New("agent execution is unavailable")
+	}
+	return &canvasAgentExecution{
+		TaskID: execution.TaskID, SessionID: execution.SessionID,
+		client: canvasAgentCtlAdapter{client: execution.GetAgentCtlClient()},
+	}, nil
+}
+
+func (r lifecycleCanvasExecutionResolver) ResolveAgentCtl(executionID string) (canvasEditAgentCtl, error) {
+	execution, err := r.ResolveCanvasExecution(executionID)
+	if err != nil {
+		return nil, err
+	}
+	return execution.GetAgentCtlClient(), nil
+}
+
+type canvasAgentCtlAdapter struct {
+	client *client.Client
+}
+
+func (a canvasAgentCtlAdapter) CreateFile(ctx context.Context, path, repo string) (*streams.FileCreateResponse, error) {
+	return a.client.CreateFile(ctx, path, repo)
+}
+
+func (a canvasAgentCtlAdapter) StreamCanvasSource(ctx context.Context, root string) (io.ReadCloser, error) {
+	return a.client.StreamCanvasSource(ctx, root)
+}
+
+func (a canvasAgentCtlAdapter) CopyFiles(ctx context.Context, repo string, entries []copyfiles.Entry) (canvasCopyFilesResult, error) {
+	response, err := a.client.CopyFiles(ctx, repo, entries)
+	if response == nil {
+		return canvasCopyFilesResult{}, err
+	}
+	return canvasCopyFilesResult{Warnings: append([]string(nil), response.Warnings...), Present: true}, err
+}
 
 // taskGetterRepo is the minimal interface needed by the scheduler adapter.
 type taskGetterRepo interface {

@@ -2,6 +2,8 @@
 // metadata, grants, storage reservations, and cleanup inventory. Native
 // installed plugins keep their existing filesystem records; this package is
 // the durable authority for isolated web-application instances.
+//
+//revive:disable:file-length-limit // Instance persistence, admission, release, and cleanup share one transaction boundary.
 package instances
 
 import (
@@ -41,6 +43,11 @@ const (
 	ValidationPendingPermission = "pending_permission"
 	ValidationInvalid           = "invalid"
 	ValidationUnavailable       = "plugin_release_unavailable"
+
+	CleanupPending   = "pending"
+	CleanupRunning   = "running"
+	CleanupRetryWait = "retry_wait"
+	CleanupCompleted = "completed"
 
 	MaxTaskInstances      = 10
 	MaxWorkspaceInstances = 100
@@ -281,12 +288,12 @@ func (s *Store) initSchema() error {
 	return nil
 }
 
-func (s *Store) Create(ctx context.Context, instance Instance) error {
-	if instance.ID == "" || instance.PluginID == "" || instance.SourceKind == "" || instance.Status == "" {
+// WithTransaction runs one instance lifecycle transaction while holding the
+// in-process admission lock. Callers use the Tx helpers below when a canvas
+// metadata mutation must commit with its plugin-instance mutation.
+func (s *Store) WithTransaction(ctx context.Context, fn func(*sqlx.Tx) error) error {
+	if s == nil || s.db == nil || fn == nil {
 		return ErrInvalidScope
-	}
-	if err := ValidateScope(instance.ScopeKind, ScopeIdentifiers{WorkspaceID: instance.WorkspaceID, TaskID: instance.TaskID, SessionID: instance.SessionID, RepositoryID: instance.RepositoryID}); err != nil {
-		return err
 	}
 	s.admission.Lock()
 	defer s.admission.Unlock()
@@ -295,6 +302,26 @@ func (s *Store) Create(ctx context.Context, instance Instance) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) Create(ctx context.Context, instance Instance) error {
+	return s.WithTransaction(ctx, func(tx *sqlx.Tx) error {
+		return s.CreateTx(ctx, tx, instance)
+	})
+}
+
+// CreateTx inserts an instance in an existing lifecycle transaction.
+func (s *Store) CreateTx(ctx context.Context, tx *sqlx.Tx, instance Instance) error {
+	if instance.ID == "" || instance.PluginID == "" || instance.SourceKind == "" || instance.Status == "" {
+		return ErrInvalidScope
+	}
+	if err := ValidateScope(instance.ScopeKind, ScopeIdentifiers{WorkspaceID: instance.WorkspaceID, TaskID: instance.TaskID, SessionID: instance.SessionID, RepositoryID: instance.RepositoryID}); err != nil {
+		return err
+	}
 	if err := s.checkAdmission(ctx, tx, instance.ScopeKind, instance.WorkspaceID, instance.TaskID); err != nil {
 		return err
 	}
@@ -306,19 +333,69 @@ func (s *Store) Create(ctx context.Context, instance Instance) error {
 	if updatedAt.IsZero() {
 		updatedAt = createdAt
 	}
-	_, err = tx.ExecContext(ctx, tx.Rebind(`
+	_, err := tx.ExecContext(ctx, tx.Rebind(`
 INSERT INTO plugin_instances (id, plugin_id, source_kind, scope_kind, workspace_id, task_id, session_id, repository_id, status, active_release_id, grant_generation, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`), instance.ID, instance.PluginID, instance.SourceKind, instance.ScopeKind, instance.WorkspaceID, instance.TaskID, instance.SessionID, instance.RepositoryID, instance.Status, instance.ActiveReleaseID, instance.GrantGeneration, createdAt.Format(time.RFC3339Nano), updatedAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
+}
+
+// ListBySource returns instances created by a lifecycle source. It is used by
+// startup reconciliation to remove instances left behind by a crash before
+// their canvas metadata transaction committed.
+func (s *Store) ListBySource(ctx context.Context, sourceKind string, includeRemoved bool) ([]Instance, error) {
+	if strings.TrimSpace(sourceKind) == "" {
+		return nil, ErrInvalidScope
+	}
+	query := `SELECT id, plugin_id, source_kind, scope_kind, workspace_id, task_id, session_id, repository_id, status, active_release_id, grant_generation, created_at, updated_at FROM plugin_instances WHERE source_kind = ?`
+	args := []any{sourceKind}
+	if !includeRemoved {
+		query += ` AND status <> ?`
+		args = append(args, StatusRemoved)
+	}
+	query += ` ORDER BY created_at, id`
+	rows, err := s.ro.QueryxContext(ctx, s.ro.Rebind(query), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var result []Instance
+	for rows.Next() {
+		var row instanceRow
+		if err := rows.StructScan(&row); err != nil {
+			return nil, err
+		}
+		instance, err := row.instance()
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, instance)
+	}
+	return result, rows.Err()
 }
 
 func (s *Store) checkAdmission(ctx context.Context, tx *sqlx.Tx, scopeKind, workspaceID, taskID string) error {
+	return s.checkAdmissionExcept(ctx, tx, scopeKind, workspaceID, taskID, "")
+}
+
+// checkAdmissionExcept applies the shared canvas count boundary while
+// optionally excluding an existing instance. Promotion changes the scope of
+// one existing instance, so its current row must not consume capacity in the
+// destination scope when the destination is otherwise full.
+func (s *Store) checkAdmissionExcept(ctx context.Context, tx *sqlx.Tx, scopeKind, workspaceID, taskID, excludeID string) error {
+	exclude := ""
+	argsSuffix := []any{}
+	if excludeID != "" {
+		exclude = " AND id <> ?"
+		argsSuffix = append(argsSuffix, excludeID)
+	}
 	var count int
 	if scopeKind == ScopeTask {
-		if err := tx.GetContext(ctx, &count, tx.Rebind(`SELECT COUNT(*) FROM plugin_instances WHERE task_id = ? AND status <> ?`), taskID, StatusRemoved); err != nil {
+		args := []any{taskID, StatusRemoved}
+		args = append(args, argsSuffix...)
+		if err := tx.GetContext(ctx, &count, tx.Rebind(`SELECT COUNT(*) FROM plugin_instances WHERE task_id = ? AND status <> ?`+exclude), args...); err != nil {
 			return err
 		}
 		if count >= MaxTaskInstances {
@@ -326,7 +403,9 @@ func (s *Store) checkAdmission(ctx context.Context, tx *sqlx.Tx, scopeKind, work
 		}
 	}
 	if workspaceID != "" {
-		if err := tx.GetContext(ctx, &count, tx.Rebind(`SELECT COUNT(*) FROM plugin_instances WHERE workspace_id = ? AND status <> ?`), workspaceID, StatusRemoved); err != nil {
+		args := []any{workspaceID, StatusRemoved}
+		args = append(args, argsSuffix...)
+		if err := tx.GetContext(ctx, &count, tx.Rebind(`SELECT COUNT(*) FROM plugin_instances WHERE workspace_id = ? AND status <> ?`+exclude), args...); err != nil {
 			return err
 		}
 		if count >= MaxWorkspaceInstances {
@@ -433,7 +512,56 @@ func (s *Store) SetScope(ctx context.Context, id, scopeKind string, ids ScopeIde
 	if err := ValidateScope(scopeKind, ids); err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, s.db.Rebind(`UPDATE plugin_instances SET scope_kind = ?, workspace_id = ?, task_id = ?, session_id = ?, repository_id = ?, grant_generation = grant_generation + 1, updated_at = ? WHERE id = ? AND status <> ?`), scopeKind, ids.WorkspaceID, ids.TaskID, ids.SessionID, ids.RepositoryID, time.Now().UTC().Format(time.RFC3339Nano), id, StatusRemoved)
+	s.admission.Lock()
+	defer s.admission.Unlock()
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var current instanceRow
+	if err := tx.GetContext(ctx, &current, tx.Rebind(`SELECT id, plugin_id, source_kind, scope_kind, workspace_id, task_id, session_id, repository_id, status, active_release_id, grant_generation, created_at, updated_at FROM plugin_instances WHERE id = ?`), id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if current.Status == StatusRemoved {
+		return ErrNotFound
+	}
+	if err := s.checkAdmissionExcept(ctx, tx, scopeKind, ids.WorkspaceID, ids.TaskID, id); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, tx.Rebind(`UPDATE plugin_instances SET scope_kind = ?, workspace_id = ?, task_id = ?, session_id = ?, repository_id = ?, grant_generation = grant_generation + 1, updated_at = ? WHERE id = ? AND status <> ?`), scopeKind, ids.WorkspaceID, ids.TaskID, ids.SessionID, ids.RepositoryID, time.Now().UTC().Format(time.RFC3339Nano), id, StatusRemoved)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit()
+}
+
+// SetPluginID binds a local instance to the package identity discovered by a
+// validated release. Local canvas instances start with a synthetic identity
+// because the package does not exist at create time; publishing replaces it
+// atomically before the release row is written.
+func (s *Store) SetPluginID(ctx context.Context, id, pluginID string) error {
+	return s.WithTransaction(ctx, func(tx *sqlx.Tx) error {
+		return s.SetPluginIDTx(ctx, tx, id, pluginID)
+	})
+}
+
+// SetPluginIDTx updates the package identity inside an existing lifecycle
+// transaction. Pending releases must not call this helper because changing the
+// identity also advances the runtime grant generation.
+func (s *Store) SetPluginIDTx(ctx context.Context, tx *sqlx.Tx, id, pluginID string) error {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(pluginID) == "" {
+		return ErrInvalidScope
+	}
+	result, err := tx.ExecContext(ctx, tx.Rebind(
+		`UPDATE plugin_instances SET plugin_id = ?, grant_generation = grant_generation + 1, updated_at = ? WHERE id = ? AND status <> ?`,
+	), pluginID, time.Now().UTC().Format(time.RFC3339Nano), id, StatusRemoved)
 	if err != nil {
 		return err
 	}
@@ -444,6 +572,8 @@ func (s *Store) SetScope(ctx context.Context, id, scopeKind string, ids ScopeIde
 }
 
 func (s *Store) SetActiveRelease(ctx context.Context, instanceID, releaseID string) error {
+	s.admission.Lock()
+	defer s.admission.Unlock()
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return err
@@ -462,7 +592,484 @@ func (s *Store) SetActiveRelease(ctx context.Context, instanceID, releaseID stri
 	return tx.Commit()
 }
 
+// ActivateRelease makes a valid release the active release and moves the
+// instance into the active state. It is the publish/governance operation for
+// local canvas instances; SetActiveRelease remains the narrow historical
+// helper used by migration and compatibility tests.
+func (s *Store) ActivateRelease(ctx context.Context, instanceID, releaseID string) error {
+	return s.WithTransaction(ctx, func(tx *sqlx.Tx) error {
+		return s.ActivateReleaseTx(ctx, tx, instanceID, releaseID)
+	})
+}
+
+// ActivateReleaseTx validates and activates a release inside an existing
+// lifecycle transaction. The caller can combine it with release insertion or
+// another owner-table mutation without exposing a half-published release.
+func (s *Store) ActivateReleaseTx(ctx context.Context, tx *sqlx.Tx, instanceID, releaseID string) error {
+	if strings.TrimSpace(instanceID) == "" || strings.TrimSpace(releaseID) == "" {
+		return ErrInvalidRelease
+	}
+	var current instanceRow
+	if err := tx.GetContext(ctx, &current, tx.Rebind(
+		`SELECT id, plugin_id, source_kind, scope_kind, workspace_id, task_id, session_id, repository_id, status, active_release_id, grant_generation, created_at, updated_at FROM plugin_instances WHERE id = ?`,
+	), instanceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if current.Status == StatusRemoved {
+		return ErrNotFound
+	}
+	var release struct {
+		DeclaredPermissionsJSON string `db:"declared_permissions_json"`
+		ValidationStatus        string `db:"validation_status"`
+	}
+	if err := tx.GetContext(ctx, &release, tx.Rebind(
+		`SELECT declared_permissions_json, validation_status FROM plugin_releases WHERE id = ? AND instance_id = ?`,
+	), releaseID, instanceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInvalidRelease
+		}
+		return err
+	}
+	if release.ValidationStatus != ValidationValid || !declaredGrantsFitInstance(ctx, tx, instanceID, current.ScopeKind, release.DeclaredPermissionsJSON) {
+		return ErrInvalidRelease
+	}
+	result, err := tx.ExecContext(ctx, tx.Rebind(
+		`UPDATE plugin_instances SET active_release_id = ?, status = ?, updated_at = ? WHERE id = ? AND status <> ?`,
+	), releaseID, StatusActive, time.Now().UTC().Format(time.RFC3339Nano), instanceID, StatusRemoved)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+type declaredPermissions struct {
+	Reads           []string `json:"reads"`
+	APIRead         []string `json:"api_read"`
+	Writes          []string `json:"writes"`
+	APIWrite        []string `json:"api_write"`
+	Events          []string `json:"events"`
+	SharedState     bool     `json:"shared_state"`
+	State           bool     `json:"state"`
+	ExternalOrigins []string `json:"external_origins"`
+}
+
+func (p declaredPermissions) readResources() []string {
+	return append(append([]string(nil), p.Reads...), p.APIRead...)
+}
+
+func (p declaredPermissions) writeResources() []string {
+	return append(append([]string(nil), p.Writes...), p.APIWrite...)
+}
+
+func parseDeclaredPermissions(declaredJSON string) (declaredPermissions, error) {
+	var declared declaredPermissions
+	if strings.TrimSpace(declaredJSON) == "" {
+		return declared, errors.New("declared permissions are empty")
+	}
+	trimmed := strings.TrimSpace(declaredJSON)
+	if strings.HasPrefix(trimmed, "[") {
+		var legacy []string
+		if err := json.Unmarshal([]byte(trimmed), &legacy); err != nil {
+			return declared, err
+		}
+		for _, permission := range legacy {
+			parts := strings.SplitN(permission, ":", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			switch parts[0] {
+			case "api_read":
+				declared.APIRead = append(declared.APIRead, parts[1])
+			case "api_write":
+				declared.APIWrite = append(declared.APIWrite, parts[1])
+			case "events":
+				declared.Events = append(declared.Events, parts[1])
+			case "state":
+				declared.State = true
+			case "network":
+				declared.ExternalOrigins = append(declared.ExternalOrigins, parts[1])
+			}
+		}
+		return declared, nil
+	}
+	if err := json.Unmarshal([]byte(trimmed), &declared); err != nil {
+		return declared, err
+	}
+	return declared, nil
+}
+
+func declaredPermissionRequirements(declaredJSON string) ([]Grant, error) {
+	declared, err := parseDeclaredPermissions(declaredJSON)
+	if err != nil {
+		return nil, err
+	}
+	requirements := make([]Grant, 0, len(declared.readResources())+len(declared.writeResources())+len(declared.Events)+len(declared.ExternalOrigins)+1)
+	for _, resource := range declared.readResources() {
+		requirements = append(requirements, Grant{PermissionKind: "api_read", Resource: resource})
+	}
+	for _, resource := range declared.writeResources() {
+		requirements = append(requirements, Grant{PermissionKind: "api_write", Resource: resource})
+	}
+	for _, subject := range declared.Events {
+		requirements = append(requirements, Grant{PermissionKind: "events", Resource: subject})
+	}
+	if declared.SharedState || declared.State {
+		requirements = append(requirements, Grant{PermissionKind: "state"})
+	}
+	for _, origin := range declared.ExternalOrigins {
+		requirements = append(requirements, Grant{PermissionKind: "network", NetworkOrigin: origin})
+	}
+	return requirements, nil
+}
+
+func declaredPermissionGrantFits(declaredJSON string, scope string, grant Grant) bool {
+	declared, err := parseDeclaredPermissions(declaredJSON)
+	if err != nil || !grantScopeFitsInstance(grant.ScopeCeiling, scope) {
+		return false
+	}
+	switch grant.PermissionKind {
+	case "api_read":
+		return containsString(declared.readResources(), grant.Resource)
+	case "api_write":
+		return containsString(declared.writeResources(), grant.Resource)
+	case "events":
+		return containsString(declared.Events, grant.Resource)
+	case "state":
+		return declared.SharedState || declared.State
+	case "network":
+		return grant.NetworkOrigin != "" && containsString(declared.ExternalOrigins, grant.NetworkOrigin)
+	default:
+		return false
+	}
+}
+
+func grantScopeFitsInstance(ceiling, scope string) bool {
+	if ceiling == ScopeInstance {
+		return true
+	}
+	return ceiling == scope
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func grantsCoverDeclaration(declaredJSON string, scope string, grants []Grant) bool {
+	requirements, err := declaredPermissionRequirements(declaredJSON)
+	if err != nil {
+		return false
+	}
+	for _, requirement := range requirements {
+		covered := false
+		for _, grant := range grants {
+			if grant.PermissionKind != requirement.PermissionKind || grant.Resource != requirement.Resource || grant.NetworkOrigin != requirement.NetworkOrigin {
+				continue
+			}
+			if grantScopeFitsInstance(grant.ScopeCeiling, scope) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			return false
+		}
+	}
+	return true
+}
+
+func declaredGrantsFitInstance(ctx context.Context, tx *sqlx.Tx, instanceID, scope, declaredJSON string) bool {
+	rows, err := tx.QueryxContext(ctx, tx.Rebind(
+		`SELECT permission_kind, resource, network_origin, scope_ceiling FROM plugin_instance_grants WHERE plugin_instance_id = ?`,
+	), instanceID)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = rows.Close() }()
+	grants := make([]Grant, 0)
+	for rows.Next() {
+		var row struct {
+			PermissionKind string `db:"permission_kind"`
+			Resource       string `db:"resource"`
+			NetworkOrigin  string `db:"network_origin"`
+			ScopeCeiling   string `db:"scope_ceiling"`
+		}
+		if err := rows.StructScan(&row); err != nil {
+			return false
+		}
+		grant := Grant{PermissionKind: row.PermissionKind, Resource: row.Resource, NetworkOrigin: row.NetworkOrigin, ScopeCeiling: row.ScopeCeiling}
+		grants = append(grants, grant)
+	}
+	if rows.Err() != nil {
+		return false
+	}
+	for _, grant := range grants {
+		// A release may remove a previously declared permission without a new
+		// approval. Runtime authorization intersects the release declaration
+		// with these grants, so only a grant that exceeds the instance scope
+		// must reject activation here.
+		if !grantScopeFitsInstance(grant.ScopeCeiling, scope) {
+			return false
+		}
+	}
+	return grantsCoverDeclaration(declaredJSON, scope, grants)
+}
+
+func validateGrantsForDeclaration(declaredJSON string, scope string, grants []Grant) error {
+	for _, grant := range grants {
+		if strings.TrimSpace(grant.PermissionKind) == "" || strings.TrimSpace(grant.ScopeCeiling) == "" ||
+			!declaredPermissionGrantFits(declaredJSON, scope, grant) {
+			return ErrInvalidScope
+		}
+	}
+	if !grantsCoverDeclaration(declaredJSON, scope, grants) {
+		return ErrInvalidScope
+	}
+	return nil
+}
+
+func loadInstanceGrants(ctx context.Context, tx *sqlx.Tx, instanceID string) ([]Grant, error) {
+	rows, err := tx.QueryxContext(ctx, tx.Rebind(
+		`SELECT permission_kind, resource, network_origin, scope_ceiling FROM plugin_instance_grants WHERE plugin_instance_id = ?`,
+	), instanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	grants := make([]Grant, 0)
+	for rows.Next() {
+		var row struct {
+			PermissionKind string `db:"permission_kind"`
+			Resource       string `db:"resource"`
+			NetworkOrigin  string `db:"network_origin"`
+			ScopeCeiling   string `db:"scope_ceiling"`
+		}
+		if err := rows.StructScan(&row); err != nil {
+			return nil, err
+		}
+		grants = append(grants, Grant{
+			PermissionKind: row.PermissionKind,
+			Resource:       row.Resource,
+			NetworkOrigin:  row.NetworkOrigin,
+			ScopeCeiling:   row.ScopeCeiling,
+		})
+	}
+	return grants, rows.Err()
+}
+
+func insertInstanceGrantsTx(ctx context.Context, tx *sqlx.Tx, instanceID, approvedBy string, grants []Grant) error {
+	now := time.Now().UTC()
+	for _, grant := range grants {
+		normalized, err := normalizeGrant(grant, approvedBy, now)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, tx.Rebind(
+			`INSERT INTO plugin_instance_grants (plugin_instance_id, permission_kind, resource, network_origin, scope_ceiling, approved_by, approved_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(plugin_instance_id, permission_kind, resource, network_origin) DO UPDATE SET scope_ceiling = excluded.scope_ceiling, approved_by = excluded.approved_by, approved_at = excluded.approved_at`,
+		), instanceID, normalized.PermissionKind, normalized.Resource, normalized.NetworkOrigin, normalized.ScopeCeiling, normalized.ApprovedBy, normalized.ApprovedAt.Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func normalizeGrant(grant Grant, approvedBy string, now time.Time) (Grant, error) {
+	if strings.TrimSpace(grant.PermissionKind) == "" || strings.TrimSpace(grant.ScopeCeiling) == "" {
+		return Grant{}, ErrInvalidScope
+	}
+	if grant.ApprovedBy == "" {
+		grant.ApprovedBy = approvedBy
+	}
+	if grant.ApprovedAt.IsZero() {
+		grant.ApprovedAt = now
+	}
+	return grant, nil
+}
+
+// SetReleaseValidation changes a release's validation state without changing
+// the active release. This is used for rejected and pending-permission
+// releases, where the currently running application must remain untouched.
+func (s *Store) SetReleaseValidation(ctx context.Context, releaseID, validationStatus, validationError string) error {
+	if strings.TrimSpace(releaseID) == "" || strings.TrimSpace(validationStatus) == "" {
+		return ErrInvalidRelease
+	}
+	result, err := s.db.ExecContext(ctx, s.db.Rebind(
+		`UPDATE plugin_releases SET validation_status = ?, validation_error = ? WHERE id = ?`,
+	), validationStatus, validationError, releaseID)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// PromoteScopeAndGrants atomically moves an instance to workspace scope and
+// records the grants approved by one human. The admission check excludes the
+// instance itself, so a full destination workspace can still accept its
+// promoted canvas only when it is already counted there (which is not the
+// normal task-to-workspace case).
+func (s *Store) PromoteScopeAndGrants(ctx context.Context, instanceID, workspaceID, approvedBy string, grants []Grant) error {
+	return s.WithTransaction(ctx, func(tx *sqlx.Tx) error {
+		return s.PromoteScopeAndGrantsTx(ctx, tx, instanceID, workspaceID, approvedBy, grants)
+	})
+}
+
+// PromoteScopeAndGrantsTx applies workspace scope and grants inside an
+// existing transaction. Canvas metadata promotion uses the same transaction
+// through this helper to keep the two authorities consistent after a crash.
+func (s *Store) PromoteScopeAndGrantsTx(ctx context.Context, tx *sqlx.Tx, instanceID, workspaceID, approvedBy string, grants []Grant) error {
+	if err := validatePromotionRequest(instanceID, workspaceID, approvedBy); err != nil {
+		return err
+	}
+	var current instanceRow
+	if err := tx.GetContext(ctx, &current, tx.Rebind(
+		`SELECT id, plugin_id, source_kind, scope_kind, workspace_id, task_id, session_id, repository_id, status, active_release_id, grant_generation, created_at, updated_at FROM plugin_instances WHERE id = ?`,
+	), instanceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if current.Status == StatusRemoved {
+		return ErrNotFound
+	}
+	if current.ActiveReleaseID == "" {
+		return ErrInvalidRelease
+	}
+	var declaredJSON string
+	if err := tx.GetContext(ctx, &declaredJSON, tx.Rebind(
+		`SELECT declared_permissions_json FROM plugin_releases WHERE id = ? AND instance_id = ?`,
+	), current.ActiveReleaseID, instanceID); err != nil {
+		return ErrInvalidRelease
+	}
+	if err := validateGrantsForDeclaration(declaredJSON, ScopeWorkspace, grants); err != nil {
+		return err
+	}
+	if err := s.checkAdmissionExcept(ctx, tx, ScopeWorkspace, workspaceID, "", instanceID); err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := tx.ExecContext(ctx, tx.Rebind(
+		`UPDATE plugin_instances SET scope_kind = ?, workspace_id = ?, task_id = '', session_id = '', repository_id = '', grant_generation = grant_generation + 1, updated_at = ? WHERE id = ? AND status <> ?`,
+	), ScopeWorkspace, workspaceID, now, instanceID, StatusRemoved)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	if err := insertInstanceGrantsTx(ctx, tx, instanceID, approvedBy, grants); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validatePromotionRequest(instanceID, workspaceID, approvedBy string) error {
+	if strings.TrimSpace(instanceID) == "" || strings.TrimSpace(workspaceID) == "" || strings.TrimSpace(approvedBy) == "" {
+		return ErrInvalidScope
+	}
+	return ValidateScope(ScopeWorkspace, ScopeIdentifiers{WorkspaceID: workspaceID})
+}
+
+// ApproveRelease atomically grants the requested permission rows, marks the
+// release valid, and activates it. It is intentionally separate from
+// SetReleaseValidation so a human approval cannot expose a release before
+// its grants and active pointer commit together.
+func (s *Store) ApproveRelease(ctx context.Context, instanceID, releaseID, approvedBy string, grants []Grant) error {
+	if strings.TrimSpace(instanceID) == "" || strings.TrimSpace(releaseID) == "" || strings.TrimSpace(approvedBy) == "" {
+		return ErrInvalidRelease
+	}
+	s.admission.Lock()
+	defer s.admission.Unlock()
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	release, err := loadPendingReleaseTx(ctx, tx, instanceID, releaseID)
+	if err != nil {
+		return err
+	}
+	if release.ValidationStatus != ValidationPendingPermission {
+		return ErrInvalidRelease
+	}
+	if err := validateGrantsForDeclaration(release.DeclaredPermissionsJSON, release.ScopeKind, grants); err != nil {
+		return err
+	}
+	existingGrants, err := loadInstanceGrants(ctx, tx, instanceID)
+	if err != nil {
+		return err
+	}
+	if !grantsCoverDeclaration(release.DeclaredPermissionsJSON, release.ScopeKind, append(existingGrants, grants...)) {
+		return ErrInvalidScope
+	}
+	if err := insertInstanceGrantsTx(ctx, tx, instanceID, approvedBy, grants); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, tx.Rebind(
+		`UPDATE plugin_releases SET validation_status = ?, validation_error = '' WHERE id = ? AND instance_id = ?`,
+	), ValidationValid, releaseID, instanceID); err != nil {
+		return err
+	}
+	if err := activateReleaseTx(ctx, tx, instanceID, releaseID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+type pendingReleaseRow struct {
+	DeclaredPermissionsJSON string `db:"declared_permissions_json"`
+	ValidationStatus        string `db:"validation_status"`
+	ScopeKind               string `db:"scope_kind"`
+}
+
+func loadPendingReleaseTx(ctx context.Context, tx *sqlx.Tx, instanceID, releaseID string) (pendingReleaseRow, error) {
+	var release pendingReleaseRow
+	if err := tx.GetContext(ctx, &release, tx.Rebind(
+		`SELECT r.declared_permissions_json, r.validation_status, i.scope_kind FROM plugin_releases r JOIN plugin_instances i ON i.id = r.instance_id WHERE r.id = ? AND r.instance_id = ?`,
+	), releaseID, instanceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return pendingReleaseRow{}, ErrNotFound
+		}
+		return pendingReleaseRow{}, err
+	}
+	return release, nil
+}
+
+func activateReleaseTx(ctx context.Context, tx *sqlx.Tx, instanceID, releaseID string) error {
+	result, err := tx.ExecContext(ctx, tx.Rebind(
+		`UPDATE plugin_instances SET active_release_id = ?, status = ?, grant_generation = grant_generation + 1, updated_at = ? WHERE id = ? AND status <> ?`,
+	), releaseID, StatusActive, time.Now().UTC().Format(time.RFC3339Nano), instanceID, StatusRemoved)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) CreateRelease(ctx context.Context, release Release) error {
+	return s.WithTransaction(ctx, func(tx *sqlx.Tx) error {
+		return s.CreateReleaseTx(ctx, tx, release)
+	})
+}
+
+// CreateReleaseTx inserts an immutable release row in an existing lifecycle
+// transaction.
+func (s *Store) CreateReleaseTx(ctx context.Context, tx *sqlx.Tx, release Release) error {
 	if release.ID == "" {
 		release.ID = uuid.NewString()
 	}
@@ -479,8 +1086,148 @@ func (s *Store) CreateRelease(ctx context.Context, release Release) error {
 	if created.IsZero() {
 		created = time.Now().UTC()
 	}
-	_, err := s.db.ExecContext(ctx, s.db.Rebind(`INSERT INTO plugin_releases (id, plugin_id, instance_id, package_digest, source_kind, source_actor_kind, source_user_id, source_task_id, source_session_id, manifest_json, declared_permissions_json, artifact_path, artifact_bytes, protocol_version, validation_status, validation_error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`), release.ID, release.PluginID, release.InstanceID, release.PackageDigest, release.SourceKind, release.SourceActorKind, release.SourceUserID, release.SourceTaskID, release.SourceSessionID, string(release.ManifestJSON), string(release.DeclaredPermissionsJSON), release.ArtifactPath, release.ArtifactBytes, release.ProtocolVersion, release.ValidationStatus, release.ValidationError, created.Format(time.RFC3339Nano))
+	_, err := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO plugin_releases (id, plugin_id, instance_id, package_digest, source_kind, source_actor_kind, source_user_id, source_task_id, source_session_id, manifest_json, declared_permissions_json, artifact_path, artifact_bytes, protocol_version, validation_status, validation_error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`), release.ID, release.PluginID, release.InstanceID, release.PackageDigest, release.SourceKind, release.SourceActorKind, release.SourceUserID, release.SourceTaskID, release.SourceSessionID, string(release.ManifestJSON), string(release.DeclaredPermissionsJSON), release.ArtifactPath, release.ArtifactBytes, release.ProtocolVersion, release.ValidationStatus, release.ValidationError, created.Format(time.RFC3339Nano))
 	return err
+}
+
+// PruneReleases keeps the active release, the newest non-active valid release,
+// and the newest pending release for one instance. Superseded release rows are
+// deleted only after cleanup ownership is recorded in the same transaction.
+// The active release pointer is never changed by pruning.
+func (s *Store) PruneReleases(ctx context.Context, instanceID string) error {
+	if strings.TrimSpace(instanceID) == "" {
+		return ErrInvalidRelease
+	}
+	s.admission.Lock()
+	defer s.admission.Unlock()
+
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	current, err := loadReleaseRetentionInstance(ctx, tx, instanceID)
+	if err != nil {
+		return err
+	}
+	releases, err := listReleaseRetentionRows(ctx, tx, instanceID)
+	if err != nil {
+		return err
+	}
+	retainedPaths, removed := classifyReleaseRetention(current.ActiveReleaseID, releases)
+	if err := scheduleRemovedReleaseCleanup(ctx, tx, instanceID, current.WorkspaceID, retainedPaths, removed); err != nil {
+		return err
+	}
+	if err := deleteRemovedReleases(ctx, tx, instanceID, removed); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+type releaseRetentionInstance struct {
+	WorkspaceID     string `db:"workspace_id"`
+	Status          string `db:"status"`
+	ActiveReleaseID string `db:"active_release_id"`
+}
+
+type releaseRetentionRow struct {
+	ID               string `db:"id"`
+	ArtifactPath     string `db:"artifact_path"`
+	ValidationStatus string `db:"validation_status"`
+}
+
+func loadReleaseRetentionInstance(ctx context.Context, tx *sqlx.Tx, instanceID string) (releaseRetentionInstance, error) {
+	var current releaseRetentionInstance
+	if err := tx.GetContext(ctx, &current, tx.Rebind(
+		`SELECT workspace_id, status, active_release_id FROM plugin_instances WHERE id = ?`,
+	), instanceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return releaseRetentionInstance{}, ErrNotFound
+		}
+		return releaseRetentionInstance{}, err
+	}
+	if current.Status == StatusRemoved {
+		return releaseRetentionInstance{}, ErrNotFound
+	}
+	return current, nil
+}
+
+func listReleaseRetentionRows(ctx context.Context, tx *sqlx.Tx, instanceID string) ([]releaseRetentionRow, error) {
+	rows, err := tx.QueryxContext(ctx, tx.Rebind(
+		`SELECT id, artifact_path, validation_status FROM plugin_releases WHERE instance_id = ? ORDER BY created_at DESC, id DESC`,
+	), instanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var releases []releaseRetentionRow
+	for rows.Next() {
+		var release releaseRetentionRow
+		if err := rows.StructScan(&release); err != nil {
+			return nil, err
+		}
+		releases = append(releases, release)
+	}
+	return releases, rows.Err()
+}
+
+func classifyReleaseRetention(activeReleaseID string, releases []releaseRetentionRow) (map[string]bool, []releaseRetentionRow) {
+	retainedPaths := make(map[string]bool, 3)
+	removed := make([]releaseRetentionRow, 0, len(releases))
+	priorKept, pendingKept := false, false
+	for _, release := range releases {
+		if release.ID == activeReleaseID {
+			retainedPaths[release.ArtifactPath] = true
+			pendingKept = pendingKept || release.ValidationStatus == ValidationPendingPermission
+			continue
+		}
+		keep := false
+		switch release.ValidationStatus {
+		case ValidationValid:
+			keep, priorKept = !priorKept, true
+		case ValidationPendingPermission:
+			keep, pendingKept = !pendingKept, true
+		}
+		if keep {
+			retainedPaths[release.ArtifactPath] = true
+			continue
+		}
+		removed = append(removed, release)
+	}
+	return retainedPaths, removed
+}
+
+func scheduleRemovedReleaseCleanup(ctx context.Context, tx *sqlx.Tx, instanceID, workspaceID string, retainedPaths map[string]bool, removed []releaseRetentionRow) error {
+	scheduled := make(map[string]bool, len(removed))
+	for _, release := range removed {
+		if retainedPaths[release.ArtifactPath] || scheduled[release.ArtifactPath] {
+			continue
+		}
+		referenced, err := artifactReferencedByOtherInstanceTx(ctx, tx, instanceID, release.ArtifactPath)
+		if err != nil {
+			return err
+		}
+		if referenced {
+			continue
+		}
+		if err := enqueueCleanupJobTx(ctx, tx, workspaceID, instanceID, release.ArtifactPath); err != nil {
+			return err
+		}
+		scheduled[release.ArtifactPath] = true
+	}
+	return nil
+}
+
+func deleteRemovedReleases(ctx context.Context, tx *sqlx.Tx, instanceID string, removed []releaseRetentionRow) error {
+	for _, release := range removed {
+		if _, err := tx.ExecContext(ctx, tx.Rebind(
+			`DELETE FROM plugin_releases WHERE id = ? AND instance_id = ?`,
+		), release.ID, instanceID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) ListReleases(ctx context.Context, instanceID string) ([]Release, error) {
@@ -623,7 +1370,7 @@ func (s *Store) ListGrants(ctx context.Context, instanceID string) ([]Grant, err
 }
 
 func (s *Store) ReserveBytes(ctx context.Context, workspaceID string, bytes, workspaceLimit, installationLimit int64) (Reservation, error) {
-	if bytes <= 0 || workspaceLimit <= 0 || installationLimit <= 0 {
+	if strings.TrimSpace(workspaceID) == "" || bytes <= 0 || workspaceLimit <= 0 || installationLimit <= 0 {
 		return Reservation{}, ErrInvalidRelease
 	}
 	s.admission.Lock()
@@ -642,10 +1389,23 @@ func (s *Store) ReserveBytes(ctx context.Context, workspaceID string, bytes, wor
 	if err := tx.GetContext(ctx, &installationBytes, tx.Rebind(`SELECT COALESCE(SUM(bytes), 0) FROM plugin_storage_reservations WHERE status = ?`), "reserved"); err != nil {
 		return Reservation{}, err
 	}
-	if workspaceBytes > workspaceLimit-bytes {
+	var workspaceReleaseBytes, installationReleaseBytes int64
+	if err := tx.GetContext(ctx, &workspaceReleaseBytes, tx.Rebind(
+		`SELECT COALESCE(SUM(artifact_bytes), 0) FROM (SELECT r.artifact_path, MAX(r.artifact_bytes) AS artifact_bytes FROM plugin_releases r JOIN plugin_instances i ON i.id = r.instance_id WHERE i.workspace_id = ? GROUP BY r.artifact_path) AS retained_artifacts`,
+	), workspaceID); err != nil {
+		return Reservation{}, err
+	}
+	if err := tx.GetContext(ctx, &installationReleaseBytes, tx.Rebind(
+		`SELECT COALESCE(SUM(artifact_bytes), 0) FROM (SELECT r.artifact_path, MAX(r.artifact_bytes) AS artifact_bytes FROM plugin_releases r JOIN plugin_instances i ON i.id = r.instance_id GROUP BY r.artifact_path) AS retained_artifacts`,
+	)); err != nil {
+		return Reservation{}, err
+	}
+	workspaceBytes += workspaceReleaseBytes
+	installationBytes += installationReleaseBytes
+	if exceedsStorageLimit(workspaceBytes, bytes, workspaceLimit) {
 		return Reservation{}, ErrWorkspaceStorageLimit
 	}
-	if installationBytes > installationLimit-bytes {
+	if exceedsStorageLimit(installationBytes, bytes, installationLimit) {
 		return Reservation{}, ErrInstallationStorageLimit
 	}
 	reservation := Reservation{ID: uuid.NewString(), WorkspaceID: workspaceID, Bytes: bytes, Status: "reserved", CreatedAt: now, ExpiresAt: now.Add(30 * time.Minute)}
@@ -659,7 +1419,13 @@ func (s *Store) ReserveBytes(ctx context.Context, workspaceID string, bytes, wor
 	return reservation, nil
 }
 
+func exceedsStorageLimit(current, requested, limit int64) bool {
+	return current > limit || requested > limit-current
+}
+
 func (s *Store) ReleaseBytes(ctx context.Context, id string) error {
+	s.admission.Lock()
+	defer s.admission.Unlock()
 	result, err := s.db.ExecContext(ctx, s.db.Rebind(`UPDATE plugin_storage_reservations SET status = ? WHERE id = ? AND status = ?`), "released", id, "reserved")
 	if err != nil {
 		return err
@@ -668,6 +1434,83 @@ func (s *Store) ReleaseBytes(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ResizeReservation adjusts an active reservation after validation has
+// measured the exact artifact size. The admission check remains in the same
+// transaction, so a concurrent publish cannot consume the released headroom.
+func (s *Store) ResizeReservation(ctx context.Context, id string, bytes, workspaceLimit, installationLimit int64) error {
+	if strings.TrimSpace(id) == "" || bytes <= 0 || workspaceLimit <= 0 || installationLimit <= 0 {
+		return ErrInvalidRelease
+	}
+	s.admission.Lock()
+	defer s.admission.Unlock()
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	reservation, err := loadReservationTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if reservation.Status != "reserved" {
+		return ErrNotFound
+	}
+	now := time.Now().UTC()
+	_, _ = tx.ExecContext(ctx, tx.Rebind(`DELETE FROM plugin_storage_reservations WHERE status = ? AND expires_at < ?`), "reserved", now.Format(time.RFC3339Nano))
+	workspaceBytes, installationBytes, workspaceReleaseBytes, installationReleaseBytes, err := reservationUsageTx(ctx, tx, id, reservation.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	if exceedsStorageLimit(workspaceBytes+workspaceReleaseBytes, bytes, workspaceLimit) {
+		return ErrWorkspaceStorageLimit
+	}
+	if exceedsStorageLimit(installationBytes+installationReleaseBytes, bytes, installationLimit) {
+		return ErrInstallationStorageLimit
+	}
+	_, err = tx.ExecContext(ctx, tx.Rebind(`UPDATE plugin_storage_reservations SET bytes = ? WHERE id = ? AND status = ?`), bytes, id, "reserved")
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func loadReservationTx(ctx context.Context, tx *sqlx.Tx, id string) (Reservation, error) {
+	var reservation Reservation
+	var createdAt, expiresAt string
+	if err := tx.QueryRowxContext(ctx, tx.Rebind(`
+		SELECT id, workspace_id, bytes, status, created_at, expires_at
+		FROM plugin_storage_reservations WHERE id = ?
+	`), id).Scan(&reservation.ID, &reservation.WorkspaceID, &reservation.Bytes, &reservation.Status, &createdAt, &expiresAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Reservation{}, ErrNotFound
+		}
+		return Reservation{}, err
+	}
+	return reservation, nil
+}
+
+func reservationUsageTx(ctx context.Context, tx *sqlx.Tx, reservationID, workspaceID string) (int64, int64, int64, int64, error) {
+	var workspaceBytes, installationBytes int64
+	if err := tx.GetContext(ctx, &workspaceBytes, tx.Rebind(`SELECT COALESCE(SUM(bytes), 0) FROM plugin_storage_reservations WHERE workspace_id = ? AND status = ? AND id <> ?`), workspaceID, "reserved", reservationID); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	if err := tx.GetContext(ctx, &installationBytes, tx.Rebind(`SELECT COALESCE(SUM(bytes), 0) FROM plugin_storage_reservations WHERE status = ? AND id <> ?`), "reserved", reservationID); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	var workspaceReleaseBytes, installationReleaseBytes int64
+	if err := tx.GetContext(ctx, &workspaceReleaseBytes, tx.Rebind(
+		`SELECT COALESCE(SUM(artifact_bytes), 0) FROM (SELECT r.artifact_path, MAX(r.artifact_bytes) AS artifact_bytes FROM plugin_releases r JOIN plugin_instances i ON i.id = r.instance_id WHERE i.workspace_id = ? GROUP BY r.artifact_path) AS retained_artifacts`,
+	), workspaceID); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	if err := tx.GetContext(ctx, &installationReleaseBytes, tx.Rebind(
+		`SELECT COALESCE(SUM(artifact_bytes), 0) FROM (SELECT r.artifact_path, MAX(r.artifact_bytes) AS artifact_bytes FROM plugin_releases r JOIN plugin_instances i ON i.id = r.instance_id GROUP BY r.artifact_path) AS retained_artifacts`,
+	)); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	return workspaceBytes, installationBytes, workspaceReleaseBytes, installationReleaseBytes, nil
 }
 
 func (s *Store) AddCleanupJob(ctx context.Context, job CleanupJob) error {
@@ -685,18 +1528,240 @@ func (s *Store) AddCleanupJob(ctx context.Context, job CleanupJob) error {
 		job.NextAttemptAt = now
 	}
 	if job.Status == "" {
-		job.Status = "pending"
+		job.Status = CleanupPending
+	}
+	if job.Status != CleanupPending && job.Status != CleanupRetryWait {
+		return ErrInvalidRelease
 	}
 	_, err := s.db.ExecContext(ctx, s.db.Rebind(`INSERT INTO plugin_artifact_cleanup_jobs (id, workspace_id, instance_id, artifact_path, status, attempts, last_error, created_at, next_attempt_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`), job.ID, job.WorkspaceID, job.InstanceID, job.ArtifactPath, job.Status, job.Attempts, job.LastError, job.CreatedAt.Format(time.RFC3339Nano), job.NextAttemptAt.Format(time.RFC3339Nano))
 	return err
 }
 
-func (s *Store) RemoveInstance(ctx context.Context, id string) error {
+// ClaimCleanupJob atomically claims the oldest due cleanup job. The store
+// mutex protects callers in one process; the transaction and conditional
+// update keep a second backend process from claiming the same row.
+func (s *Store) ClaimCleanupJob(ctx context.Context, now time.Time) (CleanupJob, bool, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	s.admission.Lock()
+	defer s.admission.Unlock()
 	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return CleanupJob{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var row cleanupRow
+	err = tx.GetContext(ctx, &row, tx.Rebind(`
+		SELECT id, workspace_id, instance_id, artifact_path, status, attempts,
+		       last_error, created_at, next_attempt_at
+		FROM plugin_artifact_cleanup_jobs
+		WHERE status IN (?, ?) AND next_attempt_at <= ?
+		ORDER BY next_attempt_at, created_at, id
+		LIMIT 1
+	`), CleanupPending, CleanupRetryWait, now.UTC().Format(time.RFC3339Nano))
+	if errors.Is(err, sql.ErrNoRows) {
+		return CleanupJob{}, false, nil
+	}
+	if err != nil {
+		return CleanupJob{}, false, err
+	}
+	result, err := tx.ExecContext(ctx, tx.Rebind(`
+		UPDATE plugin_artifact_cleanup_jobs
+		SET status = ?, attempts = attempts + 1
+		WHERE id = ? AND status IN (?, ?) AND next_attempt_at <= ?
+	`), CleanupRunning, row.ID, CleanupPending, CleanupRetryWait, now.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return CleanupJob{}, false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return CleanupJob{}, false, err
+	}
+	if affected == 0 {
+		return CleanupJob{}, false, nil
+	}
+	row.Status = CleanupRunning
+	row.Attempts++
+	job, err := row.cleanupJob()
+	if err != nil {
+		return CleanupJob{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return CleanupJob{}, false, err
+	}
+	return job, true, nil
+}
+
+// RetryCleanupJob returns a claimed job to the due queue with durable
+// diagnostic text. The next-attempt timestamp is supplied by the worker so
+// retry backoff remains explicit and testable.
+func (s *Store) RetryCleanupJob(ctx context.Context, id string, nextAttemptAt time.Time, cause error) error {
+	if strings.TrimSpace(id) == "" {
+		return ErrNotFound
+	}
+	if nextAttemptAt.IsZero() {
+		nextAttemptAt = time.Now().UTC()
+	}
+	lastError := ""
+	if cause != nil {
+		lastError = cause.Error()
+		if len(lastError) > 4096 {
+			lastError = lastError[:4096]
+		}
+	}
+	result, err := s.db.ExecContext(ctx, s.db.Rebind(`
+		UPDATE plugin_artifact_cleanup_jobs
+		SET status = ?, last_error = ?, next_attempt_at = ?
+		WHERE id = ? AND status = ?
+	`), CleanupRetryWait, lastError, nextAttemptAt.UTC().Format(time.RFC3339Nano), id, CleanupRunning)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// CompleteCleanupJob marks a claimed artifact cleanup as finished. Completion
+// is idempotent so a worker can safely repeat its final acknowledgement.
+func (s *Store) CompleteCleanupJob(ctx context.Context, id string) error {
+	if strings.TrimSpace(id) == "" {
+		return ErrNotFound
+	}
+	result, err := s.db.ExecContext(ctx, s.db.Rebind(`
+		UPDATE plugin_artifact_cleanup_jobs
+		SET status = ?
+		WHERE id = ? AND status = ?
+	`), CleanupCompleted, id, CleanupRunning)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected > 0 {
+		return nil
+	}
+	var status string
+	if err := s.ro.GetContext(ctx, &status, s.ro.Rebind(`SELECT status FROM plugin_artifact_cleanup_jobs WHERE id = ?`), id); errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	} else if status == CleanupCompleted {
+		return nil
+	}
+	return ErrNotFound
+}
+
+// ListCleanupJobs returns the durable cleanup inventory in stable order.
+func (s *Store) ListCleanupJobs(ctx context.Context) ([]CleanupJob, error) {
+	rows, err := s.ro.QueryxContext(ctx, s.ro.Rebind(`
+		SELECT id, workspace_id, instance_id, artifact_path, status, attempts,
+		       last_error, created_at, next_attempt_at
+		FROM plugin_artifact_cleanup_jobs
+		ORDER BY created_at, id
+	`))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	jobs := make([]CleanupJob, 0)
+	for rows.Next() {
+		var row cleanupRow
+		if err := rows.StructScan(&row); err != nil {
+			return nil, err
+		}
+		job, err := row.cleanupJob()
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, rows.Err()
+}
+
+// RequeueRunningCleanupJobs makes jobs recoverable after a process restart.
+func (s *Store) RequeueRunningCleanupJobs(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, s.db.Rebind(`
+		UPDATE plugin_artifact_cleanup_jobs
+		SET status = ?, next_attempt_at = ?
+		WHERE status = ?
+	`), CleanupPending, time.Now().UTC().Format(time.RFC3339Nano), CleanupRunning)
+	return err
+}
+
+type cleanupRow struct {
+	ID            string `db:"id"`
+	WorkspaceID   string `db:"workspace_id"`
+	InstanceID    string `db:"instance_id"`
+	ArtifactPath  string `db:"artifact_path"`
+	Status        string `db:"status"`
+	Attempts      int    `db:"attempts"`
+	LastError     string `db:"last_error"`
+	CreatedAt     string `db:"created_at"`
+	NextAttemptAt string `db:"next_attempt_at"`
+}
+
+func (r cleanupRow) cleanupJob() (CleanupJob, error) {
+	createdAt, err := time.Parse(time.RFC3339Nano, r.CreatedAt)
+	if err != nil {
+		return CleanupJob{}, fmt.Errorf("parse cleanup created_at: %w", err)
+	}
+	nextAttemptAt, err := time.Parse(time.RFC3339Nano, r.NextAttemptAt)
+	if err != nil {
+		return CleanupJob{}, fmt.Errorf("parse cleanup next_attempt_at: %w", err)
+	}
+	return CleanupJob{
+		ID:            r.ID,
+		WorkspaceID:   r.WorkspaceID,
+		InstanceID:    r.InstanceID,
+		ArtifactPath:  r.ArtifactPath,
+		Status:        r.Status,
+		Attempts:      r.Attempts,
+		LastError:     r.LastError,
+		CreatedAt:     createdAt,
+		NextAttemptAt: nextAttemptAt,
+	}, nil
+}
+
+func enqueueCleanupJobTx(ctx context.Context, tx *sqlx.Tx, workspaceID, instanceID, artifactPath string) error {
+	if strings.TrimSpace(artifactPath) == "" {
+		return ErrInvalidRelease
+	}
+	var existing int
+	if err := tx.GetContext(ctx, &existing, tx.Rebind(
+		`SELECT COUNT(*) FROM plugin_artifact_cleanup_jobs WHERE instance_id = ? AND artifact_path = ? AND status <> ?`,
+	), instanceID, artifactPath, "completed"); err != nil {
+		return err
+	}
+	if existing > 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	_, err := tx.ExecContext(ctx, tx.Rebind(
+		`INSERT INTO plugin_artifact_cleanup_jobs (id, workspace_id, instance_id, artifact_path, status, attempts, last_error, created_at, next_attempt_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	), uuid.NewString(), workspaceID, instanceID, artifactPath, "pending", 0, "", now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+	return err
+}
+
+func artifactReferencedByOtherInstanceTx(ctx context.Context, tx *sqlx.Tx, instanceID, artifactPath string) (bool, error) {
+	var references int
+	if err := tx.GetContext(ctx, &references, tx.Rebind(
+		`SELECT COUNT(*) FROM plugin_releases WHERE artifact_path = ? AND instance_id <> ?`,
+	), artifactPath, instanceID); err != nil {
+		return false, err
+	}
+	return references > 0, nil
+}
+
+func (s *Store) RemoveInstance(ctx context.Context, id string) error {
+	return s.WithTransaction(ctx, func(tx *sqlx.Tx) error {
+		return s.RemoveInstanceTx(ctx, tx, id)
+	})
+}
+
+// RemoveInstanceTx records cleanup ownership, removes release and grant rows,
+// and marks an instance removed in an existing lifecycle transaction.
+func (s *Store) RemoveInstanceTx(ctx context.Context, tx *sqlx.Tx, id string) error {
 	var workspaceID string
 	if err := tx.GetContext(ctx, &workspaceID, tx.Rebind(`SELECT workspace_id FROM plugin_instances WHERE id = ?`), id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -721,8 +1786,14 @@ func (s *Store) RemoveInstance(ctx context.Context, id string) error {
 		return err
 	}
 	for _, artifactPath := range paths {
-		job := CleanupJob{ID: uuid.NewString(), WorkspaceID: workspaceID, InstanceID: id, ArtifactPath: artifactPath, Status: "pending", CreatedAt: time.Now().UTC(), NextAttemptAt: time.Now().UTC()}
-		if _, err := tx.ExecContext(ctx, tx.Rebind(`INSERT INTO plugin_artifact_cleanup_jobs (id, workspace_id, instance_id, artifact_path, status, attempts, last_error, created_at, next_attempt_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`), job.ID, job.WorkspaceID, job.InstanceID, job.ArtifactPath, job.Status, 0, "", job.CreatedAt.Format(time.RFC3339Nano), job.NextAttemptAt.Format(time.RFC3339Nano)); err != nil {
+		referenced, err := artifactReferencedByOtherInstanceTx(ctx, tx, id, artifactPath)
+		if err != nil {
+			return err
+		}
+		if referenced {
+			continue
+		}
+		if err := enqueueCleanupJobTx(ctx, tx, workspaceID, id, artifactPath); err != nil {
 			return err
 		}
 	}
@@ -733,10 +1804,13 @@ func (s *Store) RemoveInstance(ctx context.Context, id string) error {
 	if affected, _ := result.RowsAffected(); affected == 0 {
 		return ErrNotFound
 	}
+	if _, err := tx.ExecContext(ctx, tx.Rebind(`DELETE FROM plugin_releases WHERE instance_id = ?`), id); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, tx.Rebind(`DELETE FROM plugin_instance_grants WHERE plugin_instance_id = ?`), id); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 type instanceRow struct {

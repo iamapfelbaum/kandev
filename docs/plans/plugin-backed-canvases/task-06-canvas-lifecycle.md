@@ -1,7 +1,7 @@
 ---
 id: "06-canvas-lifecycle"
 title: "Canvas lifecycle"
-status: pending
+status: done
 wave: 6
 depends_on:
   - "05-live-event-transport"
@@ -96,4 +96,14 @@ cd apps/backend && go test ./internal/canvas/... ./internal/gateway/websocket/..
 
 ## Results
 
-Pending.
+Implemented the canvas metadata repository and service, atomic task/workspace
+admission, atomic canvas and plugin-instance lifecycle transactions, archive
+and restore, task and workspace cleanup, lifecycle event projection, startup
+orphan reconciliation, and durable artifact-cleanup jobs.
+
+Verification:
+
+- `go test ./internal/plugins/instances ./internal/canvas ./internal/backendapp ./internal/plugins/webapp ./internal/mcp/server -count=1` — passed.
+- The feature-related packages in `go test ./... -count=1` passed. The full
+  repository run still reports the known home-config discovery and launcher
+  restart-fixture failures caused by this VM's `/root/.kandev/config.yaml`.

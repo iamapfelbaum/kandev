@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -268,6 +269,19 @@ func (s *InstanceStore) Delete(ctx context.Context, instanceID, key string, expe
 		return 0, err
 	}
 	return current.Revision, nil
+}
+
+// DeleteInstance removes all state owned by an isolated web-app instance.
+// Instance deletion is a lifecycle boundary, so unlike Delete it removes the
+// complete key/tombstone set instead of retaining per-key revisions.
+func (s *InstanceStore) DeleteInstance(ctx context.Context, instanceID string) error {
+	if strings.TrimSpace(instanceID) == "" {
+		return errors.New("plugin instance state: instance id is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.ExecContext(ctx, s.db.Rebind(`DELETE FROM plugin_instance_state WHERE plugin_instance_id = ?`), instanceID)
+	return err
 }
 
 func selectInstanceState(

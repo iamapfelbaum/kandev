@@ -19,6 +19,7 @@ import { resolvePluginIcon } from "@/lib/plugins/icons";
 import { usePluginRegistry } from "@/lib/plugins/registry";
 import { isTreeSettingsMenuMode, type SettingsMenuMode } from "@/lib/settings/settings-menu-mode";
 import {
+  appendWorkspaceCanvasNodes,
   buildAgentsBranch,
   buildBranchRoot,
   buildExecutorsBranch,
@@ -58,6 +59,7 @@ export function useSettingsMenuBranches(mode: SettingsMenuMode): SettingsMenuBra
   const agents = useAppStore((s) => s.settingsAgents.items);
   const executors = useAppStore((s) => s.executors.items);
   const activeWorkspaceId = useAppStore((s) => s.workspaces.activeId);
+  const canvasesEnabled = useAppStore((s) => s.features?.canvases ?? false);
   // The Agents page groups detected agents ahead of configured-but-undetected
   // ones; the branch lists the same agents and so must land them in the same
   // order. Before the scan hydrates this is empty and the saved order stands.
@@ -94,12 +96,15 @@ export function useSettingsMenuBranches(mode: SettingsMenuMode): SettingsMenuBra
     return {
       ...branchEntry(
         WORKSPACES_SETTINGS_HREF,
-        buildWorkspacesBranch(
-          workspaces,
-          activeWorkspaceId,
-          visibleIntegrationsFor,
-          integrationContributions,
-          pluginIntegrationEnabled,
+        appendWorkspaceCanvasNodes(
+          buildWorkspacesBranch(
+            workspaces,
+            activeWorkspaceId,
+            visibleIntegrationsFor,
+            integrationContributions,
+            pluginIntegrationEnabled,
+          ),
+          canvasesEnabled,
         ),
       ),
       ...branchEntry(
@@ -112,6 +117,7 @@ export function useSettingsMenuBranches(mode: SettingsMenuMode): SettingsMenuBra
     isTree,
     workspaces,
     activeWorkspaceId,
+    canvasesEnabled,
     agents,
     executors,
     agentDiscovery,

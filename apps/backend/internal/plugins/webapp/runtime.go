@@ -8,9 +8,11 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Runtime serves only validated immutable release files through capability
@@ -28,6 +30,8 @@ type Runtime struct {
 // the handler must apply its own response-size and method limits.
 type ProtocolHandler func(http.ResponseWriter, *http.Request, string, CapabilityBinding, string)
 
+const runtimeCapabilityPath = "/api/v1/plugins/web-apps/runtime/"
+
 func NewRuntime(tokens *TokenManager, artifacts *ArtifactStore, validate BindingValidator, frameAncestors []string) *Runtime {
 	if tokens == nil {
 		tokens = NewTokenManager(nil)
@@ -38,6 +42,29 @@ func NewRuntime(tokens *TokenManager, artifacts *ArtifactStore, validate Binding
 	return &Runtime{tokens: tokens, artifacts: artifacts, validate: validate, frameAncestors: append([]string(nil), frameAncestors...)}
 }
 
+// FrameAncestorsForConfig returns the exact browser and desktop shell origins
+// that may embed a capability runtime. Ports are explicit because a wildcard
+// frame-src/frame-ancestors rule would let an unrelated local service frame a
+// canvas. webOrigin is the launcher-provided SPA origin when it differs from
+// the backend origin.
+func FrameAncestorsForConfig(backendPort, webPort int, webOrigin string) ([]string, error) {
+	if backendPort < 1 || backendPort > 65535 || webPort < 1 || webPort > 65535 {
+		return nil, fmt.Errorf("webapp: invalid runtime origin port")
+	}
+	origins := []string{
+		fmt.Sprintf("http://localhost:%d", backendPort),
+		fmt.Sprintf("http://127.0.0.1:%d", backendPort),
+		fmt.Sprintf("http://localhost:%d", webPort),
+		fmt.Sprintf("http://127.0.0.1:%d", webPort),
+		"tauri://localhost",
+		"http://tauri.localhost",
+	}
+	if strings.TrimSpace(webOrigin) != "" {
+		origins = append(origins, webOrigin)
+	}
+	return normalizeFrameAncestors(origins)
+}
+
 // SetProtocolHandler attaches the versioned browser data protocol. It is
 // configured during startup before the HTTP server accepts requests.
 func (rt *Runtime) SetProtocolHandler(handler ProtocolHandler) {
@@ -45,6 +72,21 @@ func (rt *Runtime) SetProtocolHandler(handler ProtocolHandler) {
 		return
 	}
 	rt.protocol = handler
+}
+
+// IssueCapabilityPath creates a short-lived capability URL path. The caller
+// supplies the already-authorized binding; the path is relative so the host
+// can use it from either the browser SPA or the desktop shell without trusting
+// an inbound Host header.
+func (rt *Runtime) IssueCapabilityPath(binding CapabilityBinding, ttl time.Duration) (string, error) {
+	if rt == nil || rt.tokens == nil {
+		return "", ErrRuntimeTokenInvalid
+	}
+	token, err := rt.tokens.Issue(binding, ttl)
+	if err != nil {
+		return "", err
+	}
+	return runtimeCapabilityPath + url.PathEscape(token) + "/", nil
 }
 
 // Serve handles one capability URL request. path is the path below the

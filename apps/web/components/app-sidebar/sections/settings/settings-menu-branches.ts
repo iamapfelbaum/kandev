@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import { IconLayoutGrid } from "@tabler/icons-react";
 
 import { getExecutorIcon } from "@/lib/executor-icons";
 import { AGENTS_SETTINGS_HREF } from "@/lib/settings-discovery/catalog/agents";
@@ -10,6 +11,7 @@ import {
   WORKSPACE_SETTINGS_TABS,
   workspaceSettingsHref,
 } from "@/lib/settings/workspace-settings-tabs";
+import { workspaceCanvasSettingsHref } from "@/lib/api/domains/canvas-api";
 import { orderWorkspacesForDisplay } from "@/lib/settings/workspace-display-order";
 
 /**
@@ -214,6 +216,26 @@ export function buildWorkspacesBranch(
 ): SettingsMenuNode[] {
   return orderWorkspacesForDisplay(workspaces, activeWorkspaceId).map((workspace) => {
     const integrationsHref = workspaceSettingsHref(workspace.id, "integrations");
+    const workspaceTabs = WORKSPACE_SETTINGS_TABS.filter(({ tab }) => tab !== "overview").map(
+      ({ tab, labelKey, icon }) => ({
+        key: `workspace:${workspace.id}:${tab}`,
+        href: workspaceSettingsHref(workspace.id, tab),
+        label: { key: labelKey },
+        icon,
+        ...(tab === "integrations"
+          ? {
+              children: integrationNodes(
+                workspace.id,
+                integrationsHref,
+                visibleIntegrationSlugsFor?.(workspace.id),
+                integrationContributions,
+                pluginIntegrationEnabled,
+              ),
+              integrationsWorkspaceId: workspace.id,
+            }
+          : {}),
+      }),
+    );
     return {
       key: `workspace:${workspace.id}`,
       href: workspaceSettingsHref(workspace.id, "overview"),
@@ -225,26 +247,30 @@ export function buildWorkspacesBranch(
       // Same badge the workspace list and the workspace switcher show, so the
       // menu does not leave you guessing which one commands land in.
       ...(workspace.id === activeWorkspaceId ? { badge: "active" as const } : {}),
-      children: WORKSPACE_SETTINGS_TABS.filter(({ tab }) => tab !== "overview").map(
-        ({ tab, labelKey, icon }) => ({
-          key: `workspace:${workspace.id}:${tab}`,
-          href: workspaceSettingsHref(workspace.id, tab),
-          label: { key: labelKey },
-          icon,
-          ...(tab === "integrations"
-            ? {
-                children: integrationNodes(
-                  workspace.id,
-                  integrationsHref,
-                  visibleIntegrationSlugsFor?.(workspace.id),
-                  integrationContributions,
-                  pluginIntegrationEnabled,
-                ),
-                integrationsWorkspaceId: workspace.id,
-              }
-            : {}),
-        }),
-      ),
+      children: [...workspaceTabs],
+    };
+  });
+}
+
+export function appendWorkspaceCanvasNodes(
+  branches: SettingsMenuNode[],
+  canvasesEnabled: boolean,
+): SettingsMenuNode[] {
+  if (!canvasesEnabled) return branches;
+  return branches.map((branch) => {
+    if (!branch.key.startsWith("workspace:")) return branch;
+    const workspaceId = branch.key.slice("workspace:".length);
+    return {
+      ...branch,
+      children: [
+        ...(branch.children ?? []),
+        {
+          key: `${branch.key}:canvases`,
+          href: workspaceCanvasSettingsHref(workspaceId),
+          label: { key: "canvases:canvases" },
+          icon: IconLayoutGrid,
+        },
+      ],
     };
   });
 }

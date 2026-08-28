@@ -1,7 +1,7 @@
 ---
 id: "07-canvas-host-task-surfaces"
 title: "Task canvas host surfaces"
-status: pending
+status: done
 wave: 7
 depends_on:
   - "03-isolated-browser-runtime"
@@ -101,4 +101,11 @@ cd apps/web && pnpm run typecheck && pnpm run lint
 
 ## Results
 
-Pending.
+Implemented the shared canvas host, direct route, task Dockview panel, host
+recovery states, lifecycle action slots, and localized task surfaces.
+
+Verification:
+
+- Focused Vitest — 9 files and 59 tests passed.
+- `pnpm run lint` and `pnpm run typecheck` — passed.
+- Desktop Playwright canvas flow — passed.

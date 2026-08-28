@@ -48,6 +48,7 @@
     "plugins-marketplace",
     "plugins-authoring",
     "plugins-manifest",
+    "canvases",
     "---Office---",
     "office-provider-routing",
     "---Protocol Reference---",

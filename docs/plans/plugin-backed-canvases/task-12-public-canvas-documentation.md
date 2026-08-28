@@ -1,7 +1,7 @@
 ---
 id: "12-public-canvas-documentation"
 title: "Public canvas documentation"
-status: pending
+status: done
 wave: 12
 depends_on:
   - "11-workspace-mobile-surfaces"
@@ -99,4 +99,14 @@ python3 scripts/check-links.py docs/public
 
 ## Results
 
-Pending.
+Published the canvas authoring guide and updated plugin manifest, security,
+configuration, operations, feature-status, and public navigation content.
+
+Verification:
+
+- `node --test scripts/validate-public-docs.test.mjs` — 61 tests passed.
+- `node scripts/validate-public-docs.mjs` — 42 published pages validated,
+  including local and heading links.
+- `python3 scripts/lint-spec-files.py --all` — passed.
+- The referenced `scripts/check-links.py` helper is not present in current
+  `main`; the public-doc validator provides the available link check.

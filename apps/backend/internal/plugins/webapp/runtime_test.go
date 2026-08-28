@@ -11,6 +11,15 @@ import (
 	"testing"
 )
 
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func TestRuntimeServesEntryWithSecurityHeadersAndNoCookies(t *testing.T) {
 	archive := canvasArchive(t, map[string]string{
 		"manifest.yaml": staticManifestYAML,
@@ -80,5 +89,29 @@ func TestRuntimeRejectsStaleCapabilityBeforeReadingArtifact(t *testing.T) {
 	}
 	if body, _ := io.ReadAll(response.Body); len(body) == 0 {
 		t.Fatal("stale token response has no safe error")
+	}
+}
+
+func TestFrameAncestorsForConfigIncludesExactBrowserLauncherOrigins(t *testing.T) {
+	origins, err := FrameAncestorsForConfig(48123, 48124, "http://localhost:48124")
+	if err != nil {
+		t.Fatalf("FrameAncestorsForConfig() unexpected error: %v", err)
+	}
+	want := []string{
+		"http://localhost:48123",
+		"http://127.0.0.1:48123",
+		"http://localhost:48124",
+		"tauri://localhost",
+		"http://tauri.localhost",
+	}
+	for _, origin := range want {
+		if !containsString(origins, origin) {
+			t.Fatalf("frame origins = %v, missing %q", origins, origin)
+		}
+	}
+	for _, origin := range origins {
+		if strings.Contains(origin, "*") {
+			t.Fatalf("frame origin %q contains a wildcard", origin)
+		}
 	}
 }

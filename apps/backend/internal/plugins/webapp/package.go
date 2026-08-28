@@ -122,7 +122,46 @@ func ValidatePackageWithLimits(r io.Reader, limits Limits) (*Package, error) {
 	}, nil
 }
 
+// ValidateTarPackageWithLimits validates an uncompressed tar stream such as
+// the bounded source stream returned by an agentctl workspace. Directory
+// entries are accepted and discarded because tar walkers commonly emit them;
+// the extracted release still contains only regular files.
+func ValidateTarPackageWithLimits(r io.Reader, limits Limits, wireBytes int64) (*Package, error) {
+	limits = withDefaultLimits(limits)
+	if r == nil {
+		return nil, errors.New("webapp: package reader is nil")
+	}
+	if wireBytes < 0 || wireBytes > limits.MaxCompressedBytes {
+		return nil, ErrCompressedTooLarge
+	}
+	files, expanded, err := readArchiveFilesWithOptions(r, limits, true)
+	if err != nil {
+		return nil, err
+	}
+	m, err := parseStaticManifest(files, limits)
+	if err != nil {
+		return nil, err
+	}
+	return &Package{
+		Manifest:        m,
+		Files:           files,
+		Digest:          digestFiles(files),
+		CompressedBytes: wireBytes,
+		ExpandedBytes:   expanded,
+	}, nil
+}
+
+// ValidateTarPackage validates an uncompressed tar source stream using the
+// normal static web-app limits.
+func ValidateTarPackage(r io.Reader, wireBytes int64) (*Package, error) {
+	return ValidateTarPackageWithLimits(r, DefaultLimits(), wireBytes)
+}
+
 func readArchiveFiles(reader io.Reader, limits Limits) (map[string][]byte, int64, error) {
+	return readArchiveFilesWithOptions(reader, limits, false)
+}
+
+func readArchiveFilesWithOptions(reader io.Reader, limits Limits, allowDirectories bool) (map[string][]byte, int64, error) {
 	files := make(map[string][]byte)
 	var expanded int64
 	tarReader := tar.NewReader(reader)
@@ -134,22 +173,43 @@ func readArchiveFiles(reader io.Reader, limits Limits) (map[string][]byte, int64
 		if err != nil {
 			return nil, 0, fmt.Errorf("webapp: read archive: %w", err)
 		}
-		name, data, nextExpanded, err := readArchiveEntry(tarReader, header, files, expanded, limits)
+		name, data, nextExpanded, err := readArchiveEntry(tarReader, header, files, expanded, limits, allowDirectories)
 		if err != nil {
 			return nil, 0, err
+		}
+		if name == "" {
+			continue
 		}
 		files[name] = data
 		expanded = nextExpanded
 	}
 }
 
-func readArchiveEntry(reader *tar.Reader, header *tar.Header, files map[string][]byte, expanded int64, limits Limits) (string, []byte, int64, error) {
-	if len(files) >= limits.MaxFiles {
+func readArchiveEntry(reader *tar.Reader, header *tar.Header, files map[string][]byte, expanded int64, limits Limits, allowDirectories bool) (string, []byte, int64, error) {
+	if len(files) >= limits.MaxFiles && (!allowDirectories || header.Typeflag != tar.TypeDir) {
 		return "", nil, 0, ErrTooManyFiles
+	}
+	if allowDirectories && header.Typeflag == tar.TypeDir {
+		return readArchiveDirectory(header, files, expanded, limits)
 	}
 	if header.Typeflag != tar.TypeReg && header.Typeflag != 0 {
 		return "", nil, 0, fmt.Errorf("%w: %s", ErrUnsafeEntry, header.Name)
 	}
+	return readArchiveRegularFile(reader, header, files, expanded, limits)
+}
+
+func readArchiveDirectory(header *tar.Header, files map[string][]byte, expanded int64, limits Limits) (string, []byte, int64, error) {
+	name, err := normalizePackagePath(strings.TrimSuffix(header.Name, "/"), limits.MaxPathBytes)
+	if err != nil {
+		return "", nil, 0, err
+	}
+	if _, exists := files[name]; exists {
+		return "", nil, 0, fmt.Errorf("%w: %s", ErrDuplicatePath, name)
+	}
+	return "", nil, expanded, nil
+}
+
+func readArchiveRegularFile(reader *tar.Reader, header *tar.Header, files map[string][]byte, expanded int64, limits Limits) (string, []byte, int64, error) {
 	name, err := normalizePackagePath(header.Name, limits.MaxPathBytes)
 	if err != nil {
 		return "", nil, 0, err
@@ -191,7 +251,7 @@ func parseStaticManifest(files map[string][]byte, limits Limits) (*manifest.Mani
 	if err := m.Validate(); err != nil {
 		return nil, fmt.Errorf("webapp: invalid manifest: %w", err)
 	}
-	if !m.HasWebApps() {
+	if !m.IsStaticWebAppOnly() {
 		return nil, ErrNotStaticWebApp
 	}
 	for _, app := range m.UI.WebApps {
@@ -351,42 +411,59 @@ func (s *ArtifactStore) Open(artifact Artifact, name string) (*os.File, error) {
 // Remove deletes one validated release directory. Lifecycle services call
 // this only after the corresponding database cleanup job commits.
 func (s *ArtifactStore) Remove(artifact Artifact) error {
-	root := s.Path(artifact)
-	if root == "" {
+	return s.RemoveRelativePath(artifact.RelativePath)
+}
+
+// RemoveRelativePath removes one release directory identified by durable
+// cleanup metadata. Only descendants of releases/ are accepted, so a corrupt
+// cleanup row cannot remove the artifact-store root or another store.
+func (s *ArtifactStore) RemoveRelativePath(relativePath string) error {
+	clean, err := normalizePackagePath(relativePath, MaxPathBytes*4)
+	if s == nil || err != nil || clean == "releases" || !strings.HasPrefix(clean, "releases/") {
 		return fmt.Errorf("%w: artifact path", ErrUnsafePath)
 	}
-	return os.RemoveAll(root)
+	return os.RemoveAll(filepath.Join(s.root, filepath.FromSlash(clean)))
 }
 
 // Put extracts a validated package into a temporary directory and atomically
 // renames it into the digest-addressed release directory.
 func (s *ArtifactStore) Put(pkg *Package) (Artifact, error) {
+	artifact, _, err := s.PutWithCreated(pkg)
+	return artifact, err
+}
+
+// PutWithCreated is the lifecycle-aware form of Put. created is true only
+// when this call installed the digest directory; callers can then remove that
+// directory if the following database commit fails without deleting an
+// artifact another release already owns.
+func (s *ArtifactStore) PutWithCreated(pkg *Package) (Artifact, bool, error) {
 	artifact, target, err := s.artifactTarget(pkg)
 	if err != nil {
-		return Artifact{}, err
+		return Artifact{}, false, err
 	}
 	exists, err := artifactExists(target)
 	if err != nil {
-		return Artifact{}, err
+		return Artifact{}, false, err
 	}
 	if exists {
-		return artifact, nil
+		return artifact, false, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-		return Artifact{}, fmt.Errorf("webapp: create release parent: %w", err)
+		return Artifact{}, false, fmt.Errorf("webapp: create release parent: %w", err)
 	}
 	tmp, err := os.MkdirTemp(filepath.Dir(target), ".release-")
 	if err != nil {
-		return Artifact{}, fmt.Errorf("webapp: create release temp: %w", err)
+		return Artifact{}, false, fmt.Errorf("webapp: create release temp: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 	if err := writeArtifactFiles(tmp, pkg.Files); err != nil {
-		return Artifact{}, err
+		return Artifact{}, false, err
 	}
-	if err := commitArtifact(tmp, target); err != nil {
-		return Artifact{}, err
+	created, err := commitArtifact(tmp, target)
+	if err != nil {
+		return Artifact{}, false, err
 	}
-	return artifact, nil
+	return artifact, created, nil
 }
 
 func (s *ArtifactStore) artifactTarget(pkg *Package) (Artifact, string, error) {
@@ -435,14 +512,14 @@ func writeArtifactFiles(root string, files map[string][]byte) error {
 	return nil
 }
 
-func commitArtifact(tmp, target string) error {
+func commitArtifact(tmp, target string) (bool, error) {
 	if err := os.Rename(tmp, target); err != nil {
 		if exists, statErr := artifactExists(target); statErr == nil && exists {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("webapp: commit release artifact: %w", err)
+		return false, fmt.Errorf("webapp: commit release artifact: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 // Reconcile verifies the digest-addressed artifact without removing it. A
@@ -481,6 +558,36 @@ func (s *ArtifactStore) Reconcile(artifact Artifact) (Artifact, error) {
 	artifact.Available = true
 	artifact.Reason = ""
 	return artifact, nil
+}
+
+// ReadFiles verifies and reads an immutable release artifact for a trusted
+// backend caller. The returned paths are package-relative and the method does
+// not expose the artifact root to the caller, so callers can transfer the
+// bytes to a remote agent workspace without assuming that workspace is on the
+// backend host.
+func (s *ArtifactStore) ReadFiles(artifact Artifact) (map[string][]byte, error) {
+	reconciled, err := s.Reconcile(artifact)
+	if err != nil {
+		return nil, err
+	}
+	if !reconciled.Available {
+		if reconciled.Reason == "" {
+			reconciled.Reason = "unavailable"
+		}
+		return nil, fmt.Errorf("%w: %s", ErrArtifactUnavailable, reconciled.Reason)
+	}
+	root := s.Path(reconciled)
+	if root == "" {
+		return nil, fmt.Errorf("%w: unsafe artifact path", ErrArtifactUnavailable)
+	}
+	files, err := readArtifactFiles(root)
+	if err != nil {
+		return nil, fmt.Errorf("%w: read artifact: %v", ErrArtifactUnavailable, err)
+	}
+	if digestFiles(files) != reconciled.Digest {
+		return nil, fmt.Errorf("%w: digest mismatch", ErrArtifactUnavailable)
+	}
+	return files, nil
 }
 
 func readArtifactFiles(root string) (map[string][]byte, error) {

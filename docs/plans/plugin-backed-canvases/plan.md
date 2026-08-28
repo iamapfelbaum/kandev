@@ -1,6 +1,6 @@
 ---
 created: 2026-08-26
-status: in_progress
+status: done
 requirements:
   - REQ-PLUGINS-ISOLATED-WEB-APPS-001
   - REQ-PLUGINS-ISOLATED-WEB-APPS-002
@@ -237,13 +237,13 @@ mapping clear.
 - [x] [Task 03: Isolated browser runtime](task-03-isolated-browser-runtime.md)
 - [x] [Task 04: Browser application protocol](task-04-browser-data-state.md)
 - [x] [Task 05: Live event transport](task-05-live-event-transport.md)
-- [ ] [Task 06: Canvas lifecycle](task-06-canvas-lifecycle.md)
-- [ ] [Task 07: Task canvas host surfaces](task-07-canvas-host-task-surfaces.md)
-- [ ] [Task 08: Agent canvas authoring](task-08-agent-canvas-authoring.md)
-- [ ] [Task 09: Canvas release governance](task-09-promotion-release-management.md)
-- [ ] [Task 10: Quick Chat canvas editing](task-10-quick-chat-canvas-editing.md)
-- [ ] [Task 11: Responsive workspace canvas management](task-11-workspace-mobile-surfaces.md)
-- [ ] [Task 12: Public canvas documentation](task-12-public-canvas-documentation.md)
+- [x] [Task 06: Canvas lifecycle](task-06-canvas-lifecycle.md)
+- [x] [Task 07: Task canvas host surfaces](task-07-canvas-host-task-surfaces.md)
+- [x] [Task 08: Agent canvas authoring](task-08-agent-canvas-authoring.md)
+- [x] [Task 09: Canvas release governance](task-09-promotion-release-management.md)
+- [x] [Task 10: Quick Chat canvas editing](task-10-quick-chat-canvas-editing.md)
+- [x] [Task 11: Responsive workspace canvas management](task-11-workspace-mobile-surfaces.md)
+- [x] [Task 12: Public canvas documentation](task-12-public-canvas-documentation.md)
 
 Execution is sequential in the primary conversation. Plan waves describe
 dependency order only. They do not authorize implementation subagents.
@@ -278,6 +278,37 @@ dependency order only. They do not authorize implementation subagents.
   resync, stream admission, cancellation, and event-bus projection are
   implemented. The web-app event package has 23 focused tests, and the exact
   plugin verification passes.
+- Task 06 passed on 2026-08-28. Canvas scope, release identity, atomic count
+  admission, atomic lifecycle transactions, archive and restore, task cleanup,
+  workspace cleanup, startup orphan reconciliation, durable artifact-cleanup
+  jobs, and unavailable-release reconciliation are covered by the focused
+  canvas, backendapp, plugin, and instance-store tests.
+- Task 07 passed on 2026-08-28. The shared canvas host, direct route, task
+  Dockview panel, recovery states, lifecycle controls, and localized UI are
+  covered by 9 frontend files with 59 passing tests, frontend lint and
+  typecheck, and the desktop canvas Playwright flow.
+- Task 08 passed on 2026-08-28. Scoped Canvas MCP tools, the separate
+  authoring-skill inventory, bounded authenticated agentctl source transfer,
+  publish admission, and executor runtime wiring pass the exact MCP, canvas,
+  agentctl, and agent-runtime verification.
+- Task 09 passed on 2026-08-28. Human-only promotion, permission review,
+  atomic grants and scope changes, pending-release approval, rollback, archive,
+  restore, removal, retention, and authorization pass the canvas, plugin, and
+  backendapp verification plus the canvas API tests.
+- Task 10 passed on 2026-08-28. Quick Chat edit sessions carry a trusted canvas
+  target, materialize immutable source without changing the active release,
+  and preserve retained releases. Backend edit tests and the focused frontend
+  host/API tests pass.
+- Task 11 passed on 2026-08-28. Workspace navigation, settings management,
+  mobile focused routes, inset action drawer, safe-area sizing, and no-Dockview
+  phone behavior pass frontend lint, typecheck, i18n checks, 59 focused tests,
+  and both desktop and mobile canvas Playwright flows.
+- Task 12 passed on 2026-08-28. Public canvas, plugin, security,
+  configuration, operations, and feature-status documentation is published.
+  Public-doc tests pass (61 tests and 42 published pages), full specification
+  lint passes, and the repository's public-doc validator checks local and
+  heading links. The work order references `scripts/check-links.py`, which is
+  not present in current `main`.
 
 ## Risks
 

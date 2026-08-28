@@ -78,4 +78,24 @@ func TestInstanceStoreDeleteRetainsTombstoneRevision(t *testing.T) {
 	}
 }
 
+func TestInstanceStoreDeleteInstanceRemovesAllState(t *testing.T) {
+	store := newInstanceStoreTest(t)
+	ctx := context.Background()
+	for _, key := range []string{"one", "two"} {
+		if _, err := store.Set(ctx, "instance-1", key, json.RawMessage(`{"ok":true}`), ptrInt64(0), "agent"); err != nil {
+			t.Fatalf("Set(%s): %v", key, err)
+		}
+	}
+	if err := store.DeleteInstance(ctx, "instance-1"); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+	entries, err := store.List(ctx, "instance-1")
+	if err != nil {
+		t.Fatalf("List after DeleteInstance: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("state after DeleteInstance = %+v, want empty", entries)
+	}
+}
+
 func ptrInt64(value int64) *int64 { return &value }

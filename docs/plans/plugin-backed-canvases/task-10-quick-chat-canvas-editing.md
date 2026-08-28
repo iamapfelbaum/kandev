@@ -1,7 +1,7 @@
 ---
 id: "10-quick-chat-canvas-editing"
 title: "Quick Chat canvas editing"
-status: pending
+status: done
 wave: 10
 depends_on:
   - "09-promotion-release-management"
@@ -83,4 +83,10 @@ cd apps && pnpm --filter @kandev/web test -- hooks components/canvas
 
 ## Results
 
-Pending.
+Implemented trusted Quick Chat canvas edit-session materialization, target
+metadata, source transfer, publish restriction, and retained-release safety.
+
+Verification:
+
+- Backend canvas, backendapp, MCP, and task integration tests — passed.
+- Focused frontend canvas host, lifecycle, hook, and API tests — passed.

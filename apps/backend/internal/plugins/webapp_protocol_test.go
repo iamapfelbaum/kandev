@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
@@ -87,6 +89,48 @@ func TestWebAppProtocolStateUsesRevisionPreconditions(t *testing.T) {
 	svc.handleWebAppProtocol(read, httptest.NewRequest(http.MethodGet, "/", nil), "", binding, "v1/state/preferences")
 	if read.Code != http.StatusOK || !containsBody(read, `"enabled":true`) {
 		t.Fatalf("state read = %d %s", read.Code, read.Body.String())
+	}
+}
+
+func TestValidateWebAppPermissionsRequiresCurrentScopedGrants(t *testing.T) {
+	connection, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "protocol-grants.db"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	connection.SetMaxOpenConns(1)
+	pool := db.NewPool(sqlx.NewDb(connection, "sqlite3"), sqlx.NewDb(connection, "sqlite3"))
+	t.Cleanup(func() { _ = pool.Close() })
+	store, err := instances.NewStore(pool)
+	if err != nil {
+		t.Fatalf("new instance store: %v", err)
+	}
+	if err := store.Create(context.Background(), instances.Instance{
+		ID: "instance-1", PluginID: "plugin-1", SourceKind: instances.SourceLocalCanvas,
+		ScopeKind: instances.ScopeTask, WorkspaceID: "workspace-1", TaskID: "task-1",
+		Status: instances.StatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	svc := &Service{}
+	svc.SetWebAppStorage(store, nil)
+	binding := webapp.CapabilityBinding{
+		InstanceID: "instance-1", ScopeKind: instances.ScopeTask,
+		Permissions: []string{"api_read:tasks", "state"},
+	}
+	raw := json.RawMessage(`{"capabilities":{"api_read":["tasks"],"state":true}}`)
+	if err := svc.validateWebAppPermissions(context.Background(), binding, raw); err == nil {
+		t.Fatal("permission validation succeeded without grants")
+	}
+	for _, grant := range []instances.Grant{
+		{InstanceID: "instance-1", PermissionKind: "api_read", Resource: "tasks", ScopeCeiling: instances.ScopeTask, ApprovedBy: "user-1"},
+		{InstanceID: "instance-1", PermissionKind: "state", ScopeCeiling: instances.ScopeTask, ApprovedBy: "user-1"},
+	} {
+		if err := store.AddGrant(context.Background(), grant); err != nil {
+			t.Fatalf("add grant %s: %v", grant.PermissionKind, err)
+		}
+	}
+	if err := svc.validateWebAppPermissions(context.Background(), binding, raw); err != nil {
+		t.Fatalf("permission validation with grants: %v", err)
 	}
 }
 

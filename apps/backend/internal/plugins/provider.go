@@ -10,6 +10,7 @@ import (
 
 	"github.com/kandev/kandev/internal/common/config"
 	"github.com/kandev/kandev/internal/common/logger"
+	"github.com/kandev/kandev/internal/common/ports"
 	"github.com/kandev/kandev/internal/db"
 	"github.com/kandev/kandev/internal/events/bus"
 	"github.com/kandev/kandev/internal/plugins/instances"
@@ -81,14 +82,16 @@ func Provide(cfg *config.Config, dbPool *db.Pool, secrets SecretVault, eventBus 
 	if err != nil {
 		return nil, nil, fmt.Errorf("plugins: init web-app artifact store: %w", err)
 	}
-	if _, err := instanceStore.ReconcileArtifacts(context.Background(), func(path, digest string, bytes int64) (instances.ArtifactCheck, error) {
-		artifact, err := artifactStore.Reconcile(webapp.Artifact{Digest: digest, RelativePath: path, Bytes: bytes})
-		if err != nil {
-			return instances.ArtifactCheck{}, err
+	if cfg.Features.Canvases {
+		if _, err := instanceStore.ReconcileArtifacts(context.Background(), func(path, digest string, bytes int64) (instances.ArtifactCheck, error) {
+			artifact, err := artifactStore.Reconcile(webapp.Artifact{Digest: digest, RelativePath: path, Bytes: bytes})
+			if err != nil {
+				return instances.ArtifactCheck{}, err
+			}
+			return instances.ArtifactCheck{Available: artifact.Available, Reason: artifact.Reason}, nil
+		}); err != nil {
+			return nil, nil, fmt.Errorf("plugins: reconcile web-app artifacts: %w", err)
 		}
-		return instances.ArtifactCheck{Available: artifact.Available, Reason: artifact.Reason}, nil
-	}); err != nil {
-		return nil, nil, fmt.Errorf("plugins: reconcile web-app artifacts: %w", err)
 	}
 
 	registry := NewRegistry()
@@ -97,13 +100,29 @@ func Provide(cfg *config.Config, dbPool *db.Pool, secrets SecretVault, eventBus 
 	}
 
 	svc := NewService(pluginStore, registry, eventBus, log)
-	svc.subscribeWebAppEvents()
+	if cfg.Features.Canvases {
+		svc.subscribeWebAppEvents()
+	}
 	svc.warnLoadedWebhookAccessIssues()
 	svc.SetState(stateStore)
 	svc.SetUserState(userStateStore)
-	svc.SetWebAppStorage(instanceStore, artifactStore)
-	svc.SetInstanceState(instanceState)
-	svc.SetWebRuntime(webapp.NewRuntime(webapp.NewTokenManager(nil), artifactStore, svc.validateWebAppBinding, nil))
+	if cfg.Features.Canvases {
+		svc.SetWebAppStorage(instanceStore, artifactStore)
+		svc.SetInstanceState(instanceState)
+		backendPort := cfg.Server.Port
+		if backendPort == 0 {
+			backendPort = ports.Backend
+		}
+		webPort := cfg.Launcher.WebPort
+		if webPort == 0 {
+			webPort = backendPort
+		}
+		frameAncestors, frameErr := webapp.FrameAncestorsForConfig(backendPort, webPort, fmt.Sprintf("http://localhost:%d", webPort))
+		if frameErr != nil {
+			return nil, nil, fmt.Errorf("plugins: configure web-app frame origins: %w", frameErr)
+		}
+		svc.SetWebRuntime(webapp.NewRuntime(webapp.NewTokenManager(nil), artifactStore, svc.validateWebAppBinding, frameAncestors))
+	}
 	svc.SetSecrets(secrets)
 	svc.SetPluginsDir(dir)
 
@@ -124,8 +143,13 @@ func Provide(cfg *config.Config, dbPool *db.Pool, secrets SecretVault, eventBus 
 
 	rt := runtime.NewManager(dir, svc.handleStatusChange, log)
 	svc.SetRuntime(rt)
+	stopArtifactCleanup := func() {}
+	if cfg.Features.Canvases {
+		stopArtifactCleanup = svc.StartWebAppArtifactCleanupWorker(context.Background())
+	}
 
 	cleanup := func() error {
+		stopArtifactCleanup()
 		svc.closeWebAppEvents()
 		rt.StopAll()
 		return nil

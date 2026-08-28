@@ -90,6 +90,33 @@ func TestValidatePackageRejectsOversizedFileWithoutRetainingIt(t *testing.T) {
 	}
 }
 
+func TestValidatePackageRejectsManagedWebAppPackage(t *testing.T) {
+	archive := canvasArchive(t, map[string]string{
+		"manifest.yaml": `id: managed-board
+api_version: 2
+version: 1.0.0
+display_name: Managed Board
+description: Managed web app
+author: test
+base_url: https://plugin.example.test
+endpoints:
+  health: /health
+  events: /events
+  webhooks: /webhooks
+ui:
+  web_apps:
+    - key: main
+      title: Board
+      entry: ui/index.html
+      placements: [task-canvas]
+`,
+		"ui/index.html": "<html>managed</html>",
+	})
+	if _, err := ValidatePackage(bytes.NewReader(archive)); !errors.Is(err, ErrNotStaticWebApp) {
+		t.Fatalf("ValidatePackage() error = %v, want %v", err, ErrNotStaticWebApp)
+	}
+}
+
 func TestArtifactStorePutAndReconcileMarksChangedArtifactUnavailable(t *testing.T) {
 	archive := canvasArchive(t, map[string]string{
 		"manifest.yaml": staticManifestYAML,
