@@ -39,9 +39,32 @@ func TestAuggieMCPToolCallUsesTitleAndFlatInput(t *testing.T) {
 	require.Equal(t, arguments, event.NormalizedPayload.Generic().Input)
 }
 
-// Contract coverage for the three renderer-bearing Kandev tools observed in
-// captured Auggie frames. Auggie may emit either the canonical suffix or append
-// its server suffix a second time; both normalize to the canonical tool name.
+func TestAuggieMCPToolCallRequiresOtherKind(t *testing.T) {
+	t.Parallel()
+
+	a := newTestAdapter()
+	t.Cleanup(func() { require.NoError(t, a.Close()) })
+	a.agentID = auggieAgentID
+	a.normalizer = NewNormalizer(auggieAgentID)
+	a.dialect = newACPDialect(auggieAgentID)
+
+	event := a.convertToolCallUpdate("session-1", &acpsdk.SessionUpdateToolCall{
+		Kind:          acpsdk.ToolKind("edit"),
+		RawInput:      map[string]any{"path": "hello.txt"},
+		SessionUpdate: "tool_call",
+		Status:        acpsdk.ToolCallStatus("in_progress"),
+		Title:         "get_task_plan_kandev_kandev",
+		ToolCallId:    acpsdk.ToolCallId("call-auggie-edit"),
+	})
+
+	require.NotNil(t, event)
+	require.False(t, event.NormalizedPayload.IsMCPTool())
+}
+
+// Contract coverage for renderer-bearing and representative Kandev tools
+// observed in captured Auggie frames. Auggie may emit either the canonical
+// suffix or append its server suffix a second time; both normalize to the
+// canonical tool name.
 func TestParseAuggieMCPToolCallNormalizesKandevTitles(t *testing.T) {
 	t.Parallel()
 
@@ -50,15 +73,16 @@ func TestParseAuggieMCPToolCallNormalizesKandevTitles(t *testing.T) {
 		title string
 		want  string
 	}{
-		{title: "show_rich_output_kandev_kandev", want: "show_rich_output_kandev"},
 		{title: "ask_user_question_kandev_kandev", want: "ask_user_question_kandev"},
 		{title: "show_walkthrough_kandev_kandev", want: "show_walkthrough_kandev"},
+		{title: "publish_review_findings_kandev_kandev", want: "publish_review_findings_kandev"},
+		{title: "get_task_plan_kandev_kandev", want: "get_task_plan_kandev"},
 		{title: "show_rich_output_kandev", want: "show_rich_output_kandev"},
 	}
 
 	for _, test := range tests {
 		t.Run(test.title, func(t *testing.T) {
-			frame, ok := parseAuggieMCPToolCall(nil, test.title, arguments)
+			frame, ok := parseAuggieMCPToolCall(nil, auggieMCPToolKind, test.title, arguments)
 			require.True(t, ok)
 			require.Equal(t, test.want, frame.name)
 			require.Equal(t, arguments, frame.arguments)
@@ -76,20 +100,22 @@ func TestParseAuggieMCPToolCallRejectsNonMCPFrames(t *testing.T) {
 		rawInput any
 	}{
 		{
-			name:  "human title",
-			title: "augpool credential pool plan",
-			rawInput: map[string]any{
-				"content": "plan contents",
-				"title":   "augpool credential pool plan",
-			},
+			name:     "human title",
+			title:    "Save hello.txt",
+			rawInput: map[string]any{"path": "hello.txt"},
 		},
+		{name: "native subagent", title: "sub-agent-explore: do X", rawInput: map[string]any{}},
+		{name: "built-in title", title: "edit", rawInput: map[string]any{}},
+		{name: "uppercase tool", title: "Save_hello_kandev", rawInput: map[string]any{}},
+		{name: "path-prefixed tool", title: "kandev/get_task_plan_kandev", rawInput: map[string]any{}},
+		{name: "triple suffix", title: "get_task_plan_kandev_kandev_kandev", rawInput: map[string]any{}},
 		{name: "non-object input", title: "show_rich_output_kandev_kandev", rawInput: "invalid"},
 		{name: "empty tool stem", title: "_kandev_kandev", rawInput: map[string]any{}},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, ok := parseAuggieMCPToolCall(nil, test.title, test.rawInput)
+			_, ok := parseAuggieMCPToolCall(nil, auggieMCPToolKind, test.title, test.rawInput)
 			require.False(t, ok)
 		})
 	}
