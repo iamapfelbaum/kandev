@@ -46,3 +46,14 @@ func TestWorkspaceTrackerAccessDeniedPausesUntilVisibleRetry(t *testing.T) {
 		t.Fatal("focused retry did not clear access denial")
 	}
 }
+
+func TestWorkspaceTrackerCapturesRuntimeModeAtConstruction(t *testing.T) {
+	t.Setenv("KANDEV_DESKTOP_RUNTIME", "true")
+	tracker := NewWorkspaceTracker(t.TempDir(), newTestLogger(t))
+	t.Cleanup(tracker.Stop)
+
+	t.Setenv("KANDEV_DESKTOP_RUNTIME", "false")
+	if got := tracker.diagnosticContext("workspace.file_monitor", "poll").Runtime; got != "desktop" {
+		t.Fatalf("diagnostic runtime = %q, want desktop", got)
+	}
+}

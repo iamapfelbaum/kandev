@@ -221,12 +221,12 @@ func TestAggregator_RuntimeInterestRemovalDeliversPaused(t *testing.T) {
 		modes <- body.Mode
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	mgr := newTestManagerForAggregator(t)
 	port := srv.Listener.Addr().(*net.TCPAddr).Port
 	client := agentctl.NewClient("127.0.0.1", port, newTestLogger())
-	defer client.Close()
+	t.Cleanup(func() { client.Close() })
 	execution := &AgentExecution{
 		ID: "exec-s1", SessionID: "s1", WorkspacePath: "/tmp/ws1", agentctl: client,
 	}
@@ -464,7 +464,7 @@ func TestAggregator_PushAsync_LastWriteWinsUnderRace(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{}`))
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	mgr := newTestManagerForAggregator(t)
 	addExecutionWithClient(t, mgr, "s1", "/tmp/ws1", srv.URL)

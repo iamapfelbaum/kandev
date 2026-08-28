@@ -43,7 +43,7 @@ func TestSetWorkspacePollMode_PostsExpectedPayload(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"mode":"slow"}`))
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	c := newHTTPOnlyClient(srv.URL)
 
@@ -81,7 +81,7 @@ func TestRefreshWorkspace_PostsExpectedTrigger(t *testing.T) {
 		got.Trigger = body.Trigger
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	c := newHTTPOnlyClient(srv.URL)
 	if err := c.RefreshWorkspace(context.Background(), "turn_complete"); err != nil {
@@ -103,7 +103,7 @@ func TestSetWorkspacePollMode_ReturnsErrorOnNon2xx(t *testing.T) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error":"bad mode"}`))
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	c := newHTTPOnlyClient(srv.URL)
 
@@ -122,7 +122,7 @@ func TestSetWorkspacePollMode_HonoursContextCancellation(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	c := newHTTPOnlyClient(srv.URL)
 

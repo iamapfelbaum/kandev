@@ -12,6 +12,7 @@ import (
 	"github.com/kandev/kandev/internal/task/dto"
 	"github.com/kandev/kandev/internal/task/models"
 	"github.com/kandev/kandev/internal/task/repository"
+	"github.com/kandev/kandev/internal/task/repository/repoerrors"
 	"github.com/kandev/kandev/internal/task/service"
 	ws "github.com/kandev/kandev/pkg/websocket"
 	"go.uber.org/zap"
@@ -124,15 +125,13 @@ func (h *RepositoryHandlers) httpListRepositories(c *gin.Context) {
 }
 
 func (h *RepositoryHandlers) httpDiscoverRepositories(c *gin.Context) {
+	workspaceID := c.Param("id")
 	root := c.Query("root")
-	result, err := h.service.DiscoverLocalRepositories(c.Request.Context(), root)
+	result, err := h.service.DiscoverLocalRepositoriesForWorkspace(
+		c.Request.Context(), workspaceID, root,
+	)
 	if err != nil {
-		if errors.Is(err, service.ErrPathNotAllowed) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "root is not within allowed paths"})
-			return
-		}
-		h.logger.Error("failed to discover repositories", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to discover repositories"})
+		h.writeDiscoveryError(c, err)
 		return
 	}
 
@@ -140,7 +139,9 @@ func (h *RepositoryHandlers) httpDiscoverRepositories(c *gin.Context) {
 }
 
 func (h *RepositoryHandlers) httpGetDiscoverySnapshot(c *gin.Context) {
-	result, err := h.service.GetLocalRepositoryDiscovery(c.Request.Context(), c.Query("root"))
+	result, err := h.service.GetLocalRepositoryDiscoveryForWorkspace(
+		c.Request.Context(), c.Param("id"), c.Query("root"),
+	)
 	if err != nil {
 		h.writeDiscoveryError(c, err)
 		return
@@ -149,7 +150,9 @@ func (h *RepositoryHandlers) httpGetDiscoverySnapshot(c *gin.Context) {
 }
 
 func (h *RepositoryHandlers) httpRefreshDiscovery(c *gin.Context) {
-	result, err := h.service.RefreshLocalRepositoryDiscovery(c.Request.Context(), c.Query("root"))
+	result, err := h.service.RefreshLocalRepositoryDiscoveryForWorkspace(
+		c.Request.Context(), c.Param("id"), c.Query("root"),
+	)
 	if err != nil {
 		h.writeDiscoveryError(c, err)
 		return
@@ -182,6 +185,8 @@ func discoveryResponse(result service.RepositoryDiscoveryResult) dto.RepositoryD
 
 func (h *RepositoryHandlers) writeDiscoveryError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, repoerrors.ErrWorkspaceNotFound):
+		handleNotFound(c, h.logger, err, "workspace not found")
 	case errors.Is(err, service.ErrPathNotAllowed), errors.Is(err, service.ErrInvalidDiscoveryRoot):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	case errors.Is(err, service.ErrDesktopDiscoveryUnavailable):
@@ -223,6 +228,11 @@ func (h *RepositoryHandlers) httpAddDiscoveryRoot(c *gin.Context) {
 		h.writeDiscoveryError(c, err)
 		return
 	}
+	if root == nil {
+		h.logger.Error("desktop discovery root was not returned after add")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to add discovery root"})
+		return
+	}
 	c.JSON(http.StatusCreated, dto.FromDesktopDiscoveryRoot(*root))
 }
 
@@ -235,6 +245,11 @@ func (h *RepositoryHandlers) httpReconnectDiscoveryRoot(c *gin.Context) {
 	root, err := h.service.ReconnectDesktopDiscoveryRoot(c.Request.Context(), body.Path, body.NewPath)
 	if err != nil {
 		h.writeDiscoveryError(c, err)
+		return
+	}
+	if root == nil {
+		h.logger.Error("desktop discovery root was not returned after reconnect")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reconnect discovery root"})
 		return
 	}
 	c.JSON(http.StatusOK, dto.FromDesktopDiscoveryRoot(*root))

@@ -2,8 +2,6 @@ package process
 
 import (
 	"context"
-	"os"
-	"strings"
 
 	"github.com/kandev/kandev/internal/common/fsdiagnostics"
 )
@@ -56,7 +54,7 @@ func (wt *WorkspaceTracker) diagnosticContext(operation, trigger string) fsdiagn
 		Operation: operation,
 		Target:    wt.workDir,
 		Trigger:   trigger,
-		Runtime:   fsdiagnostics.RuntimeMode(strings.EqualFold(strings.TrimSpace(os.Getenv("KANDEV_DESKTOP_RUNTIME")), "true")),
+		Runtime:   wt.runtimeMode,
 		TaskID:    taskID,
 		SessionID: sessionID,
 		PollMode:  string(wt.GetPollMode()),

@@ -24,6 +24,7 @@ class FakeVisibilityDocument {
 }
 
 const oldScan = "2026-08-27T20:00:00.000Z";
+const currentTime = Date.parse("2026-08-27T22:00:00.000Z");
 const workspaceId = "workspace-1";
 
 function response(scanTime = oldScan): RepositoryDiscoveryResponse {
@@ -54,7 +55,7 @@ describe("RepositoryDiscoveryCoordinator", () => {
     const document = new FakeVisibilityDocument();
     const coordinator = new RepositoryDiscoveryCoordinator(api, {
       document,
-      now: () => Date.parse("2026-08-27T22:00:00.000Z"),
+      now: () => currentTime,
     });
 
     const releaseOne = coordinator.acquire(workspaceId);
@@ -76,7 +77,7 @@ describe("RepositoryDiscoveryCoordinator", () => {
     document.visibilityState = "hidden";
     const coordinator = new RepositoryDiscoveryCoordinator(api, {
       document,
-      now: () => Date.parse("2026-08-27T22:00:00.000Z"),
+      now: () => currentTime,
     });
 
     const release = coordinator.acquire(workspaceId);
@@ -99,7 +100,7 @@ describe("RepositoryDiscoveryCoordinator", () => {
       }),
     });
     const coordinator = new RepositoryDiscoveryCoordinator(api, {
-      now: () => Date.parse("2026-08-27T22:00:00.000Z"),
+      now: () => currentTime,
     });
     const release = coordinator.acquire(workspaceId);
     await vi.waitFor(() => expect(api.refresh).toHaveBeenCalledTimes(1));
@@ -109,6 +110,41 @@ describe("RepositoryDiscoveryCoordinator", () => {
     expect(state.error?.message).toBe("permission denied");
     expect(state.isRefreshing).toBe(false);
     release();
+    coordinator.dispose();
+  });
+
+  it("does not auto-refresh a persisted reconnect-required root", async () => {
+    const api = client({
+      getSnapshot: vi.fn(async () => ({
+        ...response(),
+        root_states: [
+          {
+            id: "root-1",
+            path: "/work",
+            display_path: "~/work",
+            state: "reconnect_required",
+          },
+        ],
+      })),
+    });
+    const coordinator = new RepositoryDiscoveryCoordinator(api, {
+      now: () => currentTime,
+    });
+
+    const release = coordinator.acquire(workspaceId);
+    await vi.waitFor(() => expect(api.getSnapshot).toHaveBeenCalledTimes(1));
+    expect(api.refresh).not.toHaveBeenCalled();
+    release();
+    coordinator.dispose();
+  });
+
+  it("loads the post-action snapshot without starting a refresh", async () => {
+    const api = client();
+    const coordinator = new RepositoryDiscoveryCoordinator(api);
+
+    await coordinator.load(workspaceId);
+    expect(api.getSnapshot).toHaveBeenCalledTimes(1);
+    expect(api.refresh).not.toHaveBeenCalled();
     coordinator.dispose();
   });
 });

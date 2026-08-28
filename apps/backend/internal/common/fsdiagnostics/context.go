@@ -127,16 +127,16 @@ func NewWarningLimiter(interval time.Duration) *WarningLimiter {
 	}
 }
 
-// Warn emits a bounded warning with the operation context. The key includes
-// the error text because a changed OS failure is useful evidence even when
-// the path and operation are unchanged.
+// Warn emits a bounded warning with the operation context. The error text is
+// intentionally excluded from the key so changing OS details cannot create an
+// unbounded number of entries for one operation and target.
 func (l *WarningLimiter) Warn(log *zap.Logger, message string, operation Context, err error) {
 	if l == nil || log == nil {
 		return
 	}
 
 	now := l.now()
-	key := warningKey(operation, err)
+	key := warningKey(operation)
 	l.mu.Lock()
 	state, exists := l.entries[key]
 	if exists && now.Sub(state.lastWarned) < l.interval {
@@ -156,8 +156,8 @@ func (l *WarningLimiter) Warn(log *zap.Logger, message string, operation Context
 	log.Warn(message, fields...)
 }
 
-func warningKey(operation Context, err error) string {
-	parts := []string{
+func warningKey(operation Context) string {
+	return strings.Join([]string{
 		operation.Operation,
 		CanonicalPath(operation.Target),
 		operation.Trigger,
@@ -165,9 +165,5 @@ func warningKey(operation Context, err error) string {
 		operation.WorkspaceID,
 		operation.TaskID,
 		operation.SessionID,
-	}
-	if err != nil {
-		parts = append(parts, err.Error())
-	}
-	return strings.Join(parts, "\x00")
+	}, "\x00")
 }

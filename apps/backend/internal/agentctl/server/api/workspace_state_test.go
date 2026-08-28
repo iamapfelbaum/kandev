@@ -86,16 +86,38 @@ func TestHandleSetPollMode_EmptyMode(t *testing.T) {
 }
 
 func TestHandleRefreshWorkspace_AcceptsTrigger(t *testing.T) {
-	s := newTestServer(t)
-	body, _ := json.Marshal(RefreshWorkspaceRequest{Trigger: "turn_complete"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspace/refresh", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+	cases := []struct {
+		name    string
+		trigger string
+		want    string
+	}{
+		{name: "explicit", trigger: "turn_complete", want: "turn_complete"},
+		{name: "empty", trigger: "", want: "manual_refresh"},
+		{name: "unsupported", trigger: "background_poll", want: "manual_refresh"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestServer(t)
+			body, _ := json.Marshal(RefreshWorkspaceRequest{Trigger: tc.trigger})
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/workspace/refresh", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
 
-	s.router.ServeHTTP(w, req)
+			s.router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+			}
+			var response struct {
+				Trigger string `json:"trigger"`
+			}
+			if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if response.Trigger != tc.want {
+				t.Fatalf("response trigger = %q, want %q", response.Trigger, tc.want)
+			}
+		})
 	}
 }
 

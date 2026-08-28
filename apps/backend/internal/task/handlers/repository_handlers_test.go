@@ -417,8 +417,8 @@ func TestHTTPListBranchesRejectsInvalidExplicitPath(t *testing.T) {
 }
 
 func TestHTTPDesktopDiscoveryRootLifecycle(t *testing.T) {
-	router, _, _ := newDesktopRepositoryHTTPTestRouter(t)
-	rootPath := t.TempDir()
+	router, repo, _ := newDesktopRepositoryHTTPTestRouter(t)
+	rootPath := canonicalTempDir(t)
 
 	request := httptest.NewRequest(
 		http.MethodPost,
@@ -459,6 +459,13 @@ func TestHTTPDesktopDiscoveryRootLifecycle(t *testing.T) {
 	))
 	if removeResponse.Code != http.StatusNoContent {
 		t.Fatalf("remove status = %d, want %d; body = %s", removeResponse.Code, http.StatusNoContent, removeResponse.Body.String())
+	}
+	roots, err := repo.ListDesktopDiscoveryRoots(context.Background())
+	if err != nil {
+		t.Fatalf("list roots after remove: %v", err)
+	}
+	if len(roots) != 0 {
+		t.Fatalf("roots after remove = %+v, want none", roots)
 	}
 }
 

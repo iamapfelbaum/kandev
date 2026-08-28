@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kandev/kandev/internal/common/fsdiagnostics"
 	"github.com/kandev/kandev/internal/common/gitref"
 	"github.com/kandev/kandev/internal/common/subproc"
 	"github.com/kandev/kandev/internal/task/models"
@@ -88,6 +89,15 @@ const sourceTypeProvider = "provider"
 
 func (s *Service) DiscoverLocalRepositories(ctx context.Context, root string) (RepositoryDiscoveryResult, error) {
 	return s.RefreshLocalRepositoryDiscovery(ctx, root)
+}
+
+// DiscoverLocalRepositoriesForWorkspace applies the workspace visibility
+// check before using the legacy discovery endpoint.
+func (s *Service) DiscoverLocalRepositoriesForWorkspace(
+	ctx context.Context,
+	workspaceID, root string,
+) (RepositoryDiscoveryResult, error) {
+	return s.refreshLocalRepositoryDiscovery(ctx, workspaceID, root)
 }
 
 func (s *Service) ValidateLocalRepositoryPath(ctx context.Context, path string) (RepositoryPathValidation, error) {
@@ -542,7 +552,10 @@ type repoWalker struct {
 // visit is the WalkDir callback. Returns a non-nil *LocalRepository when a git repo is found.
 func (w *repoWalker) visit(path string, d fs.DirEntry, err error) (*LocalRepository, error) {
 	if err != nil {
-		return nil, nil //nolint:nilerr // skip entries that cannot be accessed
+		if path == w.root || fsdiagnostics.IsAccessDenied(err) {
+			return nil, err
+		}
+		return nil, nil //nolint:nilerr // skip non-permission entries that cannot be accessed
 	}
 	if w.ctx.Err() != nil {
 		return nil, w.ctx.Err()

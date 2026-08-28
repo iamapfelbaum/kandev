@@ -372,13 +372,12 @@ function useDiscoverDialog(
     await refreshDiscovery();
   };
 
-  const openDialog = async () => {
+  const openDialog = () => {
     setLocalRepoDialogOpen(true);
     setRepoSearch("");
     setSelectedRepoPath(null);
     setManualRepoPath("");
     setManualValidation({ status: "idle" });
-    await handleDiscover();
   };
 
   const handleValidateManualPath = async () => {

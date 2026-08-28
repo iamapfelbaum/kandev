@@ -45,6 +45,24 @@ func TestWarningLimiterBoundsRepeatedAccessDenials(t *testing.T) {
 	}
 }
 
+func TestWarningLimiterDoesNotGrowPerErrorMessage(t *testing.T) {
+	core, logs := observer.New(zapcore.WarnLevel)
+	limiter := NewWarningLimiter(time.Minute)
+	operation := Context{
+		Operation: "workspace.file_monitor",
+		Target:    filepath.Join(t.TempDir(), "repo"),
+		Trigger:   "poll",
+		Runtime:   "desktop",
+	}
+
+	limiter.Warn(zap.New(core), "filesystem.access_denied", operation, errors.New("permission denied: one"))
+	limiter.Warn(zap.New(core), "filesystem.access_denied", operation, errors.New("permission denied: two"))
+
+	if got := logs.Len(); got != 1 {
+		t.Fatalf("warning count for changing errors = %d, want 1", got)
+	}
+}
+
 func TestContextFieldsCanonicalizeTargetAndIncludeIdentity(t *testing.T) {
 	root := t.TempDir()
 	operation := Context{

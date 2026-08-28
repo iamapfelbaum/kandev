@@ -55,6 +55,25 @@ func (s *Service) ListDesktopDiscoveryRoots(ctx context.Context) ([]*models.Desk
 // starts a filesystem walk. Call RefreshLocalRepositoryDiscovery for an
 // explicit or stale refresh.
 func (s *Service) GetLocalRepositoryDiscovery(ctx context.Context, root string) (RepositoryDiscoveryResult, error) {
+	return s.getLocalRepositoryDiscovery(ctx, "", root)
+}
+
+// GetLocalRepositoryDiscoveryForWorkspace applies the workspace visibility
+// check before returning a cached discovery snapshot.
+func (s *Service) GetLocalRepositoryDiscoveryForWorkspace(
+	ctx context.Context,
+	workspaceID, root string,
+) (RepositoryDiscoveryResult, error) {
+	return s.getLocalRepositoryDiscovery(ctx, workspaceID, root)
+}
+
+func (s *Service) getLocalRepositoryDiscovery(
+	ctx context.Context,
+	workspaceID, root string,
+) (RepositoryDiscoveryResult, error) {
+	if err := s.authorizeWorkspaceID(ctx, workspaceID); err != nil {
+		return RepositoryDiscoveryResult{}, err
+	}
 	roots, err := s.resolveDiscoveryRoots(ctx, root)
 	if err != nil {
 		return RepositoryDiscoveryResult{}, err
@@ -103,6 +122,25 @@ func (s *Service) GetLocalRepositoryDiscovery(ctx context.Context, root string) 
 // set. Concurrent callers share the same in-flight scan. A failed root keeps
 // the previous successful repository list in the cache.
 func (s *Service) RefreshLocalRepositoryDiscovery(ctx context.Context, root string) (RepositoryDiscoveryResult, error) {
+	return s.refreshLocalRepositoryDiscovery(ctx, "", root)
+}
+
+// RefreshLocalRepositoryDiscoveryForWorkspace applies the workspace
+// visibility check before starting or joining a discovery scan.
+func (s *Service) RefreshLocalRepositoryDiscoveryForWorkspace(
+	ctx context.Context,
+	workspaceID, root string,
+) (RepositoryDiscoveryResult, error) {
+	return s.refreshLocalRepositoryDiscovery(ctx, workspaceID, root)
+}
+
+func (s *Service) refreshLocalRepositoryDiscovery(
+	ctx context.Context,
+	workspaceID, root string,
+) (RepositoryDiscoveryResult, error) {
+	if err := s.authorizeWorkspaceID(ctx, workspaceID); err != nil {
+		return RepositoryDiscoveryResult{}, err
+	}
 	roots, err := s.resolveDiscoveryRoots(ctx, root)
 	if err != nil {
 		return RepositoryDiscoveryResult{}, err
@@ -132,6 +170,9 @@ func (s *Service) RefreshLocalRepositoryDiscovery(ctx context.Context, root stri
 		s.discoveryCacheMu.Unlock()
 		select {
 		case <-done:
+			if errors.Is(flight.err, context.Canceled) || errors.Is(flight.err, context.DeadlineExceeded) {
+				return s.refreshLocalRepositoryDiscovery(ctx, workspaceID, root)
+			}
 			return flight.result, flight.err
 		case <-ctx.Done():
 			return RepositoryDiscoveryResult{}, ctx.Err()
@@ -372,7 +413,7 @@ func (s *Service) AddDesktopDiscoveryRoot(ctx context.Context, path string) (*mo
 	if _, err := s.RefreshLocalRepositoryDiscovery(ctx, ""); err != nil {
 		return nil, err
 	}
-	return s.desktopRootStore.GetDesktopDiscoveryRoot(ctx, canonical)
+	return s.getRequiredDesktopDiscoveryRoot(ctx, canonical)
 }
 
 // ReconnectDesktopDiscoveryRoot replaces the path for an inaccessible root,
@@ -385,7 +426,11 @@ func (s *Service) ReconnectDesktopDiscoveryRoot(ctx context.Context, oldPath, ne
 	if err != nil {
 		return nil, err
 	}
-	old, err := s.desktopRootStore.GetDesktopDiscoveryRoot(ctx, oldPath)
+	oldLookupPath, err := normalizeDiscoveryRootLookupPath(oldPath)
+	if err != nil {
+		return nil, err
+	}
+	old, err := s.desktopRootStore.GetDesktopDiscoveryRoot(ctx, oldLookupPath)
 	if err != nil {
 		return nil, err
 	}
@@ -417,7 +462,34 @@ func (s *Service) ReconnectDesktopDiscoveryRoot(ctx context.Context, oldPath, ne
 	if _, err := s.RefreshLocalRepositoryDiscovery(ctx, ""); err != nil {
 		return nil, err
 	}
-	return s.desktopRootStore.GetDesktopDiscoveryRoot(ctx, canonical)
+	return s.getRequiredDesktopDiscoveryRoot(ctx, canonical)
+}
+
+func (s *Service) getRequiredDesktopDiscoveryRoot(
+	ctx context.Context, path string,
+) (*models.DesktopDiscoveryRoot, error) {
+	root, err := s.desktopRootStore.GetDesktopDiscoveryRoot(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	if root == nil {
+		return nil, errors.New("desktop discovery root disappeared after scan")
+	}
+	return root, nil
+}
+
+func normalizeDiscoveryRootLookupPath(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("%w: path is required", ErrInvalidDiscoveryRoot)
+	}
+	abs, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrInvalidDiscoveryRoot, err)
+	}
+	if canonical, err := filepath.EvalSymlinks(abs); err == nil {
+		return filepath.Clean(canonical), nil
+	}
+	return filepath.Clean(abs), nil
 }
 
 func (s *Service) RemoveDesktopDiscoveryRoot(ctx context.Context, path string) error {

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import {
-  discoverRepositoriesAction,
   getRepositoryDiscoveryAction,
   refreshRepositoryDiscoveryAction,
 } from "@/app/actions/workspaces";
@@ -43,9 +42,14 @@ const EMPTY_STATE: RepositoryDiscoveryState = {
   error: null,
 };
 
+const EMPTY_REPOSITORIES: RepositoryDiscoveryResponse["repositories"] = [];
+const EMPTY_ROOTS: RepositoryDiscoveryResponse["roots"] = [];
+const EMPTY_ROOT_STATES: NonNullable<RepositoryDiscoveryResponse["root_states"]> = [];
+const EMPTY_FAILED_ROOTS: NonNullable<RepositoryDiscoveryResponse["failed_roots"]> = [];
+
 const DEFAULT_CLIENT: RepositoryDiscoveryClient = {
-  getSnapshot: (...args) => (getRepositoryDiscoveryAction ?? discoverRepositoriesAction)(...args),
-  refresh: (...args) => (refreshRepositoryDiscoveryAction ?? discoverRepositoriesAction)(...args),
+  getSnapshot: (...args) => getRepositoryDiscoveryAction(...args),
+  refresh: (...args) => refreshRepositoryDiscoveryAction(...args),
 };
 
 function browserDocument(): VisibilityDocument | undefined {
@@ -53,7 +57,7 @@ function browserDocument(): VisibilityDocument | undefined {
 }
 
 function asError(value: unknown): Error {
-  return value instanceof Error ? value : new Error();
+  return value instanceof Error ? value : new Error(String(value));
 }
 
 function normalizedResponse(response: RepositoryDiscoveryResponse): RepositoryDiscoveryResponse {
@@ -83,6 +87,9 @@ function isStale(
   // A failed root is an explicit recovery state. Do not retry it on every
   // visible activation; Reconnect, Remove, or manual Refresh is the user's
   // decision to touch that path again.
+  if (response.root_states?.some((root) => root.state === "reconnect_required")) {
+    return false;
+  }
   if ((response.failed_roots?.length ?? 0) > 0) return false;
   if (!response.scan_time) return true;
   const timestamp = Date.parse(response.scan_time);
@@ -144,6 +151,12 @@ export class RepositoryDiscoveryCoordinator {
   async refresh(workspaceId: string): Promise<RepositoryDiscoveryResponse | null> {
     const entry = this.entry(workspaceId);
     await this.startRefresh(workspaceId, entry);
+    return entry.state.response;
+  }
+
+  async load(workspaceId: string): Promise<RepositoryDiscoveryResponse | null> {
+    const entry = this.entry(workspaceId);
+    await this.startSnapshot(workspaceId, entry);
     return entry.state.response;
   }
 
@@ -275,14 +288,15 @@ export const repositoryDiscoveryCoordinator = new RepositoryDiscoveryCoordinator
 function discoveryView(
   state: RepositoryDiscoveryState,
   refresh: () => Promise<RepositoryDiscoveryResponse | null>,
+  load: () => Promise<RepositoryDiscoveryResponse | null>,
 ) {
   const response = state.response;
   return {
-    repositories: response?.repositories ?? [],
-    roots: response?.roots ?? [],
-    rootStates: response?.root_states ?? [],
+    repositories: response?.repositories ?? EMPTY_REPOSITORIES,
+    roots: response?.roots ?? EMPTY_ROOTS,
+    rootStates: response?.root_states ?? EMPTY_ROOT_STATES,
     scanTime: response?.scan_time,
-    failedRoots: response?.failed_roots ?? [],
+    failedRoots: response?.failed_roots ?? EMPTY_FAILED_ROOTS,
     homeConfirmationRequired: response?.home_confirmation_required === true,
     isLoading: state.isLoading,
     isRefreshing: state.isRefreshing || response?.refreshing === true,
@@ -291,6 +305,7 @@ function discoveryView(
     hasSnapshot: response !== null,
     desktopRuntime: response?.desktop_runtime === true,
     refresh,
+    load,
   };
 }
 
@@ -318,6 +333,10 @@ export function useRepositoryDiscovery(workspaceId: string | null, enabled = tru
     if (!activeWorkspaceId) return null;
     return repositoryDiscoveryCoordinator.refresh(activeWorkspaceId);
   }, [activeWorkspaceId]);
+  const load = useCallback(async () => {
+    if (!activeWorkspaceId) return null;
+    return repositoryDiscoveryCoordinator.load(activeWorkspaceId);
+  }, [activeWorkspaceId]);
 
-  return discoveryView(state, refresh);
+  return discoveryView(state, refresh, load);
 }

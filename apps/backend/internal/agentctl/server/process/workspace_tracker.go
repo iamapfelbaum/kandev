@@ -156,6 +156,7 @@ type WorkspaceTracker struct {
 	diagnosticMu        sync.RWMutex
 	diagnosticTaskID    string
 	diagnosticSessionID string
+	runtimeMode         string
 	filesystemWarnings  *fsdiagnostics.WarningLimiter
 	accessDenied        atomic.Bool
 
@@ -388,6 +389,7 @@ func newWorkspaceTracker(resolvedWorkDir, repositoryName string, log *logger.Log
 		gitIndexPath:               gitIndexPath,
 		repositoryName:             repositoryName,
 		logger:                     log.WithFields(logFields...),
+		runtimeMode:                fsdiagnostics.RuntimeMode(strings.EqualFold(strings.TrimSpace(os.Getenv("KANDEV_DESKTOP_RUNTIME")), "true")),
 		workspaceStreamSubscribers: make(map[types.WorkspaceStreamSubscriber]struct{}),
 		filePollInterval:           DefaultFilePollInterval,
 		gitPollInterval:            DefaultGitPollInterval,

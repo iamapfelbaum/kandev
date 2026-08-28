@@ -198,6 +198,113 @@ func TestDesktopDiscoveryRefreshSharesOneScan(t *testing.T) {
 	}
 }
 
+func TestDesktopDiscoveryCancelledFlightDoesNotPoisonWaitingCaller(t *testing.T) {
+	root := t.TempDir()
+	svc := newDiscoveryService(t, root)
+	svc.discoveryConfig = RepositoryDiscoveryConfig{Roots: []string{root}, MaxDepth: 6}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var callsMu sync.Mutex
+	calls := 0
+	svc.discoveryScanRoot = func(ctx context.Context, _ string, _ int) ([]LocalRepository, error) {
+		callsMu.Lock()
+		calls++
+		callNumber := calls
+		callsMu.Unlock()
+		if callNumber == 1 {
+			close(started)
+			<-release
+			return nil, ctx.Err()
+		}
+		return []LocalRepository{{Path: filepath.Join(root, "project"), Name: "project"}}, nil
+	}
+
+	ownerCtx, cancelOwner := context.WithCancel(context.Background())
+	ownerErr := make(chan error, 1)
+	go func() {
+		_, err := svc.RefreshLocalRepositoryDiscovery(ownerCtx, "")
+		ownerErr <- err
+	}()
+	<-started
+
+	waiterResult := make(chan RepositoryDiscoveryResult, 1)
+	waiterErr := make(chan error, 1)
+	go func() {
+		result, err := svc.RefreshLocalRepositoryDiscovery(context.Background(), "")
+		waiterResult <- result
+		waiterErr <- err
+	}()
+
+	cancelOwner()
+	close(release)
+	if err := <-ownerErr; !errors.Is(err, context.Canceled) {
+		t.Fatalf("owner error = %v, want context canceled", err)
+	}
+	select {
+	case err := <-waiterErr:
+		if err != nil {
+			t.Fatalf("waiting caller error = %v", err)
+		}
+		result := <-waiterResult
+		if len(result.Repositories) != 1 {
+			t.Fatalf("waiting caller repositories = %+v", result.Repositories)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiting caller did not retry the canceled flight")
+	}
+
+	callsMu.Lock()
+	defer callsMu.Unlock()
+	if calls != 2 {
+		t.Fatalf("discovery scan calls = %d, want 2", calls)
+	}
+}
+
+func TestRepoWalkerPropagatesAccessDenied(t *testing.T) {
+	root := t.TempDir()
+	walker := &repoWalker{root: root, ctx: context.Background()}
+
+	if _, err := walker.visit(root, nil, os.ErrPermission); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("root access error = %v, want permission denied", err)
+	}
+	child := filepath.Join(root, "private")
+	if _, err := walker.visit(child, nil, os.ErrPermission); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("child access error = %v, want permission denied", err)
+	}
+}
+
+func TestReconnectDesktopDiscoveryRootNormalizesOldPath(t *testing.T) {
+	svc, _, repo := createTestService(t)
+	svc.discoveryConfig = RepositoryDiscoveryConfig{DesktopRuntime: true, MaxDepth: 6}
+	svc.desktopRootStore = repo
+	oldRoot := t.TempDir()
+	newRoot := t.TempDir()
+
+	selected, err := svc.AddDesktopDiscoveryRoot(context.Background(), oldRoot)
+	if err != nil {
+		t.Fatalf("add old discovery root: %v", err)
+	}
+	oldPath := oldRoot + string(os.PathSeparator)
+	if alias := filepath.Join(t.TempDir(), "old-root"); os.Symlink(oldRoot, alias) == nil {
+		oldPath = alias
+	}
+
+	reconnected, err := svc.ReconnectDesktopDiscoveryRoot(context.Background(), oldPath, newRoot)
+	if err != nil {
+		t.Fatalf("reconnect discovery root: %v", err)
+	}
+	if reconnected.ID != selected.ID || reconnected.Path != filepath.Clean(newRoot) {
+		t.Fatalf("reconnected root = %+v, want id %q and path %q", reconnected, selected.ID, newRoot)
+	}
+	roots, err := svc.ListDesktopDiscoveryRoots(context.Background())
+	if err != nil {
+		t.Fatalf("list reconnected roots: %v", err)
+	}
+	if len(roots) != 1 || roots[0].Path != filepath.Clean(newRoot) {
+		t.Fatalf("roots after reconnect = %+v", roots)
+	}
+}
+
 func TestDesktopDiscoveryFailurePreservesCachedRepositories(t *testing.T) {
 	root := t.TempDir()
 	repositoryPath := filepath.Join(root, "project")

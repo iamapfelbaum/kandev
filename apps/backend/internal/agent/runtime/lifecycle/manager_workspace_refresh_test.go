@@ -32,12 +32,12 @@ func TestFinishExecutionWorkspaceActivityRefreshesBeforePausingRuntime(t *testin
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	mgr := newTestManagerForAggregator(t)
 	port := srv.Listener.Addr().(*net.TCPAddr).Port
 	client := agentctl.NewClient("127.0.0.1", port, newTestLogger())
-	defer client.Close()
+	t.Cleanup(func() { client.Close() })
 	execution := &AgentExecution{
 		ID: "exec-s1", SessionID: "s1", TaskID: "task-1", WorkspacePath: "/tmp/ws1", agentctl: client,
 	}
@@ -56,8 +56,8 @@ func TestFinishExecutionWorkspaceActivityRefreshesBeforePausingRuntime(t *testin
 	}
 
 	mgr.finishExecutionWorkspaceActivity(execution, "turn_complete")
-	first := <-eventsWithTimeout(t, events)
-	second := <-eventsWithTimeout(t, events)
+	first := eventsWithTimeout(t, events)
+	second := eventsWithTimeout(t, events)
 	if first != "/api/v1/workspace/refresh" {
 		t.Fatalf("first completion event = %q, want final refresh", first)
 	}
@@ -66,16 +66,14 @@ func TestFinishExecutionWorkspaceActivityRefreshesBeforePausingRuntime(t *testin
 	}
 }
 
-func eventsWithTimeout(t *testing.T, events <-chan string) <-chan string {
+func eventsWithTimeout(t *testing.T, events <-chan string) string {
 	t.Helper()
-	result := make(chan string, 1)
-	go func() {
-		select {
-		case event := <-events:
-			result <- event
-		case <-time.After(2 * time.Second):
-			result <- ""
-		}
-	}()
-	return result
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	select {
+	case event := <-events:
+		return event
+	case <-timer.C:
+		return ""
+	}
 }

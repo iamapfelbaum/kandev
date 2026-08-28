@@ -10,6 +10,7 @@ import { useToast } from "@/components/toast-provider";
 
 type DiscoveryRefresh = {
   refresh: () => Promise<unknown>;
+  load: () => Promise<unknown>;
 };
 
 type Toast = ReturnType<typeof useToast>["toast"];
@@ -24,31 +25,32 @@ function reportDiscoveryError(toast: Toast, t: TFunction, error: unknown) {
 
 async function runDiscoveryAction(
   action: () => Promise<unknown>,
-  discovery: DiscoveryRefresh,
+  synchronize: () => Promise<unknown>,
   toast: Toast,
   t: TFunction,
 ): Promise<void> {
   try {
     await action();
-    await discovery.refresh();
+    await synchronize();
   } catch (error) {
     reportDiscoveryError(toast, t, error);
   }
 }
 
 export function useDiscoveryRootActions(discovery: DiscoveryRefresh, toast: Toast, t: TFunction) {
-  const refreshDiscovery = () => runDiscoveryAction(() => Promise.resolve(), discovery, toast, t);
+  const refreshDiscovery = () =>
+    runDiscoveryAction(() => Promise.resolve(), discovery.refresh, toast, t);
   const handleChooseDiscoveryRoot = (path: string) =>
-    runDiscoveryAction(() => addDesktopDiscoveryRootAction(path), discovery, toast, t);
+    runDiscoveryAction(() => addDesktopDiscoveryRootAction(path), discovery.load, toast, t);
   const handleReconnectDiscoveryRoot = (oldPath: string, newPath: string) =>
     runDiscoveryAction(
       () => reconnectDesktopDiscoveryRootAction(oldPath, newPath),
-      discovery,
+      discovery.load,
       toast,
       t,
     );
   const handleRemoveDiscoveryRoot = (path: string) =>
-    runDiscoveryAction(() => removeDesktopDiscoveryRootAction(path), discovery, toast, t);
+    runDiscoveryAction(() => removeDesktopDiscoveryRootAction(path), discovery.refresh, toast, t);
 
   return {
     refreshDiscovery,
