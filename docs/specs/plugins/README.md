@@ -32,6 +32,7 @@ plugin security boundaries.
 
 - [Plugin-Contributed Agent Tools](requirements/agent-tools.md)
 - [Isolated plugin web-application contributions](requirements/isolated-web-app-contributions.md)
+- [Plugin-Initiated Workflow Step Transitions](requirements/plugin-initiated-step-transitions.md)
 - [Plugin Authoring Experience](requirements/authoring-experience.md)
 - [Plugin Marketplace](requirements/marketplace.md)
 - [Plugin nav items in the sidebar footer icon row](requirements/plugin-nav-sidebar-footer.md)
@@ -42,6 +43,7 @@ plugin security boundaries.
 
 ### System design
 
+- [Plugin-Initiated Workflow Step Transitions](system-design/plugin-initiated-step-transitions.md)
 - [Plugin Marketplace](system-design/marketplace.md)
 - [Isolated plugin web-application contributions](system-design/isolated-web-app-contributions.md)
 - [Plugin nav items in the sidebar footer icon row System Design Part 1](system-design/plugin-nav-sidebar-footer-01.md)
