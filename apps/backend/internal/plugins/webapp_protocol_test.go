@@ -148,7 +148,11 @@ func TestWebAppProtocolTaskWorkflowAndMessageRoutesUseHostAdapters(t *testing.T)
 	d.tasks.tasksByID = map[string]*taskmodels.Task{"task-1": task}
 	d.workflows.workflows = map[string][]*taskmodels.Workflow{"workspace-1": {{ID: "workflow-1", WorkspaceID: "workspace-1", Name: "Main"}}}
 	d.steps.steps = map[string][]*wfmodels.WorkflowStep{"workflow-1": {{ID: "step-1", WorkflowID: "workflow-1", Name: "Doing", Position: 1}}}
-	d.taskWriter.updated = &taskmodels.Task{ID: "task-1", WorkspaceID: "workspace-1", WorkflowID: "workflow-1", WorkflowStepID: "step-2", Title: "Moved"}
+	d.taskWriter.moveResult = &TaskMoveResult{
+		Task:         &taskmodels.Task{ID: "task-1", WorkspaceID: "workspace-1", WorkflowID: "workflow-1", WorkflowStepID: "step-2", Title: "Moved"},
+		Transitioned: true,
+		FromStepID:   "step-1",
+	}
 	d.messenger.result = PluginMessageResult{SessionID: "session-1", Status: "queued"}
 
 	svc := &Service{
@@ -180,8 +184,11 @@ func TestWebAppProtocolTaskWorkflowAndMessageRoutesUseHostAdapters(t *testing.T)
 	patch := httptest.NewRecorder()
 	patchRequest := httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"workflow_step_id":"step-2"}`))
 	svc.handleWebAppProtocol(patch, patchRequest, "", binding, "v1/data/tasks/task-1")
-	if patch.Code != http.StatusOK || d.taskWriter.lastUpdate.WorkflowStepID == nil || *d.taskWriter.lastUpdate.WorkflowStepID != "step-2" {
-		t.Fatalf("task patch = %d %s, input = %+v", patch.Code, patch.Body.String(), d.taskWriter.lastUpdate)
+	if patch.Code != http.StatusOK || d.taskWriter.moveCalls != 1 || d.taskWriter.lastMove.TaskID != "task-1" || d.taskWriter.lastMove.WorkflowStepID != "step-2" {
+		t.Fatalf("task patch = %d %s, move input = %+v", patch.Code, patch.Body.String(), d.taskWriter.lastMove)
+	}
+	if d.taskWriter.updateCalls != 0 {
+		t.Fatalf("workflow-step patch used UpdateTask %d times", d.taskWriter.updateCalls)
 	}
 
 	message := httptest.NewRecorder()

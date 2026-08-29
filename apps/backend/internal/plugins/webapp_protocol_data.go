@@ -92,6 +92,14 @@ type webAppTaskPatch struct {
 	WorkflowStepID *string `json:"workflow_step_id"`
 }
 
+func (p webAppTaskPatch) hasChanges() bool {
+	return p.Title != nil || p.Description != nil || p.State != nil || p.WorkflowStepID != nil
+}
+
+func (p webAppTaskPatch) hasTaskFields() bool {
+	return p.Title != nil || p.Description != nil || p.State != nil
+}
+
 func (s *Service) updateWebAppTask(ctx context.Context, w http.ResponseWriter, r *http.Request, host *pluginHost, binding webapp.CapabilityBinding, taskID string) {
 	if !validWebAppKey(taskID) {
 		writeWebAppError(w, http.StatusNotFound, "not_found")
@@ -107,16 +115,39 @@ func (s *Service) updateWebAppTask(ctx context.Context, w http.ResponseWriter, r
 		return
 	}
 	var patch webAppTaskPatch
-	if err := decodeWebAppJSON(r, &patch); err != nil || patch.Title == nil && patch.Description == nil && patch.State == nil && patch.WorkflowStepID == nil {
+	if err := decodeWebAppJSON(r, &patch); err != nil || !patch.hasChanges() {
 		writeWebAppError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	updated, err := host.Tasks().Update(ctx, pluginsdk.UpdateTaskInput{
-		ID: taskID, Title: patch.Title, Description: patch.Description,
-		State: patch.State, WorkflowStepID: patch.WorkflowStepID,
-	})
-	if err != nil {
-		writeWebAppError(w, webAppProtocolStatus(err), webAppErrorCode(err))
+	var updated *pluginsdk.Task
+	if patch.hasTaskFields() {
+		updated, err = host.Tasks().Update(ctx, pluginsdk.UpdateTaskInput{
+			ID: taskID, Title: patch.Title, Description: patch.Description, State: patch.State,
+		})
+		if err != nil {
+			writeWebAppError(w, webAppProtocolStatus(err), webAppErrorCode(err))
+			return
+		}
+	}
+	if patch.WorkflowStepID != nil {
+		// Keep the browser PATCH contract, but route transitions through Move so
+		// workflow hooks, active-session guards, and step history stay intact.
+		outcome, moveErr := host.Tasks().Move(ctx, pluginsdk.MoveTaskInput{
+			TaskID:         taskID,
+			WorkflowStepID: *patch.WorkflowStepID,
+		})
+		if moveErr != nil {
+			writeWebAppError(w, webAppProtocolStatus(moveErr), webAppErrorCode(moveErr))
+			return
+		}
+		if outcome == nil || outcome.Task == nil {
+			writeWebAppError(w, http.StatusInternalServerError, webAppRuntimeUnavailable)
+			return
+		}
+		updated = outcome.Task
+	}
+	if updated == nil {
+		writeWebAppError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
 	writeWebAppJSON(w, r, http.StatusOK, webAppTaskFromSDK(*updated))

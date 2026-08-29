@@ -60,11 +60,11 @@ test.describe("Plugin-backed canvases in the desktop task workbench", () => {
       await expect(fixture.getByTestId("canvas-fixture-step-id")).not.toHaveText("loading");
       await expect(fixture.getByTestId("canvas-fixture-sse-status")).toHaveText("connected");
 
-      await fixture.getByTestId("canvas-fixture-continue").dispatchEvent("click");
-      await expect(fixture.getByTestId("canvas-fixture-message-status")).toHaveText("accepted");
-
       await fixture.getByTestId("canvas-fixture-move").dispatchEvent("click");
       await expect(fixture.getByTestId("canvas-fixture-move-status")).toHaveText(/moved:/);
+
+      await fixture.getByTestId("canvas-fixture-continue").dispatchEvent("click");
+      await expect(fixture.getByTestId("canvas-fixture-message-status")).toHaveText("accepted");
       await expect
         .poll(async () =>
           Number(await fixture.getByTestId("canvas-fixture-sse-events").textContent()),
