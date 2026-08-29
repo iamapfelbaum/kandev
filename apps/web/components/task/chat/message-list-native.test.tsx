@@ -460,6 +460,9 @@ describe("useScrollToDividerOrBottom — anchored-bar offset", () => {
     // Model the browser temporarily reducing the maximum scroll offset while
     // the composer clears, before the appended transcript row is committed.
     scrollContainer.scrollTop = 568;
+    act(() => {
+      scrollContainer.dispatchEvent(new Event("scroll"));
+    });
     rerender(
       <AutoScrollHarness
         isWorking
@@ -470,6 +473,32 @@ describe("useScrollToDividerOrBottom — anchored-bar offset", () => {
     );
 
     expect(scrollContainer.scrollTop).toBe(600);
+  });
+
+  it("adopts an offset from an explicit user scroll while disabled", () => {
+    const { rerender } = render(
+      <AutoScrollHarness isWorking={false} hasUnreadDivider={false} enabled />,
+    );
+    const scrollContainer = screen.getByTestId("auto-scroll-container");
+    setScrollMetrics(scrollContainer);
+    scrollContainer.scrollTop = 600;
+
+    rerender(<AutoScrollHarness isWorking={false} hasUnreadDivider={false} enabled={false} />);
+    act(() => {
+      scrollContainer.dispatchEvent(new Event("wheel"));
+      scrollContainer.scrollTop = 400;
+      scrollContainer.dispatchEvent(new Event("scroll"));
+    });
+    rerender(
+      <AutoScrollHarness
+        isWorking
+        hasUnreadDivider={false}
+        enabled={false}
+        messages={[...TEST_MESSAGES, {} as Message]}
+      />,
+    );
+
+    expect(scrollContainer.scrollTop).toBe(400);
   });
 
   it("never re-scrolls once the reader has started scrolling, even if the anchored bar's height changes afterward", () => {
