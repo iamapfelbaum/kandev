@@ -11,16 +11,14 @@ owners:
 
 ## Purpose
 
-The UI system owns desktop and mobile web presentation.
+UI owns web presentation.
 
 ## Ownership
 
-It owns navigation, settings, boards, task/review surfaces, walkthroughs, chat
-controls, visual feedback, and responsive interaction contracts, but not
-backend state.
+UI owns navigation, settings, boards, task/review surfaces, walkthroughs, chat
+controls, visual feedback, and responsive interactions, but not backend state.
 
-Provider/task systems own their stateful controls. UI owns reusable,
-independent presentation contracts.
+Provider/task systems own stateful controls. UI owns reusable contracts.
 
 ## Exclusions
 
@@ -55,6 +53,7 @@ independent presentation contracts.
 - [Command-panel Sidebar Task Reveal](requirements/command-panel-sidebar-task-reveal.md)
 - [Compact Workflow Step Navigation](requirements/compact-workflow-step-navigation.md)
 - [Comment Markdown Rendering](requirements/comment-markdown.md)
+- [Mention recency](requirements/composer-mention-recency.md)
 - [Composer Suggestion Overlays](requirements/composer-suggestion-overlays.md)
 - [Context Compaction Count](requirements/context-compaction-count.md)
 - [Context Window Reset Freshness](requirements/context-window-reset-freshness.md)
@@ -152,6 +151,7 @@ independent presentation contracts.
 - [Agent Todo List Panel](system-design/agent-todo-list-panel.md)
 - [App Status Bar](system-design/app-status-bar.md)
 - [Changes File Row Containment](system-design/changes-file-row-containment.md)
+- [Mention recency](system-design/composer-mention-recency.md)
 - [Composer Suggestion Overlays](system-design/composer-suggestion-overlays.md)
 - [Compact Workflow Step Navigation](system-design/compact-workflow-step-navigation.md)
 - [Per-workflow column visibility on the kanban board System Design Part 1](system-design/board-step-visibility-filter-01.md)
@@ -183,11 +183,10 @@ independent presentation contracts.
 
 ## Migration record
 
-Legacy source detail is still moving to the canonical requirement and
-system-design documents above.
+Legacy detail is moving to the requirement and system-design documents above.
 
 ## Related systems
 
-- [Tasks](../tasks/README.md): supplies task and workflow state.
-- [Plugins](../plugins/README.md): supplies plugin contributions.
-- [Platform](../platform/README.md): supplies shared runtime state.
+- [Tasks](../tasks/README.md): task and workflow state.
+- [Plugins](../plugins/README.md): plugin contributions.
+- [Platform](../platform/README.md): shared runtime state.
