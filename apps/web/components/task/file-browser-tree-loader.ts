@@ -154,10 +154,10 @@ function applyCompletedTree({
   retry: () => void;
 }): boolean {
   if (!completed) return false;
-  // An executor workspace can briefly expose an empty root while its
-  // repository is materializing. Keep the result provisional for a bounded
-  // period so the Files panel does not cache an empty tree prematurely.
-  if (!completed.root || (completed.root.children?.length ?? 0) === 0) {
+  // An executor workspace can briefly expose an existing root with no
+  // children while its repository is materializing. A null root is a valid
+  // empty workspace result and must settle immediately.
+  if (completed.root && (completed.root.children?.length ?? 0) === 0) {
     const retryScheduled = scheduleEmptyTreeRetry({
       isCurrentLoad,
       owner,

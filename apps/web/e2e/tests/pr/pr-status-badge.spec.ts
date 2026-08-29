@@ -679,6 +679,9 @@ test.describe("PR status badge", () => {
     await icon.hover();
 
     const multiSummary = visibleTaskPRSummary(testPage);
+    // The second association updates the icon while the disclosure is closed.
+    // Wait for the tooltip itself to reopen before querying its refreshed rows.
+    await expect(multiSummary).toBeVisible({ timeout: 15_000 });
     const entries = multiSummary.getByTestId("pr-task-status-entry");
     await expect(entries).toHaveCount(2);
     await expect(entries.nth(0).getByTestId("pr-task-status-number")).toHaveText("PR #2966");
