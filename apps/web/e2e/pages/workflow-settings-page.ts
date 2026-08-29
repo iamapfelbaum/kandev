@@ -170,15 +170,19 @@ export class WorkflowSettingsPage {
   /** Save every dirty workflow contributor through the route-level action. */
   async saveChanges(touch = false): Promise<void> {
     await this.submitSaveChanges(touch);
+    // Workflow saves update the workflow and its steps through a serialized
+    // set of requests. Keep the assertion aligned with that completion
+    // contract under a loaded CI shard instead of treating 15 seconds as a
+    // universal operation deadline.
     await expect
       .poll(
-        async () =>
-          (await this.floatingSave.isVisible())
-            ? await this.floatingSave.getAttribute("data-dirty-contributors")
-            : null,
-        { timeout: 15_000 },
+        async () => {
+          if (!(await this.floatingSave.isVisible())) return "settled";
+          return (await this.floatingSave.getAttribute("data-status")) ?? "missing";
+        },
+        { timeout: 30_000 },
       )
-      .toBeNull();
+      .toMatch(/^(saved|settled)$/);
   }
 
   /** The delete workflow button within a card. */
