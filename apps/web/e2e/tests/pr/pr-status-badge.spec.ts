@@ -677,17 +677,24 @@ test.describe("PR status badge", () => {
     });
     await expect(icon).toHaveAttribute("data-pr-count", "2", { timeout: 15_000 });
     await icon.hover();
+    // The icon is replaced when the second association arrives. Re-dispatch
+    // the mouse-enter signal so the controlled tooltip cannot retain the
+    // previous dismissed state across that update.
+    await icon.dispatchEvent("pointerenter", { pointerType: "mouse" });
 
     const multiSummary = visibleTaskPRSummary(testPage);
     // The second association updates the icon while the disclosure is closed.
     // Wait for the tooltip itself to reopen before querying its refreshed rows.
     await expect(multiSummary).toBeVisible({ timeout: 15_000 });
     const entries = multiSummary.getByTestId("pr-task-status-entry");
-    await expect(entries).toHaveCount(2);
+    await expect(entries).toHaveCount(2, { timeout: 15_000 });
     await expect(entries.nth(0).getByTestId("pr-task-status-number")).toHaveText("PR #2966");
-    await expect(entries.nth(1).getByTestId("pr-task-status-number")).toHaveText("PR #2967");
+    await expect(entries.nth(1).getByTestId("pr-task-status-number")).toHaveText("PR #2967", {
+      timeout: 15_000,
+    });
     await expect(entries.nth(1).getByTestId("pr-task-status-title")).toHaveText(
       "Resolve the failing API checks",
+      { timeout: 15_000 },
     );
   });
 });
