@@ -6,7 +6,7 @@ system: plugins
 owners:
   - kandev
 created: 2026-08-26
-last_updated: 2026-08-28
+last_updated: 2026-08-30
 ---
 
 # Isolated plugin web-application contributions Requirements
@@ -251,6 +251,25 @@ runtime protocol while Kandev retains their releases.
 - **AC-PLUGINS-ISOLATED-WEB-APPS-010.5:** Storage metrics shall report bounded
   counts and bytes without package names, paths, or content.
 
+### REQ-PLUGINS-ISOLATED-WEB-APPS-011: Host appearance context
+
+**Intent:** An isolated web application matches the current Kandev appearance
+without receiving host authority.
+
+#### Acceptance criteria
+
+- **AC-PLUGINS-ISOLATED-WEB-APPS-011.1:** Before Kandev reveals an isolated web
+  application, the host shall provide its resolved light or dark mode and a
+  bounded set of semantic colors.
+- **AC-PLUGINS-ISOLATED-WEB-APPS-011.2:** When the user changes the Kandev
+  theme, an open web application shall receive the new appearance without a
+  browser reload.
+- **AC-PLUGINS-ISOLATED-WEB-APPS-011.3:** The appearance contract shall be
+  versioned, presentation-only, and shall not provide Kandev data, identity,
+  credentials, host APIs, or DOM access.
+- **AC-PLUGINS-ISOLATED-WEB-APPS-011.4:** The same appearance behavior shall
+  apply to direct desktop routes, task panels, and phone hosts.
+
 ## Out of scope
 
 - A second JavaScript SDK for canvases.
@@ -260,3 +279,4 @@ runtime protocol while Kandev retains their releases.
 - Automatic approval of new permissions.
 - A host process for agent-generated backend code.
 - General-purpose plugin placement in every Kandev UI surface.
+- A general bidirectional iframe SDK or privileged message bridge.

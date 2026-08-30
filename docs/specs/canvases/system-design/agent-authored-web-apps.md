@@ -6,7 +6,7 @@ system: canvases
 owners:
   - canvases
 created: 2026-08-26
-last_updated: 2026-08-27
+last_updated: 2026-08-30
 requirements:
   - REQ-CANVASES-AGENT-WEB-APPS-001
   - REQ-CANVASES-AGENT-WEB-APPS-002
@@ -16,6 +16,7 @@ requirements:
   - REQ-CANVASES-AGENT-WEB-APPS-006
   - REQ-CANVASES-AGENT-WEB-APPS-007
   - REQ-CANVASES-AGENT-WEB-APPS-008
+  - REQ-CANVASES-AGENT-WEB-APPS-009
 ---
 
 # Agent-authored web-app canvases system design
@@ -46,6 +47,7 @@ This design supersedes
 | `REQ-CANVASES-AGENT-WEB-APPS-006` | Mobile design contract                 |
 | `REQ-CANVASES-AGENT-WEB-APPS-007` | Host state and recovery, Observability |
 | `REQ-CANVASES-AGENT-WEB-APPS-008` | Authoring admission and limits         |
+| `REQ-CANVASES-AGENT-WEB-APPS-009` | Guided canvas task launch              |
 
 ## System relationship
 
@@ -205,8 +207,31 @@ wire. Cancellation stops traversal and closes the stream. The backend sends the
 stream directly to the plugin validator and does not make one JSON request for
 each file.
 
-The task UI can include a Create canvas action. That action sends a prepared
-prompt to the active task agent. It does not create an empty canvas itself.
+## Guided canvas task launch
+
+The desktop sidebar and workspace Canvases settings page use one shared canvas
+task preset. The preset opens the standard `TaskCreateDialog`. It does not
+create canvas metadata or add a canvas-only form.
+
+The preset supplies:
+
+- a localized task title and canvas-authoring prompt
+- repository-free source mode with an empty scratch path
+- a preference for an eligible local executor profile
+- the selected workspace
+
+The normal dialog continues to own workflow, workflow step, agent profile, and
+executor compatibility. The workflow and agent profile remain editable. The
+executor preference uses capability-based selection and never stores a profile
+identifier in the preset.
+
+Successful task creation follows the normal task route. The user continues the
+conversation there, and the task agent uses the authoring lifecycle. The same
+full-screen task dialog serves the workspace settings action on a phone. The
+desktop sidebar does not exist at that viewport.
+
+All launch surfaces remain behind `features.canvases`. A disabled client does
+not request canvas counts, add a settings tab, or register the task preset.
 
 ## Agent authoring guidance
 
@@ -219,17 +244,24 @@ change user-owned skills.
 
 Kanban task agents do not receive this skill in `.agents/skills`,
 `.claude/skills`, or another task-workspace skill directory. The Canvas MCP
-server reads the canonical file from the Kandev home directory and returns it
-through `read_canvas_authoring_skill_kandev`. The optional `path` input selects
-`SKILL.md` or a supporting file from the embedded inventory. The handler rejects
-absolute paths, traversal, links, and files outside that inventory. This keeps
-local, Docker, and remote executors on one read contract without copying the
-skill into the task workspace.
+server reads the canonical files from the Kandev home directory and returns
+them through `read_canvas_authoring_skill_kandev`. A call without a path returns
+one compact core bundle. The bundle contains the complete normal workflow,
+manifest contract, browser protocol summary, appearance rules, minimal
+scaffold, and exact supporting-file inventory. The optional `path` input reads
+one detailed reference from that inventory.
 
-`create_canvas_kandev` returns the system-skill slug, version, and an explicit
-instruction to call `read_canvas_authoring_skill_kandev` before the agent writes
-source. Canvas edit Quick Chat prompts give the same instruction. The agent
-loads supporting references only when the main skill directs it to them.
+The handler rejects absolute paths, traversal, links, and files outside the
+inventory. It does not return a Kandev host path to the agent. This rule keeps
+local, Docker, and remote executors on one contract without copying the skill
+into the task workspace.
+
+`create_canvas_kandev` materializes the version-matched minimal scaffold in the
+assigned source directory. It returns the system-skill slug, version, exact
+scaffold inventory, and an instruction to make at most one core skill-read
+call. Canvas edit Quick Chat prompts give the same instruction. After the core
+read, agents use their native file tools for the scaffold and request a
+detailed reference only when the core bundle directs them to it.
 
 Office role and operating skills keep their existing per-task workspace
 deployment. The canvas-authoring read path does not change Office skill
@@ -248,6 +280,7 @@ The canvas-authoring skill tells the agent to:
   available
 - publish after local build checks
 - read validation diagnostics and correct rejected releases
+- use semantic appearance variables and apply live host appearance messages
 
 Supporting files include the browser API, manifest, data and state, events and
 recovery, security, and UI pattern references. The scaffold includes a minimal
@@ -426,34 +459,57 @@ declared events through the plugin Server-Sent Events protocol.
 
 ## Desktop information architecture
 
-Keep the first-party folded Canvases section. It lists active workspace
-canvases for the active workspace. It does not list task canvases.
+Keep the first-party Canvases section folded on first use. A direct canvas
+route does not force it open. An explicit user toggle remains in the persisted
+sidebar preference. The section lists active workspace canvases for the active
+workspace. It does not list task canvases.
 
 The section contains:
 
 - a workspace canvas count
 - one row for each active workspace canvas
+- a Create canvas shortcut
 - a settings shortcut
 - an empty setup row that opens canvas guidance
 
-The sidebar has no New canvas or Import canvas action. A user creates a canvas
-from a task conversation.
+The Create canvas shortcut opens the guided task launch. There is no package
+import or blank canvas action.
 
 Routes are:
 
 - `/canvases/:canvasId` for the focused host surface
 - `/settings/workspaces/:workspaceId/canvases` for workspace canvas management
 
-The settings page shows active and archived workspace canvases. It supports
-open, edit, permissions, releases, archive, restore, and remove. It does not
-create or import canvases.
+The shared feature-aware workspace tab catalog includes Canvases. The settings
+tree, tab strip, headings, and links derive from this catalog. The Canvases page
+uses `WorkspaceSettingsShell`, shows active and archived workspace canvases,
+and supports open, create through a task, edit, permissions, releases, archive,
+restore, and remove. It does not import packages or create a blank canvas.
+
+Wide workspace cards add an active-canvas count tile and include that count in
+the resource total. Narrow cards retain the current readable tile widths and
+omit the canvas tile. The settings tab remains available at every supported
+width. Canvas count requests do not run while the feature is disabled.
 
 The task workbench uses one generic canvas panel. The panel receives
 `canvasId`, resolves the active release, and renders the shared web-application
 host. Multiple task canvases use one picker and one panel type.
 
+The task workbench watches committed canvas lifecycle invalidations. When the
+active task receives its first activated or pending-permission release, it adds
+and activates `canvas:<canvasId>`. It does not add a duplicate panel or take
+focus for another task. A pending release opens the host recovery state instead
+of an empty iframe. On a phone, the same event navigates to the focused canvas
+route because Dockview is not mounted.
+
 Host chrome stays outside the iframe. Desktop chrome shows the title, runtime
 state, Edit, Promote for task canvases, Open full canvas, and an overflow menu.
+Release, permission, promotion, and disabled controls have pointer and keyboard
+help. The mobile action drawer shows equivalent descriptions without hover.
+
+The Dockview canvas renderer provides a full-height flex boundary around the
+persistent portal. The shared host and iframe then fill the area below host
+chrome. This change does not alter the direct route or phone viewport formula.
 
 ## Mobile design contract
 
@@ -469,6 +525,10 @@ state, Edit, Promote for task canvases, Open full canvas, and an overflow menu.
   or a desktop sidebar.
 - **Navigation:** Use one focused canvas. Use an inset bottom drawer to choose
   another canvas or a host action.
+- **Creation:** Keep Create canvas visible on workspace Canvases settings. Open
+  the standard full-screen task dialog with the shared canvas preset.
+- **Action help:** Show lifecycle action descriptions inside the action drawer.
+  Do not require hover.
 - **Geometry:** Give the iframe the remaining viewport after fixed host chrome.
   Use one host scroll owner, safe-area padding, and 44-pixel host controls.
 - **Application responsibility:** The canvas package owns responsive layout
@@ -572,13 +632,18 @@ tokens.
   conflicts, and forbidden lifecycle actions.
 - Gateway tests cover lifecycle event scope and content limits.
 - Frontend tests cover sidebar filtering, task picker, host state, promotion,
-  permission review, release history, and Quick Chat launch.
+  permission review, release history, Quick Chat launch, task presets,
+  workspace tab catalogs, card breakpoints, action help, and panel
+  deduplication.
 - Desktop Playwright covers agent creation, live task data, promotion, sidebar
-  discovery, editing, a pending permission, activation, and rollback.
+  discovery, task-based creation, automatic panel opening, host geometry,
+  editing, a pending permission, activation, and rollback.
 - Mobile Playwright covers task entry, workspace navigation, the focused route,
-  bottom drawer, 44-pixel host controls, safe areas, and no host overflow.
+  task-based creation, bottom drawer help, 44-pixel host controls, safe areas,
+  and no host overflow.
 - A test web application covers HTML, CSS, JavaScript, state, task reads,
-  task writes, Server-Sent Events, desktop layout, and phone layout.
+  task writes, Server-Sent Events, appearance changes, desktop layout, and phone
+  layout.
 
 ## Related decisions
 

@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Date:** 2026-08-26
-**Updated:** 2026-08-27
+**Updated:** 2026-08-30
 **Area:** backend, frontend, protocol, plugins, security
 
 ## Context
@@ -44,6 +44,10 @@ Kandev will not inject a canvas JavaScript object. The application will use
 relative HTTP and Server-Sent Events endpoints that the plugin runtime owns.
 Those endpoints will expose only the effective manifest capabilities and the
 authorized canvas scope.
+
+The host can send a versioned, one-way appearance envelope to the iframe. The
+envelope contains only the resolved color mode and bounded semantic colors. It
+does not create a host API or grant authority.
 
 The effective permission set is the intersection of these values:
 
@@ -105,6 +109,8 @@ behind `features.canvases`, with all profile defaults set to `false`.
 - Canvas authoring does not add a bundled skill to Office workspaces.
 - Operators can keep every canvas entry point disabled through one backend
   feature gate.
+- Isolated applications can match live Kandev appearance without sharing host
+  state or authority.
 
 ## Alternatives Considered
 

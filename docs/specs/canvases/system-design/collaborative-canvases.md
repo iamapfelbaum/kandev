@@ -6,7 +6,7 @@ system: canvases
 owners:
   - canvases
 created: 2026-08-25
-last_updated: 2026-08-26
+last_updated: 2026-08-30
 requirements:
   - REQ-CANVASES-COLLABORATIVE-CANVASES-001
   - REQ-CANVASES-COLLABORATIVE-CANVASES-002
@@ -25,6 +25,9 @@ requirements:
 
 This design is not the current canvas design. It is replaced by
 [Agent-authored web-app canvases](agent-authored-web-apps.md).
+
+Its blank native-canvas dialog, import flow, and prohibition on sidebar
+creation actions are historical. They do not constrain the replacement design.
 
 ## Design summary
 

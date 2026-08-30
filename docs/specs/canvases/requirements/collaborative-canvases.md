@@ -6,13 +6,17 @@ system: canvases
 owners:
   - canvases
 created: 2026-08-25
-last_updated: 2026-08-26
+last_updated: 2026-08-30
 ---
 
 # Collaborative canvases
 
 This requirement is not the current canvas contract. It is replaced by
 [Agent-authored web-app canvases](agent-authored-web-apps.md).
+
+Its native-block creation, import, and sidebar-action rules do not apply to the
+current product. The replacement contract uses a normal task and an agent to
+create a canvas application.
 
 ## Summary
 

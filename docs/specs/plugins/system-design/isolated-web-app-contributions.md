@@ -6,7 +6,7 @@ system: plugins
 owners:
   - kandev
 created: 2026-08-26
-last_updated: 2026-08-28
+last_updated: 2026-08-30
 requirements:
   - REQ-PLUGINS-ISOLATED-WEB-APPS-001
   - REQ-PLUGINS-ISOLATED-WEB-APPS-002
@@ -18,6 +18,7 @@ requirements:
   - REQ-PLUGINS-ISOLATED-WEB-APPS-008
   - REQ-PLUGINS-ISOLATED-WEB-APPS-009
   - REQ-PLUGINS-ISOLATED-WEB-APPS-010
+  - REQ-PLUGINS-ISOLATED-WEB-APPS-011
 ---
 
 # Isolated plugin web-application contributions system design
@@ -51,6 +52,7 @@ It extends the data boundary from
 | `REQ-PLUGINS-ISOLATED-WEB-APPS-008` | Plugin instance model, Compatibility             |
 | `REQ-PLUGINS-ISOLATED-WEB-APPS-009` | Diagnostics and observability                    |
 | `REQ-PLUGINS-ISOLATED-WEB-APPS-010` | Artifact storage, Protocol compatibility         |
+| `REQ-PLUGINS-ISOLATED-WEB-APPS-011` | Host appearance protocol                         |
 
 ## Existing plugin contracts
 
@@ -264,7 +266,7 @@ The component renders an iframe with these rules:
 - The sandbox omits `allow-same-origin`, top navigation, and popups.
 - The iframe does not receive Kandev cookies or authorization headers.
 - The host does not inject a JavaScript object or use a privileged message
-  bridge.
+  bridge. It can send the presentation-only appearance envelope below.
 - The host chrome contains status, navigation, permissions, releases, and
   lifecycle actions.
 
@@ -279,9 +281,59 @@ runtime `frame-ancestors` policy permits the configured web host,
 `tauri://localhost`, and `http://tauri.localhost`. It denies other parents.
 Desktop packaging tests cover both Tauri origin forms and direct browser use.
 
-The iframe can use `prefers-color-scheme` and responsive CSS. The runtime can
-set `color-scheme` metadata in the document response. Theme access does not
-require a host API.
+The iframe can use `prefers-color-scheme` and responsive CSS as fallbacks. The
+host appearance protocol supplies the exact active Kandev semantic colors.
+
+## Host appearance protocol
+
+The isolated runtime has one host-to-frame presentation message. Version 1 has
+this shape:
+
+```json
+{
+  "type": "kandev.web_app.appearance",
+  "version": 1,
+  "mode": "dark",
+  "tokens": {
+    "background": "...",
+    "foreground": "...",
+    "card": "...",
+    "cardForeground": "...",
+    "muted": "...",
+    "mutedForeground": "...",
+    "border": "...",
+    "primary": "...",
+    "primaryForeground": "...",
+    "accent": "...",
+    "accentForeground": "...",
+    "destructive": "...",
+    "destructiveForeground": "...",
+    "ring": "..."
+  }
+}
+```
+
+`WebAppFrame` resolves these values from the current host theme. Each value is
+a bounded serialized CSS color from a fixed key allowlist. The envelope
+contains no identity, capability, data, storage, navigation, or action field.
+
+After the iframe load event, the host sends the initial envelope to that
+iframe's `contentWindow`. The loading cover remains for one animation frame so
+the application can apply the values before it becomes visible. The host sends
+another envelope when the resolved Kandev theme changes. It does not reload the
+iframe.
+
+The opaque iframe has no stable origin, so the host targets its exact window
+with `targetOrigin: "*"`. The application listener accepts only messages whose
+source is `window.parent` and whose type, version, mode, keys, and value bounds
+match the contract. This source check prevents a sibling frame from setting
+appearance values. The wildcard does not grant authority because the payload
+contains public presentation data only.
+
+The bundled scaffold maps the token keys to documented CSS custom properties.
+It includes safe light and dark fallbacks. An application can ignore this
+message, but it does not receive another theme API or a privileged reply
+channel.
 
 ## Runtime token
 
@@ -309,7 +361,7 @@ has sent it to a third-party origin. The WebSocket lifecycle broadcaster sends
 an authority-change notification to the host, and the host unmounts the
 matching iframe immediately. The replacement iframe is mounted only after a
 fresh HTTP metadata and runtime-binding load. This is the revocation boundary
-for direct external requests; Kandev runtime and protocol requests still run
+for direct external requests. Kandev runtime and protocol requests still run
 the binding validator on every request.
 
 The runtime route accepts the capability without an ambient session cookie.
@@ -449,7 +501,7 @@ The response uses a restrictive resource policy:
 - data connections can reach the runtime API
 - approved HTTPS origins can receive explicit `connect-src`, image, or font
   access while the iframe binding is current
-- direct external requests are not server-proxied in this version; lifecycle
+- direct external requests are not server-proxied in this version. Lifecycle
   authority notifications tear down the iframe before a replacement load
 - framing is limited to the Kandev host
 
@@ -555,6 +607,8 @@ state values, bodies, payloads, runtime capabilities, and user credentials.
 - Event tests cover scope filtering, reconnect replay, generation changes, and
   resync.
 - Frontend component tests cover host state and iframe lifecycle.
+- Appearance tests cover initial delivery, source validation, token bounds,
+  live changes, and computed colors in direct, Dockview, and phone hosts.
 
 ## Related decisions
 

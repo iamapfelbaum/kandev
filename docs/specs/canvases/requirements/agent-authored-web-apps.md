@@ -6,7 +6,7 @@ system: canvases
 owners:
   - canvases
 created: 2026-08-26
-last_updated: 2026-08-27
+last_updated: 2026-08-30
 ---
 
 # Agent-authored web-app canvases Requirements
@@ -46,8 +46,9 @@ the task, so that the interface matches the work.
 - **AC-CANVASES-AGENT-WEB-APPS-001.1:** When a user requests a canvas from a
   task, the active task agent shall create the canvas draft in that task
   context.
-- **AC-CANVASES-AGENT-WEB-APPS-001.2:** When the agent publishes a valid first
-  release, the task shall show the canvas without a browser reload.
+- **AC-CANVASES-AGENT-WEB-APPS-001.2:** When the agent publishes a first
+  release, the open task shall show its ready or permission-review canvas host
+  without a browser reload or manual panel action.
 - **AC-CANVASES-AGENT-WEB-APPS-001.3:** When an agent session creates a canvas,
   the canvas shall belong to the trusted task and workspace from that session.
 - **AC-CANVASES-AGENT-WEB-APPS-001.4:** Agent input shall not select another
@@ -60,6 +61,12 @@ the task, so that the interface matches the work.
 - **AC-CANVASES-AGENT-WEB-APPS-001.7:** When the canvas feature is disabled,
   Kandev shall not expose canvas tools, routes, events, background work, or user
   interface entries.
+- **AC-CANVASES-AGENT-WEB-APPS-001.8:** The authoring guidance shall provide a
+  complete core workflow and exact file inventory with at most one required
+  skill-read operation.
+- **AC-CANVASES-AGENT-WEB-APPS-001.9:** Local, container, and remote task
+  agents shall use the same authoring contract without access to a Kandev host
+  file path.
 
 ### REQ-CANVASES-AGENT-WEB-APPS-002: Durable source and releases
 
@@ -139,7 +146,8 @@ I do not need to maintain its source manually.
 - **AC-CANVASES-AGENT-WEB-APPS-005.1:** A task shall list its task canvases and
   workspace canvases that apply to the task workspace.
 - **AC-CANVASES-AGENT-WEB-APPS-005.2:** The desktop sidebar shall list active
-  workspace canvases in a folded Canvases section for the active workspace.
+  workspace canvases in a Canvases section that starts folded. Opening a canvas
+  route shall not expand the section.
 - **AC-CANVASES-AGENT-WEB-APPS-005.3:** The sidebar shall not list task-only,
   archived, disabled, invalid, or pending-permission canvases.
 - **AC-CANVASES-AGENT-WEB-APPS-005.4:** When a user opens a canvas from a task,
@@ -149,6 +157,14 @@ I do not need to maintain its source manually.
   route.
 - **AC-CANVASES-AGENT-WEB-APPS-005.6:** Host controls for Edit, Promote,
   Permissions, Releases, Archive, and Remove shall remain outside canvas code.
+- **AC-CANVASES-AGENT-WEB-APPS-005.7:** When a user explicitly expands or
+  folds the Canvases sidebar section, Kandev shall retain that preference.
+- **AC-CANVASES-AGENT-WEB-APPS-005.8:** When canvases are enabled, workspace
+  settings shall show a Canvases tab and shall include the active canvas count
+  in workspace summaries that have room for it.
+- **AC-CANVASES-AGENT-WEB-APPS-005.9:** A narrow workspace summary shall keep
+  the Canvases tab available without compressing the summary tiles into
+  unreadable labels.
 
 ### REQ-CANVASES-AGENT-WEB-APPS-006: Responsive host surface
 
@@ -170,6 +186,9 @@ canvas through native Kandev navigation.
   overflow at supported phone widths.
 - **AC-CANVASES-AGENT-WEB-APPS-006.6:** The application viewport shall receive
   the available size without a compressed desktop workbench.
+- **AC-CANVASES-AGENT-WEB-APPS-006.7:** Release, permission, and promotion
+  controls shall explain their effect through pointer and keyboard help on
+  desktop and visible descriptions on touch surfaces.
 
 ### REQ-CANVASES-AGENT-WEB-APPS-007: Visible runtime and release state
 
@@ -206,6 +225,29 @@ publish operations.
   limit error shall return a stable code and preserve the active release.
 - **AC-CANVASES-AGENT-WEB-APPS-008.4:** Archived canvases shall count toward
   canvas and storage limits until a user removes them.
+
+### REQ-CANVASES-AGENT-WEB-APPS-009: Guided canvas task launch
+
+**Intent:** A user starts canvas authoring through a normal task without
+configuring repository state that the canvas does not need.
+
+**User story:** As a user, I want a guided canvas task, so that I can choose an
+agent and review the canvas in the same task.
+
+#### Acceptance criteria
+
+- **AC-CANVASES-AGENT-WEB-APPS-009.1:** When canvases are enabled, the desktop
+  sidebar and workspace Canvases settings shall offer a Create canvas action.
+- **AC-CANVASES-AGENT-WEB-APPS-009.2:** The action shall open the standard task
+  creation flow with a localized canvas title and prompt, no repository, an
+  empty scratch path, and an eligible local executor preference.
+- **AC-CANVASES-AGENT-WEB-APPS-009.3:** The user shall be able to change the
+  workflow and agent profile before task creation.
+- **AC-CANVASES-AGENT-WEB-APPS-009.4:** After task creation, Kandev shall open
+  the normal task details surface where the user can interact with the agent
+  and review the canvas.
+- **AC-CANVASES-AGENT-WEB-APPS-009.5:** On a phone, workspace Canvases settings
+  shall expose the same task creation flow without a canvas-only form.
 
 ## Out of scope
 
