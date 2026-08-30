@@ -26,7 +26,6 @@ export function MobileViewerBody({
   taskId,
   repositoryId,
   draftContent,
-  baselineContent,
   comments,
   onChange,
   onComment,
@@ -44,7 +43,6 @@ export function MobileViewerBody({
   taskId: string | null;
   repositoryId?: string;
   draftContent: string;
-  baselineContent: string;
   comments: readonly MarkdownComment[];
   onChange: (content: string) => void;
   onComment: (comment: MarkdownCommentSubmission) => void;
@@ -70,7 +68,6 @@ export function MobileViewerBody({
           taskId={taskId}
           repositoryId={repositoryId}
           draftContent={draftContent}
-          baselineContent={baselineContent}
           comments={comments}
           onChange={onChange}
           onComment={onComment}
@@ -102,7 +99,6 @@ function MobileMarkdownSurface({
   taskId,
   repositoryId,
   draftContent,
-  baselineContent,
   comments,
   onChange,
   onComment,
@@ -119,7 +115,6 @@ function MobileMarkdownSurface({
   taskId: string | null;
   repositoryId?: string;
   draftContent: string;
-  baselineContent: string;
   comments: readonly MarkdownComment[];
   onChange: (content: string) => void;
   onComment: (comment: MarkdownCommentSubmission) => void;
@@ -159,7 +154,6 @@ function MobileMarkdownSurface({
         >
           <HybridMarkdownEditor
             content={draftContent}
-            baseline={baselineContent}
             readOnly={false}
             comments={comments}
             onChange={onChange}

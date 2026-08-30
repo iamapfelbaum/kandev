@@ -525,7 +525,6 @@ export function MobileFileViewerPanel({
           taskId={activeTaskId}
           repositoryId={repositoryId}
           draftContent={buffer.draftContent}
-          baselineContent={buffer.baselineContent}
           comments={hybridComments}
           onChange={buffer.handleChange}
           onComment={handleHybridComment}
