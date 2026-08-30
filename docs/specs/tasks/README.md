@@ -36,8 +36,6 @@ signals, and task-scoped scheduling contracts.
 
 ### Requirements
 
-
-
 - [Agent-Generated Task Titles](requirements/agent-generated-titles.md)
 - [Additional Session Workspace Reuse](requirements/additional-session-workspace-reuse.md)
 - [Task Archive Confirmation](requirements/archive-confirmation.md)
@@ -111,10 +109,9 @@ signals, and task-scoped scheduling contracts.
 
 ### System design
 
-
-
 - [Attach Workspace Sources](system-design/attach-workspace-sources.md)
 - [Quick Chat Agent Titles](system-design/quick-chat-agent-titles.md)
+- [Quick Chat Session Resumption](system-design/quick-chat-session-resumption.md)
 - [Active clarification lifecycle](system-design/clarification-active-lifecycle.md)
 - [External task ID idempotency operations](system-design/external-id-idempotency-operations.md)
 - [External task ID idempotency](system-design/external-id-idempotency.md)
@@ -129,12 +126,13 @@ signals, and task-scoped scheduling contracts.
 - [Task Launch Failure Recovery](system-design/task-launch-failure-recovery.md)
 - [WIP Limits and Visible Overflow Queues](system-design/wip-limit-pull-system.md)
 - [Workflow quorum decision recording](system-design/workflow-quorum-decision-recording.md)
+- [Workflow Step Agent Start Ownership](system-design/workflow-step-agent-start-ownership.md)
 - [Workflow Step Fixed-Profile Routing](system-design/workflow-step-fixed-profile-routing.md)
 - [Workflow task-step transition ledger](system-design/workflow-task-step-transition-ledger.md)
 
 ## Migration record
 
-Migration remains in progress. The three requirements above now have
+Migration remains in progress. The four requirements above now have
 authoritative, wrapper-free requirement/design pairs. Other migrated files still
 need the same extraction before this system can return to a complete migration
 state.

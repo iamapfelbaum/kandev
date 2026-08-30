@@ -183,7 +183,7 @@ Read individual ADRs for full context. Create new ones via `/record decision` or
 | 2026-08-15-office-mode-follows-active-workspace | [Office Mode Follows the Active Workspace](2026-08-15-office-mode-follows-active-workspace.md) | accepted | frontend, backend | 2026-08-15 |
 | 2026-08-16-session-mcp-tool-catalog | [Keep MCP Tool Catalogs Session Owned](2026-08-16-session-mcp-tool-catalog.md) | superseded by 2026-08-18-session-mcp-tool-definition-details | backend, agentctl, frontend, protocol, security | 2026-08-16 |
 | 2026-08-18-session-mcp-tool-definition-details | [Bound MCP Tool Definition Details to Current Sessions](2026-08-18-session-mcp-tool-definition-details.md) | accepted | backend, agentctl, frontend, protocol, security | 2026-08-18 |
-| 2026-08-17-separate-task-activity-from-summary-freshness | [Separate Task Activity From Summary Freshness](2026-08-17-separate-task-activity-from-summary-freshness.md) | accepted | backend, frontend, protocol | 2026-08-17 |
+| 2026-08-17-separate-task-activity-from-summary-freshness | [Separate Task Activity From Summary Freshness](2026-08-17-separate-task-activity-from-summary-freshness.md) | accepted (amended 2026-08-29) | backend, frontend, protocol | 2026-08-17 |
 | 2026-08-17-release-pr-ruleset-bypass | [Give Stable Release PRs an Administrator Token Bypass](2026-08-17-release-pr-ruleset-bypass.md) | accepted | infra, workflow, security | 2026-08-17 |
 | 2026-08-18-never-started-agent-stall-terminal | [Treat Never-Started Agent Stalls as Terminal](2026-08-18-never-started-agent-stall-terminal.md) | accepted | backend, frontend, protocol | 2026-08-18 |
 | 2026-08-18-plugin-task-row-metadata | [Keep Task Row Plugin Metadata Generic](2026-08-18-plugin-task-row-metadata.md) | accepted | frontend | 2026-08-18 |
@@ -215,4 +215,6 @@ Read individual ADRs for full context. Create new ones via `/record decision` or
 | 2026-08-27-bounded-agent-profile-recency | [Store Agent Profile Recency in Bounded Context Rows](2026-08-27-bounded-agent-profile-recency.md) | accepted | backend, frontend, protocol | 2026-08-27 |
 | 2026-08-27-protect-deferred-launch-attribution | [Protect Deferred Launch Attribution](2026-08-27-protect-deferred-launch-attribution.md) | accepted | backend, protocol | 2026-08-27 |
 | 2026-08-27-preserve-legacy-sqlite-before-default-initialization | [Preserve Legacy SQLite Data Before Default Initialization](2026-08-27-preserve-legacy-sqlite-before-default-initialization.md) | accepted | backend, cli, operations | 2026-08-27 |
+| 2026-08-27-mixed-git-change-facets | [Preserve mixed Git changes as path facets](2026-08-27-mixed-git-change-facets.md) | accepted | backend, agentctl, frontend, protocol | 2026-08-27 |
 | 2026-08-28-bind-github-auto-merge-attempts-to-reviewed-head | [Bind GitHub Auto-Merge Attempts to the Reviewed Head](2026-08-28-bind-github-auto-merge-attempts-to-reviewed-head.md) | accepted | backend, frontend, protocol, security, GitHub | 2026-08-28 |
+| 2026-08-30-context-reset-quiesces-active-turn | [Quiesce Active Turns Before Context Reset](2026-08-30-context-reset-quiesces-active-turn.md) | accepted | backend, workflow | 2026-08-30 |

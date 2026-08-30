@@ -15,10 +15,9 @@ UI owns web presentation.
 
 ## Ownership
 
-UI owns navigation, settings, boards, task/review surfaces, walkthroughs, chat
-controls, visual feedback, and responsive interactions, but not backend state.
-
-Provider/task systems own stateful controls. UI owns reusable contracts.
+UI owns navigation, settings, boards, task/review, chat, feedback, and
+responsive interaction contracts. Backend state stays with provider and task
+systems.
 
 ## Exclusions
 
@@ -147,6 +146,7 @@ Provider/task systems own stateful controls. UI owns reusable contracts.
 
 ### System design
 
+- [Clarification submit feedback](system-design/clarification-submit-feedback.md)
 - [Growing Dialog Content Containment](system-design/dialog-content-containment.md)
 - [Agent Todo List Panel](system-design/agent-todo-list-panel.md)
 - [App Status Bar](system-design/app-status-bar.md)
@@ -154,8 +154,8 @@ Provider/task systems own stateful controls. UI owns reusable contracts.
 - [Mention recency](system-design/composer-mention-recency.md)
 - [Composer Suggestion Overlays](system-design/composer-suggestion-overlays.md)
 - [Compact Workflow Step Navigation](system-design/compact-workflow-step-navigation.md)
-- [Per-workflow column visibility on the kanban board System Design Part 1](system-design/board-step-visibility-filter-01.md)
-- [Per-workflow column visibility on the kanban board System Design Part 2](system-design/board-step-visibility-filter-02.md)
+- [Workflow column visibility (Part 1)](system-design/board-step-visibility-filter-01.md)
+- [Workflow column visibility (Part 2)](system-design/board-step-visibility-filter-02.md)
 - [Task PR Automation Controls System Design Part 1](system-design/ci-pr-automation-01.md)
 - [Task PR Automation Controls System Design Part 2](system-design/ci-pr-automation-02.md)
 - [Task PR Automation Controls System Design Part 3](system-design/ci-pr-automation-03.md)
@@ -167,6 +167,7 @@ Provider/task systems own stateful controls. UI owns reusable contracts.
 - [Persistent status motion](system-design/persistent-status-motion.md)
 - [Repository Groups](system-design/sidebar-repository-grouping.md)
 - [Sidebar Task Focus](system-design/sidebar-task-focus.md)
+- [Sidebar task row](system-design/sidebar-task-row-presentation.md)
 - [PR Task Status Summary](system-design/pr-task-status-summary.md)
 - [Prompt History Panel](system-design/prompt-history-panel.md)
 - [Quick Chat and terminal elevation](system-design/quick-chat-elevation.md)

@@ -162,6 +162,10 @@ func isTransientPromptError(err error) bool {
 	if err == nil {
 		return false
 	}
+	var pendingCompletionTimeout *lifecycle.PendingDispatchedPromptTimeoutError
+	if errors.As(err, &pendingCompletionTimeout) {
+		return true
+	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "agent stream disconnected") ||
 		strings.Contains(msg, "use of closed network connection")
@@ -4673,6 +4677,9 @@ func (s *Service) claimSessionRunningForPrompt(
 	if err := s.waitForCancellationWithGuard(ctx, sessionID, lock.Unlock, lock.Lock); err != nil {
 		return nil, "", "", false, nil, err
 	}
+	if s.isSessionResetInProgress(sessionID) {
+		return nil, "", "", false, nil, ErrSessionResetInProgress
+	}
 	if expectedCurrentTurnID != "" {
 		if s.turnService == nil {
 			return nil, "", "", false, nil, errors.New("cannot verify expected prompt turn without turn service")
@@ -4772,6 +4779,9 @@ func (s *Service) claimLifecycleSessionRunning(
 	defer lock.Unlock()
 	if err := s.waitForCancellationWithGuard(ctx, sessionID, lock.Unlock, lock.Lock); err != nil {
 		return nil, "", err
+	}
+	if s.isSessionResetInProgress(sessionID) {
+		return nil, "", ErrSessionResetInProgress
 	}
 
 	if claimEntryID != "" && !s.isCurrentQueuedDispatch(sessionID, claimEntryID) {
@@ -6251,18 +6261,23 @@ func (s *Service) reconcileCancelledAgentWorkflow(ctx context.Context, session *
 	if session == nil {
 		return
 	}
+	transitioned := false
 	if completionEligible {
-		s.processOnTurnCompleteViaEngineWithCause(ctx, session.TaskID, session, turnCompletionCauseUserCancellation)
+		transitioned = s.processOnTurnCompleteViaEngineWithCause(
+			ctx, session.TaskID, session, turnCompletionCauseUserCancellation,
+		)
 	}
-	s.reconcileCancelledTaskReview(ctx, session.TaskID, session.ID)
+	s.reconcileCancelledTaskReview(ctx, session.TaskID, session.ID, transitioned)
 }
 
-func (s *Service) reconcileCancelledTaskReview(ctx context.Context, taskID, sessionID string) {
-	task, err := s.repo.GetTask(ctx, taskID)
-	if err == nil && task != nil && task.WorkflowStepID != "" && s.workflowStepGetter != nil {
-		step, stepErr := s.workflowStepGetter.GetStep(ctx, task.WorkflowStepID)
-		if stepErr == nil && step != nil && s.workflowStepIsTerminal(ctx, step.ID) {
-			return
+func (s *Service) reconcileCancelledTaskReview(ctx context.Context, taskID, sessionID string, transitioned bool) {
+	if transitioned {
+		task, err := s.repo.GetTask(ctx, taskID)
+		if err == nil && task != nil && task.WorkflowStepID != "" && s.workflowStepGetter != nil {
+			step, stepErr := s.workflowStepGetter.GetStep(ctx, task.WorkflowStepID)
+			if stepErr == nil && step != nil && s.workflowStepIsTerminal(ctx, step.ID) {
+				return
+			}
 		}
 	}
 	s.writeTaskReviewState(ctx, taskID, sessionID)
