@@ -9,8 +9,17 @@ const mockAppState = {
   taskMRs: { byWorkspaceId: {} as Record<string, Record<string, unknown>> },
 };
 
+// The card body reaches the store two ways: useAppStore for the slices above,
+// and useAppStoreApi for the imperative read the action menu does. A mock that
+// defines only the first throws on render, so the assignee assertions below
+// would fail for a reason that has nothing to do with the assignee.
 vi.mock("@/components/state-provider", () => ({
   useAppStore: (selector: (state: typeof mockAppState) => unknown) => selector(mockAppState),
+  useAppStoreApi: () => ({
+    getState: () => mockAppState,
+    setState: vi.fn(),
+    subscribe: () => () => undefined,
+  }),
 }));
 
 vi.mock("@/lib/api/domains/team-access-api", () => ({
