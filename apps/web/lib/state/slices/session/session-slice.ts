@@ -33,6 +33,7 @@ function ensureMessageMeta(
     metaBySession[sessionId] = {
       isLoading: false,
       isLoadingMore: false,
+      historyInitialized: false,
       hasMore: false,
       oldestCursor: null,
     };
@@ -44,6 +45,7 @@ function applyMessageMeta(
   metaBySession: SessionSliceState["messages"]["metaBySession"],
   sessionId: string,
   meta: {
+    historyInitialized?: boolean;
     hasMore?: boolean;
     oldestCursor?: string | null;
     isLoading?: boolean;
@@ -51,6 +53,9 @@ function applyMessageMeta(
   },
 ) {
   ensureMessageMeta(metaBySession, sessionId);
+  if (meta.historyInitialized !== undefined) {
+    metaBySession[sessionId].historyInitialized = meta.historyInitialized;
+  }
   if (meta.hasMore !== undefined) metaBySession[sessionId].hasMore = meta.hasMore;
   if (meta.isLoading !== undefined) metaBySession[sessionId].isLoading = meta.isLoading;
   if (meta.isLoadingMore !== undefined) metaBySession[sessionId].isLoadingMore = meta.isLoadingMore;
@@ -68,6 +73,17 @@ function mergeMessageFields(target: Record<string, unknown>, source: Record<stri
       target[key] = source[key];
     }
   }
+}
+
+function mergeMessageAtIndex(messages: Message[], message: Message): void {
+  const index = messages.findIndex((candidate) => candidate.id === message.id);
+  if (index === -1) return;
+  const merged = { ...messages[index] };
+  mergeMessageFields(
+    merged as unknown as Record<string, unknown>,
+    message as unknown as Record<string, unknown>,
+  );
+  messages[index] = merged;
 }
 
 /** Return a new messages array with the message matching `messageId` removed. */
@@ -311,14 +327,14 @@ function buildMessageActions(set: ImmerSet) {
       set((draft) => {
         const messages = draft.messages.bySession[message.session_id];
         if (!messages) return;
-        const index = messages.findIndex((m) => m.id === message.id);
-        if (index === -1) return;
-        const merged = { ...messages[index] };
-        mergeMessageFields(
-          merged as unknown as Record<string, unknown>,
-          message as unknown as Record<string, unknown>,
-        );
-        messages[index] = merged;
+        mergeMessageAtIndex(messages, message);
+      }),
+    updateMessages: (messages: Parameters<SessionSlice["updateMessages"]>[0]) =>
+      set((draft) => {
+        for (const message of messages) {
+          const sessionMessages = draft.messages.bySession[message.session_id];
+          if (sessionMessages) mergeMessageAtIndex(sessionMessages, message);
+        }
       }),
     removeMessage: (
       sessionId: Parameters<SessionSlice["removeMessage"]>[0],

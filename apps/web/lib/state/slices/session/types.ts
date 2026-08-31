@@ -19,6 +19,8 @@ export type MessagesState = {
       isLoading: boolean;
       /** Older-page request in flight (set by the shared pagination coordinator). */
       isLoadingMore: boolean;
+      /** True after an authoritative newest-window response or boot payload. */
+      historyInitialized: boolean;
       hasMore: boolean;
       oldestCursor: string | null;
     }
@@ -210,10 +212,15 @@ export type SessionSliceActions = {
   setMessages: (
     sessionId: string,
     messages: Message[],
-    meta?: { hasMore?: boolean; oldestCursor?: string | null },
+    meta?: {
+      historyInitialized?: boolean;
+      hasMore?: boolean;
+      oldestCursor?: string | null;
+    },
   ) => void;
   addMessage: (message: Message) => void;
   updateMessage: (message: Message) => void;
+  updateMessages: (messages: Message[]) => void;
   removeMessage: (sessionId: string, messageId: string) => void;
   /**
    * Idempotent full-snapshot merge: reconciles `messages` against the current
@@ -224,16 +231,25 @@ export type SessionSliceActions = {
   mergeMessages: (
     sessionId: string,
     messages: Message[],
-    meta?: { hasMore?: boolean; oldestCursor?: string | null },
+    meta?: {
+      historyInitialized?: boolean;
+      hasMore?: boolean;
+      oldestCursor?: string | null;
+    },
   ) => void;
   prependMessages: (
     sessionId: string,
     messages: Message[],
-    meta?: { hasMore?: boolean; oldestCursor?: string | null },
+    meta?: {
+      historyInitialized?: boolean;
+      hasMore?: boolean;
+      oldestCursor?: string | null;
+    },
   ) => void;
   setMessagesMetadata: (
     sessionId: string,
     meta: {
+      historyInitialized?: boolean;
       hasMore?: boolean;
       isLoading?: boolean;
       isLoadingMore?: boolean;

@@ -16,11 +16,18 @@ import type {
 } from "@/lib/types/http";
 import type { SystemHealthResponse } from "@/lib/types/health";
 import type { AgentRuntimeAvailability } from "@/lib/types/agent-runtime";
+import type { AgentProfileRecentUseContext } from "@/lib/types/http-agent-profile-recent-use";
 import type { UISliceActions as UIA } from "./slices/ui/types";
 import type * as UISliceTypes from "./slices/ui/types";
 import type { AgentUpdateJob, InstallJob } from "./slices/settings/types";
 import { mergeInitialState } from "./default-state";
 import { buildStateOverrides } from "./store-overrides";
+
+type MessageHistoryMetadata = {
+  historyInitialized?: boolean;
+  hasMore?: boolean;
+  oldestCursor?: string | null;
+};
 import {
   createKanbanSlice,
   createWorkspaceSlice,
@@ -70,6 +77,8 @@ import {
   type SettingsDataState,
   type SleepInhibitionStoreState,
   type UserSettingsState,
+  type AgentProfileRecentUseState,
+  type AgentProfileRecentUseRecord,
   type ProcessStatusEntry,
   type Worktree,
   type GitStatusEntry,
@@ -135,6 +144,7 @@ export type AppState = KanbanSlice & {
   settingsData: (typeof defaultSettingsState)["settingsData"];
   sleepInhibition: (typeof defaultSettingsState)["sleepInhibition"];
   userSettings: (typeof defaultSettingsState)["userSettings"];
+  agentProfileRecentUse: (typeof defaultSettingsState)["agentProfileRecentUse"];
 
   // Session slice
   messages: (typeof defaultSessionState)["messages"];
@@ -327,6 +337,11 @@ export type AppState = KanbanSlice & {
   setSleepInhibitionLoading: (loading: boolean) => void;
   setSleepInhibitionError: (error: boolean) => void;
   setUserSettings: (settings: UserSettingsState) => void;
+  setAgentProfileRecentUse: (state: AgentProfileRecentUseState) => void;
+  applyAgentProfileRecentUse: (
+    context: AgentProfileRecentUseContext,
+    record: AgentProfileRecentUseRecord,
+  ) => void;
   setTerminalOutput: (terminalId: string, data: string) => void;
   appendShellOutput: (sessionId: string, data: string) => void;
   setShellStatus: (
@@ -386,6 +401,9 @@ export type AppState = KanbanSlice & {
   clearQuickChatUnseenIdle: UIA["clearQuickChatUnseenIdle"];
   recordQuickChatSettled: UIA["recordQuickChatSettled"];
   removeQuickChatSession: UIA["removeQuickChatSession"];
+  setQuickChatTabOrder: UIA["setQuickChatTabOrder"];
+  clearQuickChatTabOrder: UIA["clearQuickChatTabOrder"];
+  setQuickChatTabOrderSyncState: UIA["setQuickChatTabOrderSyncState"];
   closeQuickChat: () => void;
   closeQuickChatSession: (sessionId: string) => void;
   setActiveQuickChatSession: (sessionId: string, workspaceId: string) => void;
@@ -397,18 +415,10 @@ export type AppState = KanbanSlice & {
   toggleBottomTerminal: () => void;
   openBottomTerminalWithCommand: (command: string) => void;
   clearBottomTerminalCommand: () => void;
-  setMessages: (
-    sessionId: string,
-    messages: Message[],
-    meta?: { hasMore?: boolean; oldestCursor?: string | null },
-  ) => void;
+  setMessages: (sessionId: string, messages: Message[], meta?: MessageHistoryMetadata) => void;
   /** Adds a message to a session, merging fields when the message already exists. */
   addMessage: (message: Message) => void;
-  mergeMessages: (
-    sessionId: string,
-    messages: Message[],
-    meta?: { hasMore?: boolean; oldestCursor?: string | null },
-  ) => void;
+  mergeMessages: (sessionId: string, messages: Message[], meta?: MessageHistoryMetadata) => void;
   /** Upserts a turn row, rejecting stale updates (see shouldApplyTurnUpdate). */
   addTurn: (turn: Turn) => void;
   /** Merges a complete REST snapshot and reconciles its marker atomically. */
@@ -427,19 +437,14 @@ export type AppState = KanbanSlice & {
   /** Records that the session's full persisted turn history is in the store. */
   markTurnsLoaded: (sessionId: string) => void;
   updateMessage: (message: Message) => void;
+  updateMessages: (messages: Message[]) => void;
   removeMessage: (sessionId: string, messageId: string) => void;
-  prependMessages: (
-    sessionId: string,
-    messages: Message[],
-    meta?: { hasMore?: boolean; oldestCursor?: string | null },
-  ) => void;
+  prependMessages: (sessionId: string, messages: Message[], meta?: MessageHistoryMetadata) => void;
   setMessagesMetadata: (
     sessionId: string,
-    meta: {
-      hasMore?: boolean;
+    meta: MessageHistoryMetadata & {
       isLoading?: boolean;
       isLoadingMore?: boolean;
-      oldestCursor?: string | null;
     },
   ) => void;
   setMessagesLoading: (sessionId: string, loading: boolean) => void;

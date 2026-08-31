@@ -1133,6 +1133,11 @@ func (e *Executor) LaunchPreparedSession(ctx context.Context, task *v1.Task, ses
 	// Inject session handover context if there are previous sessions for this task.
 	prompt = e.injectHandoverIfNeeded(ctx, task.ID, sessionID, prompt)
 
+	allRepos, err := e.resolveAllRepoInfoForSession(ctx, task.ID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Fast path: workspace already launched (executors_running row exists).
 	// Only start the agent subprocess if requested; otherwise return early.
 	// If startAgentOnExistingWorkspace returns ErrStaleExecution, the in-memory
@@ -1151,10 +1156,6 @@ func (e *Executor) LaunchPreparedSession(ctx context.Context, task *v1.Task, ses
 			zap.Error(err))
 	}
 
-	allRepos, err := e.resolveAllRepoInfoForSession(ctx, task.ID, sessionID)
-	if err != nil {
-		return nil, err
-	}
 	// Primary = first by Position. For repo-less tasks (e.g. quick chat), allRepos
 	// is empty and primary is a zero-value placeholder; downstream code already
 	// handles the missing-repo path.
@@ -1767,20 +1768,22 @@ func buildRepoSpecs(allRepos []*repoInfo) []RepoSpec {
 	out := make([]RepoSpec, 0, len(allRepos))
 	for _, info := range allRepos {
 		spec := RepoSpec{
-			TaskRepositoryID:        info.TaskRepositoryID,
-			RepositoryID:            info.RepositoryID,
-			RepositoryPath:          info.RepositoryPath,
-			BaseBranch:              info.BaseBranch,
-			CheckoutBranch:          info.CheckoutBranch,
-			PRNumber:                info.PRNumber,
-			RemoteContribution:      info.RemoteContribution,
-			ContributionDestination: info.ContributionDestination,
-			ComparisonTarget:        info.ComparisonTarget,
-			WorktreeBranchPrefix:    info.WorktreeBranchPrefix,
-			WorktreeBranchTemplate:  info.WorktreeBranchTemplate,
-			PullBeforeWorktree:      info.PullBeforeWorktree,
-			RemoteSyncHandled:       info.RemoteSyncHandled,
-			RefreshRepository:       info.RefreshRepository,
+			TaskRepositoryID:           info.TaskRepositoryID,
+			RepositoryID:               info.RepositoryID,
+			RepositoryPath:             info.RepositoryPath,
+			BaseBranch:                 info.BaseBranch,
+			CheckoutBranch:             info.CheckoutBranch,
+			PRNumber:                   info.PRNumber,
+			RemoteContribution:         info.RemoteContribution,
+			ContributionDestination:    info.ContributionDestination,
+			ComparisonTarget:           info.ComparisonTarget,
+			WorktreeBranchPrefix:       info.WorktreeBranchPrefix,
+			WorktreeBranchTemplate:     info.WorktreeBranchTemplate,
+			PullBeforeWorktree:         info.PullBeforeWorktree,
+			RemoteSyncHandled:          info.RemoteSyncHandled,
+			RefreshRepository:          info.RefreshRepository,
+			RefreshRepositoryWithState: info.RefreshRepositoryWithState,
+			RemoteRefState:             info.RemoteRefState,
 		}
 		if info.Repository != nil {
 			spec.RepoName = info.Repository.Name
@@ -1852,6 +1855,8 @@ func (e *Executor) applyRepositoryConfig(req *LaunchAgentRequest, task *v1.Task,
 		req.PullBeforeWorktree = repoInfo.PullBeforeWorktree
 		req.RemoteSyncHandled = repoInfo.RemoteSyncHandled
 		req.RefreshRepository = repoInfo.RefreshRepository
+		req.RefreshRepositoryWithState = repoInfo.RefreshRepositoryWithState
+		req.RemoteRefState = repoInfo.RemoteRefState
 		if repoInfo.Repository != nil {
 			req.DefaultBranch = repoInfo.Repository.DefaultBranch
 			if req.UseWorktree {
@@ -2174,27 +2179,17 @@ func (e *Executor) injectHandoverIfNeeded(ctx context.Context, taskID, currentSe
 // to the task root via filepath.Dir would diverge hot vs cold cwd and break
 // resume with -32002 Resource not found.
 //
-// resp.WorktreePath here already mirrors what executor_standalone.go writes
-// into metadata["worktree_path"] (= req.WorkspacePath from the env preparer),
-// which is also what becomes cmd.Dir of the agent process. So persisting it
-// as-is keeps a single source of truth.
+// resp.WorkspacePath is the lifecycle execution's actual working directory and
+// is therefore authoritative. WorktreePath remains a compatibility fallback
+// for lifecycle responses that only expose the preparer's legacy metadata.
 func computeWorkspacePath(req *LaunchAgentRequest, resp *LaunchAgentResponse) string {
-	// SSH materializes repositories on the remote host. RepositoryPath still
-	// identifies the source checkout on this host, so persisting it would make a
-	// later sibling attach to a different remote directory. The lifecycle
-	// response is the canonical remote task-directory handle.
-	if req.ExecutorType == string(models.ExecutorTypeSSH) && resp.WorkspacePath != "" {
+	if resp.WorkspacePath != "" {
 		return resp.WorkspacePath
 	}
 	if resp.WorktreePath != "" {
 		return resp.WorktreePath
 	}
-	if req.RepositoryPath != "" {
-		return req.RepositoryPath
-	}
-	// Quick-chat sessions have no worktree/repo but the lifecycle manager
-	// creates a workspace directory — use it as fallback.
-	return resp.WorkspacePath
+	return req.RepositoryPath
 }
 
 // persistTaskEnvironment creates or updates the task environment record after a successful launch.

@@ -39,6 +39,8 @@ func newReactivityTestRepo(t *testing.T) *officesqlite.Repository {
 			id TEXT PRIMARY KEY,
 			workspace_id TEXT DEFAULT '',
 			workflow_step_id TEXT DEFAULT '',
+			parent_id TEXT DEFAULT '',
+			state TEXT DEFAULT '',
 			assignee_user_id TEXT NOT NULL DEFAULT ''
 		)
 	`); err != nil {

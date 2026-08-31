@@ -134,6 +134,7 @@ import (
 
 	// Database
 	"github.com/kandev/kandev/internal/db"
+	"github.com/kandev/kandev/internal/delivery"
 
 	"github.com/kandev/kandev/internal/common/ports"
 )
@@ -515,9 +516,10 @@ func startAgentInfrastructure(
 	cancelContext context.CancelFunc,
 ) bool {
 	restoreCleanups := make([]func() error, 0)
-	addRuntimeCleanup := func(fn func() error) {
+	var databaseQuiesce func() error
+	addRuntimeCleanup := func(fn func() error) func() error {
 		if fn == nil {
-			return
+			return nil
 		}
 		var stopOnce sync.Once
 		var stopErr error
@@ -527,6 +529,7 @@ func startAgentInfrastructure(
 		}
 		addCleanup(stop)
 		restoreCleanups = append(restoreCleanups, stop)
+		return stop
 	}
 	userSecretStore := secrets.NewUserVisibleStore(repos.Secrets)
 	mcpScopeResolver := mcpscope.NewResolver(
@@ -786,11 +789,27 @@ func startAgentInfrastructure(
 	// Start the plugin system's event delivery and health monitor
 	// background loops.
 	if services.Plugins != nil {
-		startPluginsSubsystems(ctx, services.Plugins, lifecycleMgr, eventBus, log, addRuntimeCleanup)
+		startPluginsSubsystems(ctx, services.Plugins, lifecycleMgr, eventBus, log,
+			func(fn func() error) { addRuntimeCleanup(fn) })
+	}
+
+	// Start the task delivery ledger sweep. Must run after task/repository
+	// tables exist (already true here, provided in provideRepositories) —
+	// the ledger's foreign keys require them present at CREATE TABLE time
+	// on PostgreSQL. services.Task satisfies delivery.CheckoutResolver.
+	if _, deliveryCleanup, err := delivery.Provide(dbPool.Writer(), dbPool.Reader(), services.Task, log); err != nil {
+		log.Warn("delivery ledger sweep unavailable", zap.Error(err))
+	} else {
+		// Must be addRuntimeCleanup, not addCleanup: RestoreQuiesce only
+		// stops workers registered here, and a restore checkpoints, closes,
+		// and replaces the shared database pool. A five-minute sweep pass
+		// overlapping that would race the pool swap.
+		databaseQuiesce = addRuntimeCleanup(deliveryCleanup)
 	}
 
 	return startGatewayAndServe(ctx, cfg, log, eventBus, agentRuntimeAvailability, dbPool, repos, services,
-		agentSettingsController, lifecycleMgr, agentRegistry, orchestratorSvc, msgCreator, repoCloner, agentctlBinaryPath, addRuntimeCleanup, runCleanups, cancelContext, restoreCleanups)
+		agentSettingsController, lifecycleMgr, agentRegistry, orchestratorSvc, msgCreator, repoCloner, agentctlBinaryPath,
+		func(fn func() error) { addRuntimeCleanup(fn) }, runCleanups, cancelContext, restoreCleanups, databaseQuiesce)
 }
 
 // startOrchestratorAndAutomationConsumers establishes the startup chain in
@@ -857,6 +876,7 @@ func startGatewayAndServe(
 	runCleanups func(),
 	cancelContext context.CancelFunc,
 	restoreCleanups []func() error,
+	databaseQuiesce func() error,
 ) bool {
 	// ============================================
 	// WEBSOCKET GATEWAY
@@ -1066,6 +1086,7 @@ func startGatewayAndServe(
 		BuildTime: BuildTime,
 	}, systemsvc.Wiring{
 		OrchestratorShutdown: func() { _ = orchestratorSvc.Stop() },
+		DatabaseQuiesce:      databaseQuiesce,
 		RestoreQuiesce:       restoreQuiesce,
 		MessageQueue:         orchestratorSvc.GetMessageQueue(),
 		MessageQueueConfig:   queueConfiguration(cfg),
@@ -1568,11 +1589,13 @@ func startSchedulingRuntime(
 		officeRoutines = services.OfficeSvcs.Routines
 	}
 	var officeRecovery schedulercron.Handler
+	var parentWakeReconciler schedulercron.Handler
 	if services.Office != nil {
 		officeRecovery = officeservice.NewOfficeRecoveryHandler(orchScheduler)
+		parentWakeReconciler = officeservice.NewParentWakeReconciler(orchScheduler)
 	}
 	cronLoop := startCronScheduler(
-		ctx, repos, engineDispatcher, officeRoutines, officeRecovery, log,
+		ctx, repos, engineDispatcher, officeRoutines, officeRecovery, parentWakeReconciler, log,
 	)
 	return &schedulingRuntime{runs: runScheduler, cron: cronLoop}
 }

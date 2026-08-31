@@ -34,6 +34,7 @@ Git state.
 
 - [Branch Policies](requirements/branch-policies.md)
 - [Create a Local Repository During Task Creation](requirements/create-local-repository.md)
+- [Empty Remote Repositories](requirements/empty-remote-repositories.md)
 - [Kanban workspace creation](requirements/creation.md)
 - [Workspace Deletion](requirements/deletion.md)
 - [Improve Kandev](requirements/improve-kandev.md)
@@ -48,10 +49,12 @@ Git state.
 
 ### System design
 
+- [Empty Remote Repositories](system-design/empty-remote-repositories.md)
 - [Improve Kandev](system-design/improve-kandev.md)
 - [Copy and Move Secrets Between Scopes](system-design/secret-scope-transfer.md)
 - [Branch Policies](system-design/branch-policies.md)
 - [Worktree Base Refresh](system-design/worktree-base-refresh.md)
+- [Local Workspace Repositories](system-design/local-repositories.md)
 - [Organization Units](system-design/org-units.md)
 
 ## Migration record

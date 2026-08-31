@@ -32,10 +32,12 @@ The former legacy size exceptions for migrated sources were removed. All canonic
 
 ## Unmigrated additions
 
-The following specification was added after this migration and remains in the legacy layout until it moves into an owning system:
+The following specifications were added after this migration and remain in the legacy layout until they move into an owning system:
 
 - [Task Cost & Token Ledger](task-cost-ledger/spec.md) (draft)
 - [Multi-tenancy](multi-tenancy/spec.md) (draft)
 - [Startup listener before recovery](startup-listener-before-recovery/spec.md) (draft)
+- [Workflow on_enter action dispatch](workflow-on-enter-action-dispatch/spec.md) (draft)
+- [Task Delivery Ledger](task-delivery-ledger/spec.md) (draft)
 
 ## Authoring rule
