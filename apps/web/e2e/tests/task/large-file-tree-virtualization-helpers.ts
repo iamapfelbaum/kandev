@@ -22,7 +22,9 @@ export function seedLargeFileTree(backend: BackendContext): void {
     git.createFile(largeFileTreePath(index), `large tree entry ${index}\n`);
   }
   git.stageAll();
-  git.commit("seed large file tree");
+  if (git.exec("git status --short").trim()) {
+    git.commit("seed large file tree");
+  }
 }
 
 export async function setupLargeFileTreeTask({

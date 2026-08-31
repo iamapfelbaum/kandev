@@ -45,4 +45,37 @@ test.describe("Large file tree virtualization", () => {
     await session.fileTreeNode(lastFile).click();
     await expect(testPage.getByTestId("preview-tab-file-editor")).toBeVisible({ timeout: 15_000 });
   });
+
+  test("reveals the create input after scrolling away from its folder", async ({
+    testPage,
+    apiClient,
+    seedData,
+    backend,
+  }) => {
+    test.setTimeout(120_000);
+    const session = await setupLargeFileTreeTask({
+      testPage,
+      apiClient,
+      seedData,
+      backend,
+      title: "Large file tree create reveal",
+    });
+
+    await session.clickTab("Files");
+    const folder = session.fileTreeNode(LARGE_FILE_TREE_FOLDER);
+    await expect(folder).toBeVisible({ timeout: 15_000 });
+    await folder.click();
+    await expect(session.fileTreeNode(largeFileTreePath(0))).toBeVisible({ timeout: 15_000 });
+
+    const viewport = session.fileTreeScrollViewport();
+    await viewport.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      element.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+
+    await testPage.getByRole("button", { name: "New file" }).click();
+    const input = testPage.getByPlaceholder("filename...");
+    await expect(input).toBeVisible({ timeout: 15_000 });
+    await expect(input).toBeFocused({ timeout: 5_000 });
+  });
 });

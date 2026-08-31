@@ -432,7 +432,11 @@ type FileBrowserContentAreaProps = {
   onAddToChatContext?: (node: FileTreeNode) => void;
 };
 
-function rowToItemProps(props: FileBrowserContentAreaProps, row: FileBrowserRow): TreeNodeRowProps {
+function rowToItemProps(
+  props: FileBrowserContentAreaProps,
+  row: FileBrowserRow,
+  treeRef: React.RefObject<FileTreeNode | null> | undefined = props.treeRef,
+): TreeNodeRowProps {
   return {
     row,
     activeFolderPath: props.activeFolderPath,
@@ -440,7 +444,7 @@ function rowToItemProps(props: FileBrowserContentAreaProps, row: FileBrowserRow)
     visibleLoadingPaths: props.visibleLoadingPaths,
     fileStatuses: props.fileStatuses,
     tree: props.tree,
-    treeRef: props.treeRef,
+    treeRef,
     onToggleExpand: props.onToggleExpand,
     onOpenFile: props.onOpenFile,
     onDeleteFile: props.onDeleteFile,
@@ -466,6 +470,18 @@ function rowToItemProps(props: FileBrowserContentAreaProps, row: FileBrowserRow)
 type FileTreeVirtualRow =
   | { type: "node"; row: FileBrowserRow }
   | { type: "create"; parentPath: string; depth: number };
+
+function scheduleVirtualRowReveal(reveal: () => void): () => void {
+  let settleFrame: number | null = null;
+  const frame = requestAnimationFrame(() => {
+    reveal();
+    settleFrame = requestAnimationFrame(reveal);
+  });
+  return () => {
+    cancelAnimationFrame(frame);
+    if (settleFrame !== null) cancelAnimationFrame(settleFrame);
+  };
+}
 
 function FileTreeView(props: FileBrowserContentAreaProps) {
   if (!props.tree) return null;
@@ -504,13 +520,33 @@ function VirtualizedFileTreeView(props: FileBrowserContentAreaProps) {
     overscan: 5,
   });
 
+  const revealedActiveFileRef = React.useRef<string | null>(null);
   React.useEffect(() => {
-    if (!props.activeFilePath) return;
+    if (revealedActiveFileRef.current !== props.activeFilePath) {
+      revealedActiveFileRef.current = null;
+    }
+    if (!props.activeFilePath || revealedActiveFileRef.current === props.activeFilePath) return;
     const index = virtualRows.findIndex(
       (row) => row.type === "node" && row.row.path === props.activeFilePath,
     );
-    if (index >= 0) virtualizer.scrollToIndex(index, { align: "auto" });
+    if (index < 0) return;
+    revealedActiveFileRef.current = props.activeFilePath;
+    return scheduleVirtualRowReveal(() => virtualizer.scrollToIndex(index, { align: "auto" }));
   }, [props.activeFilePath, virtualRows, virtualizer]);
+
+  const revealedCreatePathRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (revealedCreatePathRef.current !== creatingInPath) {
+      revealedCreatePathRef.current = null;
+    }
+    if (creatingInPath === null || revealedCreatePathRef.current === creatingInPath) return;
+    const index = virtualRows.findIndex(
+      (row) => row.type === "create" && row.parentPath === creatingInPath,
+    );
+    if (index < 0) return;
+    revealedCreatePathRef.current = creatingInPath;
+    return scheduleVirtualRowReveal(() => virtualizer.scrollToIndex(index, { align: "auto" }));
+  }, [creatingInPath, virtualRows, virtualizer]);
 
   return (
     <div
@@ -529,7 +565,7 @@ function VirtualizedFileTreeView(props: FileBrowserContentAreaProps) {
             style={{ transform: `translateY(${virtualItem.start}px)` }}
           >
             {row.type === "node" ? (
-              <TreeNodeItem {...rowToItemProps(props, row.row)} />
+              <TreeNodeItem {...rowToItemProps(props, row.row, treeRef)} />
             ) : (
               <InlineFileInput
                 depth={row.depth}
