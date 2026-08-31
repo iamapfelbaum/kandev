@@ -9,7 +9,13 @@ import {
   useUnknownSessionSubscriptionRetry,
   useUnknownSessionSubscriptionRetryEffect,
 } from "./use-session-subscription-retry";
-import { doFetchMessages } from "./use-session-message-fetch";
+import {
+  doFetchMessages,
+  getHydratedMessagesForGeneration,
+  recordHydratedGeneration,
+  useInitialMessageLoadingState,
+  type SessionHydrationRef,
+} from "./use-session-message-fetch";
 import { reconcileLatestMessageWindow } from "./message-window-reconciliation";
 import { t } from "@/lib/i18n";
 
@@ -213,6 +219,8 @@ async function fetchAndStoreMessages(
   sessionId: string,
   store: ReturnType<typeof useAppStoreApi>,
   isActive?: () => boolean,
+  hydrationRef?: SessionHydrationRef,
+  hydrationKey?: string,
 ): Promise<Message[]> {
   const client = getWebSocketClient();
   if (!client) {
@@ -225,6 +233,14 @@ async function fetchAndStoreMessages(
   const readiness = client.getSessionSubscriptionReadiness(sessionId);
   await readiness;
   if (isActive && !isActive()) return [];
+  const hydratedMessages = getHydratedMessagesForGeneration(
+    hydrationRef,
+    sessionId,
+    readiness,
+    hydrationKey,
+    store,
+  );
+  if (hydratedMessages !== undefined) return hydratedMessages;
   // The messages fetch is the session-entry chokepoint: any path that opens a
   // session's transcript must also make its turns resolvable. Start it only
   // after subscription acknowledgement so the REST snapshot cannot race the
@@ -261,6 +277,7 @@ async function fetchAndStoreMessages(
     hasMore: response.has_more ?? false,
     oldestCursor,
   });
+  recordHydratedGeneration(hydrationRef, sessionId, readiness, hydrationKey);
   // The store now holds the identity-reconciled array; callers only read length
   // and message content from the return, so `merged` is equivalent.
   return merged;
@@ -354,12 +371,22 @@ export function useVisibilityBackfill(
   );
 }
 
-function useSessionSubscription(
-  taskSessionId: string | null,
-  connectionStatus: string,
-  isSessionStartingOrUnknown: boolean,
-  store: ReturnType<typeof useAppStoreApi>,
-) {
+type SessionSubscriptionParams = {
+  taskSessionId: string | null;
+  connectionStatus: string;
+  store: ReturnType<typeof useAppStoreApi>;
+  hydrationRef: SessionHydrationRef;
+  hydrationKey: string;
+};
+
+function useSessionSubscription({
+  taskSessionId,
+  connectionStatus,
+  isSessionStartingOrUnknown,
+  store,
+  hydrationRef,
+  hydrationKey,
+}: SessionSubscriptionParams & { isSessionStartingOrUnknown: boolean }) {
   useEffect(() => {
     debug("subscription: effect ran", {
       sessionId: taskSessionId,
@@ -388,7 +415,13 @@ function useSessionSubscription(
     void subscription.ready
       .then(() => {
         if (!active) return;
-        return fetchAndStoreMessages(taskSessionId, store, () => active);
+        return fetchAndStoreMessages(
+          taskSessionId,
+          store,
+          () => active,
+          hydrationRef,
+          hydrationKey,
+        );
       })
       .catch(() => {});
 
@@ -397,7 +430,14 @@ function useSessionSubscription(
       debug("subscription: unsubscribing", { sessionId: taskSessionId });
       subscription.unsubscribe();
     };
-  }, [taskSessionId, connectionStatus, store, isSessionStartingOrUnknown]);
+  }, [
+    taskSessionId,
+    connectionStatus,
+    store,
+    isSessionStartingOrUnknown,
+    hydrationRef,
+    hydrationKey,
+  ]);
 }
 
 /**
@@ -506,16 +546,23 @@ function useSessionMessageInputs(taskSessionId: string | null) {
   return { messages, messagesMeta, taskSessionState, activeTurnId, connectionStatus };
 }
 
-function useSessionLifecycleSubscriptions(params: {
-  taskSessionId: string | null;
-  taskSessionState: TaskSessionState | null;
-  connectionStatus: string;
-  activeTurnId: string | null;
-  messages: Message[];
-  store: ReturnType<typeof useAppStoreApi>;
-}) {
-  const { taskSessionId, taskSessionState, connectionStatus, activeTurnId, messages, store } =
-    params;
+function useSessionLifecycleSubscriptions(
+  params: SessionSubscriptionParams & {
+    taskSessionState: TaskSessionState | null;
+    activeTurnId: string | null;
+    messages: Message[];
+  },
+) {
+  const {
+    taskSessionId,
+    taskSessionState,
+    connectionStatus,
+    activeTurnId,
+    messages,
+    store,
+    hydrationRef,
+    hydrationKey,
+  } = params;
   // Bool flips exactly once when a freshly-adopted session leaves STARTING,
   // so the subscription effect re-runs then (covering the backend race where
   // session.subscribe arrives before the session is fully constructed) without
@@ -527,7 +574,14 @@ function useSessionLifecycleSubscriptions(params: {
     connectionStatus,
   });
 
-  useSessionSubscription(taskSessionId, connectionStatus, isSessionStartingOrUnknown, store);
+  useSessionSubscription({
+    taskSessionId,
+    connectionStatus,
+    isSessionStartingOrUnknown,
+    store,
+    hydrationRef,
+    hydrationKey,
+  });
   useUnknownSessionSubscriptionRetryEffect({
     taskSessionId,
     connectionStatus,
@@ -551,6 +605,10 @@ export function useSessionMessages(taskSessionId: string | null): UseSessionMess
   const { messages, messagesMeta, taskSessionState, activeTurnId, connectionStatus } =
     useSessionMessageInputs(taskSessionId);
   const prevSessionIdRef = useRef<string | null>(null);
+  const hydrationRef = useRef<SessionHydrationRef["current"]>(null);
+  const hydrationKey = `${taskSessionId ?? "none"}:${
+    taskSessionState === null || taskSessionState === "STARTING" ? "starting" : "settled"
+  }`;
   const hasAgentMessage = messages.some((message: Message) => message.author_type === "agent");
   const {
     isLoading,
@@ -568,24 +626,17 @@ export function useSessionMessages(taskSessionId: string | null): UseSessionMess
     activeTurnId,
     messages,
     store,
+    hydrationRef,
+    hydrationKey,
   });
 
-  useEffect(() => {
-    if (!taskSessionId) {
-      initialFetchStartRef.current = null;
-      lastFetchedSessionIdRef.current = null;
-      setIsWaitingForInitialMessages(false);
-      return;
-    }
-    if (messages.length > 0) {
-      setIsWaitingForInitialMessages(false);
-      return;
-    }
-    if (initialFetchStartRef.current === null) {
-      initialFetchStartRef.current = Date.now();
-      setIsWaitingForInitialMessages(true);
-    }
-  }, [taskSessionId, messages.length, initialFetchStartRef, setIsWaitingForInitialMessages]);
+  useInitialMessageLoadingState(
+    taskSessionId,
+    messages.length,
+    initialFetchStartRef,
+    lastFetchedSessionIdRef,
+    setIsWaitingForInitialMessages,
+  );
 
   useEffect(() => {
     let active = true;
@@ -616,7 +667,9 @@ export function useSessionMessages(taskSessionId: string | null): UseSessionMess
     if (isFreshMount && messages.length > 0) {
       lastFetchedSessionIdRef.current = taskSessionId;
       setIsWaitingForInitialMessages(false);
-      fetchAndStoreMessages(taskSessionId, store, () => active).catch(() => {});
+      fetchAndStoreMessages(taskSessionId, store, () => active, hydrationRef, hydrationKey).catch(
+        () => {},
+      );
       return deactivate;
     }
 
@@ -629,11 +682,14 @@ export function useSessionMessages(taskSessionId: string | null): UseSessionMess
       ...fetchRefs,
       fetchAndStoreMessages,
       isActive: () => active,
+      hydrationRef,
+      hydrationKey,
     });
     return deactivate;
   }, [
     taskSessionId,
     connectionStatus,
+    hydrationKey,
     messages.length,
     store,
     lastFetchedSessionIdRef,
