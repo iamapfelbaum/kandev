@@ -36,6 +36,7 @@ import { TreeNodeItem } from "./file-browser-parts";
 import { useFileBrowserTree } from "./file-browser-hooks";
 
 const NODE: FileTreeNode = { name: "README.md", path: "README.md", is_dir: false, size: 0 };
+const TREE: FileTreeNode = { name: "root", path: "", is_dir: true, size: 0 };
 const ROW: FileBrowserRow = {
   node: NODE,
   chainRoot: NODE,
@@ -67,10 +68,10 @@ afterEach(() => {
 
 describe("TreeNodeItem render isolation", () => {
   it("skips an unrelated owner render when the row inputs remain equal", () => {
-    const stableProps = rowProps();
+    const stableProps = { ...rowProps(), tree: TREE, treeRef: { current: TREE } };
     const { rerender } = render(<TreeNodeItem {...stableProps} />);
 
-    rerender(<TreeNodeItem {...stableProps} row={{ ...ROW }} />);
+    rerender(<TreeNodeItem {...stableProps} tree={{ ...TREE }} row={{ ...ROW }} />);
 
     expect(fileContextMenuRender).toHaveBeenCalledTimes(1);
   });
