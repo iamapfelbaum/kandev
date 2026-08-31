@@ -595,6 +595,8 @@ func (s *Service) addPrimarySessionEventFields(ctx context.Context, taskID strin
 	}
 	if sessionInfo.ExecutorProfileID != "" {
 		data["primary_executor_profile_id"] = sessionInfo.ExecutorProfileID
+	} else {
+		data["primary_executor_profile_id"] = nil
 	}
 	var execType string
 	if sessionInfo.ExecutorSnapshot != nil {
