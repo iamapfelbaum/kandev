@@ -11,13 +11,12 @@ owners:
 
 ## Purpose
 
-The UI system owns web presentation.
+The UI owns web presentation.
 
 ## Ownership
 
-The UI system owns reusable navigation, settings, task/review, chat, visual
-feedback, and responsive interaction contracts. Provider and task state remain
-with their owning systems.
+The UI system owns navigation, settings, task, review, chat, feedback, and
+responsive interaction contracts. Other systems own task and provider state.
 
 ## Exclusions
 
@@ -175,6 +174,7 @@ with their owning systems.
 - [Task Confirmation Warning Hierarchy](system-design/confirmation-warning-hierarchy.md)
 - [Resizable Markdown Table Columns](system-design/resizable-markdown-tables.md)
 - [Task Layout Profiles](system-design/task-layout-profiles.md)
+- [Task Surface Render Isolation](system-design/task-surface-render-isolation.md)
 - [Task Agent Tab Reconciliation](system-design/task-agent-tab-reconciliation.md)
 - [Command-panel Sidebar Task Reveal](system-design/command-panel-sidebar-task-reveal.md)
 - [Terminal Rendering](system-design/terminal-rendering.md)
@@ -184,8 +184,7 @@ with their owning systems.
 
 ## Migration record
 
-Legacy source detail is still moving to the canonical requirement and
-system-design documents above.
+Legacy sources are moving to the canonical documents above.
 
 ## Related systems
 
