@@ -709,17 +709,16 @@ test.describe("PR status badge", () => {
     await taskRow.hover();
     await expect(taskActions).toBeVisible();
     await expect(menuSlot).toHaveCSS("width", "24px");
-    // Re-enter from a neutral point after the PR update to deliver a fresh hover transition.
-    await testPage.mouse.move(viewport!.width - 1, viewport!.height - 1);
-    await icon.hover();
-    // The icon is replaced when the second association arrives. Re-dispatch
-    // the mouse-enter signal so the controlled tooltip cannot retain the
-    // previous dismissed state across that update.
-    await icon.dispatchEvent("pointerenter", { pointerType: "mouse" });
+    // Escape leaves the icon focused and the controlled tooltip dismissed. Move
+    // focus through the row so the updated icon receives a real focus event.
+    // This avoids relying on a synthetic hover after the association rerender.
+    await taskRow.focus();
+    await testPage.keyboard.press("Tab");
+    await expect(icon).toBeFocused();
 
     const multiSummary = visibleTaskPRSummary(testPage);
     // The second association updates the icon while the disclosure is closed.
-    // Wait for the tooltip itself to reopen before querying its refreshed rows.
+    // Wait for the keyboard-reopened tooltip before querying its refreshed rows.
     await expect(multiSummary).toBeVisible({ timeout: 15_000 });
     const entries = multiSummary.getByTestId("pr-task-status-entry");
     await expect(entries).toHaveCount(2, { timeout: 15_000 });
