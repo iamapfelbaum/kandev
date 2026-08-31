@@ -14,7 +14,13 @@ const mockState = {
   messages: {
     bySession: { "sess-1": [] as Message[] },
     metaBySession: {
-      "sess-1": { hasMore: false, oldestCursor: null, isLoading: false, isLoadingMore: false },
+      "sess-1": {
+        historyInitialized: false,
+        hasMore: false,
+        oldestCursor: null,
+        isLoading: false,
+        isLoadingMore: false,
+      },
     },
   },
   taskSessions: { items: { "sess-1": { state: "RUNNING" } } },
@@ -38,7 +44,7 @@ const mockState = {
   setActiveTurn: vi.fn(),
   reconcileActiveTurnAfterHydration: vi.fn(),
 };
-const mockStore = { getState: () => mockState };
+const mockStoreApi = { getState: () => mockState };
 
 vi.mock("@/lib/api/domains/session-api", () => ({
   listSessionTurns: (...args: unknown[]) => mockListSessionTurns(...args),
@@ -50,7 +56,7 @@ vi.mock("@/lib/ws/connection", () => ({
 
 vi.mock("@/components/state-provider", () => ({
   useAppStore: (selector: (state: typeof mockState) => unknown) => selector(mockState),
-  useAppStoreApi: () => mockStore,
+  useAppStoreApi: () => mockStoreApi,
 }));
 
 import { taskId, sessionId } from "@/lib/types/ids";
@@ -63,6 +69,7 @@ beforeEach(() => {
   mockWebSocketClient.subscribeSession.mockReturnValue(vi.fn());
   mockState.messages.bySession["sess-1"] = [];
   mockState.messages.metaBySession["sess-1"] = {
+    historyInitialized: false,
     hasMore: false,
     oldestCursor: null,
     isLoading: false,
@@ -342,7 +349,7 @@ describe("session subscription hydration ordering", () => {
     expect(mockState.mergeMessages).toHaveBeenCalledWith(
       "sess-1",
       [fetchedOldest, fetchedNewest, liveDuringFetch],
-      { hasMore: true, oldestCursor: "fetched-3" },
+      { historyInitialized: true, hasMore: true, oldestCursor: "fetched-3" },
     );
     unmount();
   });
@@ -365,6 +372,7 @@ describe("session subscription hydration ordering", () => {
       await readiness.promise;
     });
 
+    expect(mockWebSocketClient.subscribeSessionWithReady).toHaveBeenCalledTimes(1);
     expect(mockWebSocketClient.request).toHaveBeenCalledWith(
       "message.list",
       expect.objectContaining({ session_id: "sess-1" }),
@@ -550,7 +558,7 @@ describe("deduplicated message request baselines", () => {
     expect(mockState.mergeMessages).toHaveBeenLastCalledWith(
       "sess-1",
       [fetchedOldest, fetchedNewest, liveDuringFetch],
-      { hasMore: true, oldestCursor: "fetched-3" },
+      { historyInitialized: true, hasMore: true, oldestCursor: "fetched-3" },
     );
     first.unmount();
     second.unmount();

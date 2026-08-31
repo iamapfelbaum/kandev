@@ -1365,11 +1365,16 @@ export class ApiClient {
     await this.request("POST", "/api/v1/_test/messages", body);
   }
 
-  async seedToolCallMessages(sessionId: string, count: number): Promise<void> {
+  async seedToolCallMessages(
+    sessionId: string,
+    count: number,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
     for (let i = 0; i < count; i++) {
       await this.seedSessionMessage(sessionId, {
         type: "tool_call",
         content: `synthetic tool call ${i + 1}`,
+        metadata,
       });
     }
   }

@@ -156,6 +156,7 @@ export function taskToState(
               [resolvedSessionId]: {
                 isLoading: false,
                 isLoadingMore: false,
+                historyInitialized: true,
                 hasMore: messages.hasMore ?? false,
                 oldestCursor: messages.oldestCursor ?? messages.items[0]?.id ?? null,
               },
