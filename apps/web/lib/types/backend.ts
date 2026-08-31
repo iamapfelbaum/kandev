@@ -114,6 +114,7 @@ export type TaskEventPayload = {
   active_subagent_count?: number;
   session_count?: number | null;
   review_status?: "pending" | "approved" | "changes_requested" | "rejected" | null;
+  primary_executor_profile_id?: string | null;
   archived_at?: string | null;
   updated_at?: string;
   is_ephemeral: boolean;

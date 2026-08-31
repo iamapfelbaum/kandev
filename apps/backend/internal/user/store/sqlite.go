@@ -576,6 +576,10 @@ func marshalUserSettingsPayload(settings *models.UserSettings) ([]byte, error) {
 		sidebarViews = []models.SidebarView{}
 	}
 	sidebarTaskPrefs := normalizeSidebarTaskPrefs(settings.SidebarTaskPrefs)
+	sidebarTaskColorAutomation := settings.SidebarTaskColorAutomation
+	if sidebarTaskColorAutomation.Rules == nil {
+		sidebarTaskColorAutomation.Rules = []models.SidebarTaskColorRule{}
+	}
 	keyboardShortcuts := settings.KeyboardShortcuts
 	if keyboardShortcuts == nil {
 		keyboardShortcuts = map[string]interface{}{}
@@ -618,6 +622,7 @@ func marshalUserSettingsPayload(settings *models.UserSettings) ([]byte, error) {
 		"sidebar_active_view_id":                   settings.SidebarActiveViewID,
 		"sidebar_draft":                            settings.SidebarDraft,
 		"sidebar_task_prefs":                       sidebarTaskPrefs,
+		"sidebar_task_color_automation":            sidebarTaskColorAutomation,
 		"task_create_last_used":                    settings.TaskCreateLastUsed,
 		"jira_saved_views":                         settings.JiraSavedViews,
 		"jira_task_presets":                        settings.JiraTaskPresets,
@@ -716,6 +721,7 @@ func defaultUserSettings(userID string) *models.UserSettings {
 		SidebarViews:                      DefaultSidebarViews(),
 		SidebarActiveViewID:               DefaultSidebarViewID,
 		SidebarTaskPrefs:                  normalizeSidebarTaskPrefs(models.SidebarTaskPrefs{}),
+		SidebarTaskColorAutomation:        models.DefaultSidebarTaskColorAutomation(),
 		AppStatusBarEnabled:               false,
 		AppStatusBarOrder:                 normalizeAppStatusBarOrder(models.AppStatusBarOrder{}),
 		QuickChatTabOrderByWorkspace:      map[string][]string{},
@@ -785,6 +791,7 @@ func scanUserSettings(scanner interface{ Scan(dest ...any) error }, userID strin
 		SidebarActiveViewID               json.RawMessage                     `json:"sidebar_active_view_id"`
 		SidebarDraft                      *models.SidebarViewDraft            `json:"sidebar_draft"`
 		SidebarTaskPrefs                  models.SidebarTaskPrefs             `json:"sidebar_task_prefs"`
+		SidebarTaskColorAutomation        json.RawMessage                     `json:"sidebar_task_color_automation"`
 		TaskCreateLastUsed                models.TaskCreateLastUsed           `json:"task_create_last_used"`
 		JiraSavedViews                    json.RawMessage                     `json:"jira_saved_views"`
 		JiraTaskPresets                   json.RawMessage                     `json:"jira_task_presets"`
@@ -905,6 +912,7 @@ func scanUserSettings(scanner interface{ Scan(dest ...any) error }, userID strin
 	}
 	settings.SidebarDraft = payload.SidebarDraft
 	settings.SidebarTaskPrefs = normalizeSidebarTaskPrefs(payload.SidebarTaskPrefs)
+	settings.SidebarTaskColorAutomation = decodeSidebarTaskColorAutomation(payload.SidebarTaskColorAutomation)
 	settings.TaskCreateLastUsed = payload.TaskCreateLastUsed
 	settings.JiraSavedViews = payload.JiraSavedViews
 	settings.JiraTaskPresets = payload.JiraTaskPresets
@@ -944,6 +952,25 @@ func scanUserSettings(scanner interface{ Scan(dest ...any) error }, userID strin
 	settings.KanbanHiddenStepIDs = decodeKanbanHiddenStepIDs(payload.KanbanHiddenStepIDs)
 	settings.WorkflowIDsWithAutoHideEmptySteps = decodeStringIDs(payload.WorkflowIDsWithAutoHideEmptySteps)
 	return settings, nil
+}
+
+// decodeSidebarTaskColorAutomation keeps one corrupt personal rule set from
+// preventing the rest of user settings from loading.
+func decodeSidebarTaskColorAutomation(raw json.RawMessage) models.SidebarTaskColorAutomation {
+	if len(raw) == 0 || string(raw) == "null" {
+		return models.DefaultSidebarTaskColorAutomation()
+	}
+	var value models.SidebarTaskColorAutomation
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return models.DefaultSidebarTaskColorAutomation()
+	}
+	if err := models.ValidateSidebarTaskColorAutomation(value); err != nil {
+		return models.DefaultSidebarTaskColorAutomation()
+	}
+	if value.Rules == nil {
+		value.Rules = []models.SidebarTaskColorRule{}
+	}
+	return value
 }
 
 func decodeStringIDs(raw json.RawMessage) []string {

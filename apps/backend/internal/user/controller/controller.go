@@ -120,6 +120,7 @@ func (c *Controller) UpdateUserSettings(ctx context.Context, req dto.UpdateUserS
 		SidebarActiveViewID:               req.SidebarActiveViewID,
 		SidebarDraft:                      req.SidebarDraft.ServiceValue(),
 		SidebarTaskPrefs:                  req.SidebarTaskPrefs,
+		SidebarTaskColorAutomation:        req.SidebarTaskColorAutomation,
 		TaskCreateLastUsed:                req.TaskCreateLastUsed,
 		JiraSavedViews:                    req.JiraSavedViews.ServiceValue(),
 		JiraTaskPresets:                   req.JiraTaskPresets.ServiceValue(),

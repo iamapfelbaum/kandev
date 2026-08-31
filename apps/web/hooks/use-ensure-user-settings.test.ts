@@ -80,6 +80,7 @@ function makeUnloadedSettings(): UserSettingsState {
     sidebarActiveViewId: null,
     sidebarDraft: null,
     sidebarTaskPrefs: { pinnedTaskIds: [], orderedTaskIds: [], subtaskOrderByParentId: {} },
+    sidebarTaskColorAutomation: { enabled: false, rules: [] },
     taskCreateLastUsed: {
       repositoryId: null,
       branch: null,

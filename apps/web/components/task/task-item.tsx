@@ -13,7 +13,12 @@ import { cn } from "@/lib/utils";
 import { computeRowIndent, resolveRowDepth } from "@/lib/sidebar/row-indent";
 import { TaskItemStatsRow } from "./task-item-stats-row";
 import { useTaskColor } from "@/hooks/use-task-color";
-import { TASK_COLOR_BAR_CLASS, type TaskColor } from "@/lib/task-colors";
+import {
+  manualTaskColorPresentation,
+  resolveTaskItemColor,
+  type TaskMarkerPresentation,
+} from "@/lib/task-color-presentation";
+import type { TaskColor } from "@/lib/task-colors";
 import type { ForegroundActivity, TaskState, TaskSessionState } from "@/lib/types/http";
 import {
   InterruptedTaskIcon,
@@ -120,6 +125,7 @@ type TaskItemProps = {
   issueInfo?: { url: string; number: number };
   isPinned?: boolean;
   agentErrorMessage?: string | null;
+  automaticColor?: TaskMarkerPresentation;
   taskRowPresentation?: import("@/lib/state/slices/ui/sidebar-task-row-presentation").SidebarTaskRowPresentation;
 };
 
@@ -511,6 +517,7 @@ export const TaskItem = memo(function TaskItem({
   issueInfo,
   isPinned,
   agentErrorMessage,
+  automaticColor,
   isOnLastWorkflowStep = false,
   taskRowPresentation,
 }: TaskItemProps) {
@@ -518,6 +525,7 @@ export const TaskItem = memo(function TaskItem({
   const resolvedTaskRow = resolveTaskRowPresentation(taskRowPresentation, { showRepository });
   const relativeTime = showActivityTime ? (lastActivityAt ?? updatedAt) : updatedAt;
   const taskColor = useTaskColor(taskId);
+  const manualColor = manualTaskColorPresentation(taskColor);
   const indent = computeRowIndent(resolveRowDepth(depth, isSubTask));
 
   return (
@@ -540,7 +548,10 @@ export const TaskItem = memo(function TaskItem({
         archiveConfirmation && "flex-wrap",
       )}
     >
-      <SelectionBar isSelected={isSelected} color={taskColor} />
+      <SelectionBar
+        isSelected={isSelected}
+        color={resolveTaskItemColor(automaticColor, manualColor)}
+      />
       <RowConnector depth={indent.depth} leftPx={indent.connectorLeftPx} />
       <TaskStateIcon
         sessionState={sessionState}
@@ -608,16 +619,25 @@ function RowConnector({ depth, leftPx }: { depth: number; leftPx: number }) {
   );
 }
 
-function SelectionBar({ isSelected, color }: { isSelected: boolean; color: TaskColor | null }) {
+function SelectionBar({
+  isSelected,
+  color,
+}: {
+  isSelected: boolean;
+  color: (TaskMarkerPresentation | { token: TaskColor; className: string }) | null;
+}) {
   if (!color) return null;
 
   return (
     <div
+      data-testid="task-item-color-marker"
+      data-color-token={color.token}
       className={cn(
         "absolute left-0 top-0 bottom-0 w-[3px] transition-opacity",
-        TASK_COLOR_BAR_CLASS[color],
+        color.token === "custom" ? undefined : color.className,
         isSelected ? "opacity-100" : "opacity-60",
       )}
+      style={color.token === "custom" ? color.style : undefined}
     />
   );
 }

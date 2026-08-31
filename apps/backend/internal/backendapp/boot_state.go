@@ -801,6 +801,7 @@ func (b bootStateBuilder) taskDTOsWithSessionInfo(ctx context.Context, tasks []*
 			sessionCount,
 			info.reviewStatus,
 			info.executorID,
+			info.executorProfileID,
 			info.executorType,
 			info.executorName,
 			info.agentName,
@@ -857,14 +858,15 @@ func taskDTOs(tasks []*taskmodels.Task) []taskdto.TaskDTO {
 }
 
 type bootSessionInfoFields struct {
-	sessionID        *string
-	reviewStatus     taskmodels.ReviewStatus
-	sessionState     *string
-	executorID       *string
-	executorType     *string
-	executorName     *string
-	agentName        *string
-	workingDirectory *string
+	sessionID         *string
+	reviewStatus      taskmodels.ReviewStatus
+	sessionState      *string
+	executorID        *string
+	executorProfileID *string
+	executorType      *string
+	executorName      *string
+	agentName         *string
+	workingDirectory  *string
 }
 
 func bootSessionInfo(session *taskmodels.TaskSession) bootSessionInfoFields {
@@ -884,6 +886,10 @@ func bootSessionInfo(session *taskmodels.TaskSession) bootSessionInfoFields {
 	if session.ExecutorID != "" {
 		value := session.ExecutorID
 		info.executorID = &value
+	}
+	if session.ExecutorProfileID != "" {
+		value := session.ExecutorProfileID
+		info.executorProfileID = &value
 	}
 	if session.ExecutorSnapshot != nil {
 		if value, ok := session.ExecutorSnapshot["executor_type"].(string); ok && value != "" {

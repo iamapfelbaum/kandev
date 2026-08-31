@@ -1,8 +1,17 @@
-import type { ForegroundActivity, TaskSessionState, TaskState } from "@/lib/types/http";
+import type {
+  ForegroundActivity,
+  TaskOrigin,
+  TaskPriority,
+  TaskSessionState,
+  TaskState,
+} from "@/lib/types/http";
 import type { GroupedSidebarList } from "@/lib/sidebar/apply-view";
 import type { TaskMoveWorkflow } from "@/components/task/task-move-context-menu";
 import type { WipQueueStatus } from "@/lib/kanban/wip-queue";
 import type { SidebarTaskRowPresentation } from "@/lib/state/slices/ui/sidebar-task-row-presentation";
+import type { TaskMarkerPresentation } from "@/lib/task-color-presentation";
+import type { AutomaticTaskColorSource } from "@/lib/sidebar/task-color-rules";
+import type { TaskRepositoryRuleIdentity } from "@/lib/sidebar/repository-rule-identity";
 
 export type StepDef = {
   id: string;
@@ -28,8 +37,16 @@ export type TaskSwitcherItem = {
   workflowName?: string;
   workflowStepId?: string;
   workflowStepTitle?: string;
+  workspaceId?: string;
+  priority?: TaskPriority;
+  origin?: TaskOrigin | string;
+  primaryExecutorProfileId?: string;
+  workflowStepColor?: string;
   repositoryPath?: string;
   repositories?: string[];
+  repositoryRuleIdentities?: readonly TaskRepositoryRuleIdentity[];
+  automaticColor?: TaskMarkerPresentation;
+  automaticColorSource?: AutomaticTaskColorSource;
   /** Persisted task-to-repository links used by host-owned plugin task actions. */
   repositoryLinks?: Array<{ repository_id: string; position?: number }>;
   diffStats?: { additions: number; deletions: number };

@@ -44,6 +44,57 @@ export type SidebarTaskPrefsApi = {
   subtask_order_by_parent_id: Record<string, string[]>;
 };
 
+export type SidebarTaskColorDimension =
+  | "workflow_step"
+  | "repository"
+  | "workflow"
+  | "executor_profile"
+  | "task_state"
+  | "priority"
+  | "origin";
+
+export type FixedAutomaticTaskColor =
+  | "gray"
+  | "red"
+  | "orange"
+  | "yellow"
+  | "green"
+  | "cyan"
+  | "blue"
+  | "indigo"
+  | "purple"
+  | "pink";
+
+export type SidebarTaskColorRepositoryTarget =
+  | { kind: "workspace"; workspace_id: string; repository_id: string }
+  | {
+      kind: "provider";
+      provider_id: string;
+      host: string;
+      scope: string;
+      provider_repository_id: string;
+    }
+  | { kind: "local"; path: string };
+
+export type SidebarTaskColorRule = {
+  id: string;
+  enabled: boolean;
+  condition: {
+    dimension: SidebarTaskColorDimension;
+    value: unknown;
+    label: string;
+  };
+  output: { kind: "fixed"; color: FixedAutomaticTaskColor } | { kind: "workflow_step" };
+};
+
+export type SidebarTaskColorAutomation = {
+  enabled: boolean;
+  rules: SidebarTaskColorRule[];
+};
+
+/** User-settings wire alias kept explicit for API and boot-payload callers. */
+export type SidebarTaskColorAutomationApi = SidebarTaskColorAutomation;
+
 export type TaskCreateLastUsedApi = {
   repository_id?: string;
   branch?: string;
@@ -95,6 +146,7 @@ export type UserSettings = {
   sidebar_active_view_id?: string;
   sidebar_draft?: SidebarViewDraftApi | null;
   sidebar_task_prefs?: SidebarTaskPrefsApi;
+  sidebar_task_color_automation?: SidebarTaskColorAutomationApi;
   task_create_last_used?: TaskCreateLastUsedApi;
   jira_saved_views?: unknown;
   jira_task_presets?: unknown;
@@ -162,6 +214,7 @@ export type UserSettingsUpdatePayload = {
   sidebar_active_view_id?: string;
   sidebar_draft?: SidebarViewDraftApi | null;
   sidebar_task_prefs?: SidebarTaskPrefsApi;
+  sidebar_task_color_automation?: SidebarTaskColorAutomationApi;
   task_create_last_used?: TaskCreateLastUsedApi;
   jira_saved_views?: unknown[] | null;
   jira_task_presets?: unknown[] | null;

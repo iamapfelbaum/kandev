@@ -11,6 +11,7 @@ import type {
   AgentProfileRecentUseApiRecord,
 } from "../../lib/types/http";
 import type { Agent, AgentProfile } from "../../lib/types/http-agents";
+import type { SidebarTaskColorAutomation } from "../../lib/task-color-automation-settings";
 import { normalizeAgentProfile } from "../../lib/api/domains/agent-profile-normalize";
 import type {
   PRCommitDetail,
@@ -1160,6 +1161,7 @@ export class ApiClient {
     task_create_last_used?: TaskCreateLastUsedApi;
     kanban_hidden_step_ids?: Record<string, string[]>;
     workflow_ids_with_auto_hide_empty_steps?: string[];
+    sidebar_task_color_automation?: SidebarTaskColorAutomation;
   }): Promise<void> {
     await this.request("PATCH", "/api/v1/user/settings", settings);
   }

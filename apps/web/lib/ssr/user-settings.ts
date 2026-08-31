@@ -8,6 +8,7 @@ import { fromApiSidebarDraft, fromApiSidebarView } from "@/lib/state/slices/ui/s
 import type { SidebarView, SidebarViewDraft } from "@/lib/state/slices/ui/sidebar-view-types";
 import { type UserSettingsState } from "@/lib/state/slices/settings/types";
 import type { SidebarTaskPrefsApi, UserSettings, UserSettingsResponse } from "@/lib/types/http";
+import { parseSidebarTaskColorAutomation } from "@/lib/task-color-automation-settings";
 import type {
   LspStatusLocation,
   LastSeenDisplay,
@@ -59,6 +60,7 @@ export function createDefaultUserSettings(): UserSettingsState {
     sidebarActiveViewId: null,
     sidebarDraft: null,
     sidebarTaskPrefs: { pinnedTaskIds: [], orderedTaskIds: [], subtaskOrderByParentId: {} },
+    sidebarTaskColorAutomation: parseSidebarTaskColorAutomation(undefined),
     taskCreateLastUsed: {
       repositoryId: null,
       branch: null,
@@ -301,6 +303,11 @@ export function buildCoreFields(
       s.sidebar_task_prefs,
       current.sidebarTaskPrefs,
       parseSidebarTaskPrefs,
+    ),
+    sidebarTaskColorAutomation: mapDefined(
+      s.sidebar_task_color_automation,
+      current.sidebarTaskColorAutomation,
+      parseSidebarTaskColorAutomation,
     ),
     taskCreateLastUsed: mapDefined(
       s.task_create_last_used,
