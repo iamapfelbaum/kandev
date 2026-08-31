@@ -1,7 +1,7 @@
 ---
 id: "04-canvas-action-guidance"
 title: "Explain canvas lifecycle actions"
-status: pending
+status: done
 wave: 4
 depends_on:
   - "03-first-release-host-activation"
@@ -77,4 +77,11 @@ cd apps/web && pnpm e2e:run --project mobile-chrome tests/canvas/mobile-plugin-c
 
 ## Results
 
-Pending.
+Added desktop tooltip guidance with focusable wrappers for disabled lifecycle
+actions and equivalent visible descriptions in the mobile action drawer.
+Archived and disabled canvas mutations are disabled in both host surfaces, and
+the action controls retain touch-sized targets. Added localized action guidance
+in every required catalog.
+
+Verification passed: focused host tests, phone Playwright coverage with
+retries disabled, web typecheck, lint, i18n checks, and the new-code ratchet.

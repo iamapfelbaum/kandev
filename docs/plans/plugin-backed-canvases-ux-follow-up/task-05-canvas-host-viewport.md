@@ -1,7 +1,7 @@
 ---
 id: "05-canvas-host-viewport"
 title: "Fill the canvas host viewport"
-status: pending
+status: done
 wave: 5
 depends_on:
   - "04-canvas-action-guidance"
@@ -77,4 +77,11 @@ cd apps/web && pnpm e2e:run --project mobile-chrome tests/canvas/mobile-plugin-c
 
 ## Results
 
-Pending.
+Added the missing full-height flex boundary around the Dockview canvas route
+and kept direct and phone route sizing unchanged. The desktop fixture now
+checks iframe width and height after normal, maximized, restored, and resized
+states; the phone fixture checks direct and switched canvas routes without
+document overflow.
+
+Verification passed: focused web tests, desktop and phone Playwright flows
+with retries disabled, web typecheck, and lint.

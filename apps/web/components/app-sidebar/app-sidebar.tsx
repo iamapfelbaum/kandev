@@ -34,10 +34,6 @@ const SECTION_ROUTE_MAP: Array<{ id: string; matches: (path: string) => boolean 
     matches: (p) => p.startsWith("/t/"),
   },
   {
-    id: APP_SIDEBAR_SECTION_IDS.canvases,
-    matches: (p) => p.startsWith("/canvases/"),
-  },
-  {
     id: APP_SIDEBAR_SECTION_IDS.officeWork,
     matches: (p) => p.startsWith("/office/tasks") || p.startsWith("/office/routines"),
   },

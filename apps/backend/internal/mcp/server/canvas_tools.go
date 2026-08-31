@@ -47,8 +47,8 @@ func (s *Server) registerCanvasDiscoveryTools() {
 	s.mcpServer.AddTool(
 		mcp.NewTool(
 			"read_canvas_authoring_skill_kandev",
-			mcp.WithDescription("Read the current Kandev canvas-authoring skill or one of its supporting files. The skill is versioned and read from Kandev's system inventory, not the task workspace."),
-			mcp.WithString(canvasSkillPathArg, mcp.Description("Optional relative inventory path. Defaults to SKILL.md.")),
+			mcp.WithDescription("Read the complete versioned Kandev canvas-authoring core bundle without path, or one allowlisted supporting file with a relative path. The skill is read from Kandev's system inventory, not the task workspace."),
+			mcp.WithString(canvasSkillPathArg, mcp.Description("Optional relative inventory path. Omit it to receive the complete core bundle.")),
 		),
 		s.wrapHandler("read_canvas_authoring_skill_kandev", s.readCanvasAuthoringSkillHandler()),
 	)
@@ -58,7 +58,7 @@ func (s *Server) registerCanvasCreateTool() {
 	s.mcpServer.AddTool(
 		mcp.NewTool(
 			"create_canvas_kandev",
-			mcp.WithDescription("Create an inactive draft canvas for the current task and return its assigned source directory, manifest scaffold, skill identity, and permission ceiling."),
+			mcp.WithDescription("Create an inactive draft canvas for the current task and return its assigned source directory, generated scaffold files, manifest scaffold, skill identity, and permission ceiling."),
 			mcp.WithReadOnlyHintAnnotation(false),
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithIdempotentHintAnnotation(false),

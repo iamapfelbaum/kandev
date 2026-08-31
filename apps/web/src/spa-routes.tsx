@@ -57,6 +57,7 @@ import { useTranslation } from "react-i18next";
 import { CanvasHostRoute } from "@/components/settings/canvas-host-route";
 import { SettingsLayoutClient } from "@/components/settings/settings-layout-client";
 import { WorkspaceCanvasesPage } from "@/components/settings/workspace-canvases-page";
+import { WorkspaceSettingsShell } from "@/components/settings/workspaces/workspace-settings-shell";
 
 const OfficeRoutes = lazy(() =>
   import("./office-routes").then((mod) => ({ default: mod.OfficeRoutes })),
@@ -286,7 +287,9 @@ export function SpaRoutes({ routeData }: { routeData?: BootRouteData }) {
     if (route.kind === "canvas") return <CanvasHostRoute canvasId={route.canvasId} />;
     return (
       <SettingsLayoutClient>
-        <WorkspaceCanvasesPage workspaceId={route.workspaceId} />
+        <WorkspaceSettingsShell workspaceId={route.workspaceId} activeTab="canvases">
+          <WorkspaceCanvasesPage workspaceId={route.workspaceId} />
+        </WorkspaceSettingsShell>
       </SettingsLayoutClient>
     );
   }

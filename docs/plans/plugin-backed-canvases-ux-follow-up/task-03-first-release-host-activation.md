@@ -1,7 +1,7 @@
 ---
 id: "03-first-release-host-activation"
 title: "Open the first task release"
-status: pending
+status: done
 wave: 3
 depends_on:
   - "02-guided-canvas-task-launch"
@@ -83,4 +83,12 @@ cd apps/web && pnpm e2e:run --project mobile-chrome tests/canvas/mobile-plugin-c
 
 ## Results
 
-Pending.
+Implemented bounded lifecycle identity hints and task-scoped activation. A
+matching first-release event refetches authoritative canvas metadata, opens a
+deduplicated `canvas:<id>` Dockview panel on desktop, and routes to the focused
+canvas on mobile. Pending permission events use the same path and unrelated or
+repeated events are ignored.
+
+Verification passed: lifecycle and Dockview activation tests, desktop and
+phone Playwright flows with retries disabled, web typecheck, lint, and i18n
+checks.

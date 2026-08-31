@@ -12,6 +12,7 @@ import type { Layout } from "react-resizable-panels";
 import { isTypedTaskLaunchError } from "./simple/components/task-launch-error-entry";
 import { TaskChatLaunchError } from "./simple/components/task-chat-launch-error";
 import { useTaskLaunchErrorContext } from "./task-launch-error-context";
+import { useTaskCanvasLifecycleActivation } from "./dockview-canvas-activation";
 
 // Re-export for backwards compatibility
 export type { SelectedDiff } from "@/hooks/use-session-layout-state";
@@ -23,6 +24,7 @@ const DockviewDesktopLayout = dynamic(
 );
 
 type TaskLayoutProps = {
+  taskId?: string | null;
   workspaceId: string | null;
   workflowId: string | null;
   sessionId?: string | null;
@@ -48,6 +50,7 @@ type TaskLayoutProps = {
 };
 
 export const TaskLayout = memo(function TaskLayout({
+  taskId = null,
   workspaceId,
   workflowId,
   sessionId = null,
@@ -71,6 +74,7 @@ export const TaskLayout = memo(function TaskLayout({
   taskCanvases = [],
 }: TaskLayoutProps) {
   const { isMobile, usesDesktopWorkbench, isFullDesktop } = useResponsiveBreakpoint();
+  useTaskCanvasLifecycleActivation({ taskId, workspaceId, isMobile });
   const router = useRouter();
   const onOpenCanvas = useCallback(
     (canvasId: string) => router.push(canvasHref(canvasId)),

@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import {
   IconDots,
   IconEdit,
@@ -10,6 +11,7 @@ import {
 } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@kandev/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@kandev/ui/tooltip";
 import { MobilePickerSheet } from "@/components/task/mobile/mobile-picker-sheet";
 import { CanvasPage } from "@/components/plugins/canvas-page";
 import { canvasHref, type Canvas } from "@/lib/api/domains/canvas-api";
@@ -88,6 +90,68 @@ export function CanvasHostDialogs({
   );
 }
 
+function canvasLockHelp(canvas: Canvas, t: (key: string) => string): string {
+  return canvas.status === "archived"
+    ? t("canvases:archivedCanvasActionHelp")
+    : t("canvases:disabledCanvasActionHelp");
+}
+
+function canvasPromotionHelp(canvas: Canvas, t: (key: string) => string): string {
+  if (canvas.status === "archived" || canvas.status === "disabled") {
+    return canvasLockHelp(canvas, t);
+  }
+  if (canvas.scope_kind === "task" && canvas.active_release_status === "valid") {
+    return t("canvases:promoteCanvasHelp");
+  }
+  return t("canvases:promoteCanvasUnavailable");
+}
+
+function CanvasDesktopActionTooltip({
+  description,
+  disabled,
+  testId,
+  children,
+}: {
+  description: string;
+  disabled: boolean;
+  testId: string;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className={disabled ? "cursor-not-allowed" : undefined}
+          data-testid={testId}
+          tabIndex={disabled ? 0 : undefined}
+        >
+          {children}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{description}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function MobileCanvasAction({
+  description,
+  children,
+  testId,
+}: {
+  description: string;
+  children: ReactNode;
+  testId: string;
+}) {
+  return (
+    <div className="space-y-0.5 px-1">
+      {children}
+      <p className="px-3 text-xs text-muted-foreground" data-testid={testId}>
+        {description}
+      </p>
+    </div>
+  );
+}
+
 export function CanvasHostBody({
   canvasId,
   title,
@@ -154,32 +218,56 @@ export function CanvasDesktopActions({
 }) {
   const { t } = useTranslation();
   const lifecycleLocked = canvas.status === "archived" || canvas.status === "disabled";
+  const promoteAvailable = canvas.scope_kind === "task" && canvas.active_release_status === "valid";
+  const promoteDisabled = lifecycleLocked || !promoteAvailable;
+  const promoteDescription = canvasPromotionHelp(canvas, t);
   return (
     <div className="flex items-center gap-2">
       {canvas.scope_kind === "workspace" && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="cursor-pointer"
+        <CanvasDesktopActionTooltip
+          description={lifecycleLocked ? canvasLockHelp(canvas, t) : t("canvases:editCanvasHelp")}
           disabled={editing || lifecycleLocked}
-          onClick={onEdit}
+          testId="canvas-action-edit-tooltip-trigger"
         >
-          <IconEdit className="mr-1.5 h-3.5 w-3.5" />
-          {t("canvases:editCanvas")}
-        </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="cursor-pointer"
+            disabled={editing || lifecycleLocked}
+            onClick={onEdit}
+          >
+            <IconEdit className="mr-1.5 h-3.5 w-3.5" />
+            {t("canvases:editCanvas")}
+          </Button>
+        </CanvasDesktopActionTooltip>
       )}
-      <Button variant="outline" size="sm" className="cursor-pointer" onClick={onReleases}>
-        <IconListDetails className="mr-1.5 h-3.5 w-3.5" />
-        {t("canvases:releasesAndPermissions")}
-      </Button>
-      {canvas.scope_kind === "task" &&
-        !lifecycleLocked &&
-        canvas.active_release_status === "valid" && (
-          <Button size="sm" className="cursor-pointer" onClick={onPromote}>
+      <CanvasDesktopActionTooltip
+        description={t("canvases:releasesAndPermissionsHelp")}
+        disabled={false}
+        testId="canvas-action-releases-tooltip-trigger"
+      >
+        <Button variant="outline" size="sm" className="cursor-pointer" onClick={onReleases}>
+          <IconListDetails className="mr-1.5 h-3.5 w-3.5" />
+          {t("canvases:releasesAndPermissions")}
+        </Button>
+      </CanvasDesktopActionTooltip>
+      {canvas.scope_kind === "task" && (
+        <CanvasDesktopActionTooltip
+          description={promoteDescription}
+          disabled={promoteDisabled}
+          testId="canvas-action-promote-tooltip-trigger"
+        >
+          <Button
+            size="sm"
+            className="cursor-pointer"
+            disabled={promoteDisabled}
+            onClick={onPromote}
+          >
             <IconSparkles className="mr-1.5 h-3.5 w-3.5" />
             {t("canvases:promoteCanvas")}
           </Button>
-        )}
+        </CanvasDesktopActionTooltip>
+      )}
     </div>
   );
 }
@@ -199,7 +287,10 @@ export function CanvasHostHeader({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="flex min-h-11 shrink-0 items-center gap-2 border-b px-3 py-1.5">
+    <div
+      className="flex min-h-11 shrink-0 items-center gap-2 border-b px-3 py-1.5"
+      data-testid="canvas-host-header"
+    >
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium md:hidden">{title}</p>
         <p
@@ -257,6 +348,139 @@ export function CanvasHostStatePanel({
   );
 }
 
+function MobileCanvasPicker({
+  canvases,
+  canvas,
+  onSelectCanvas,
+  t,
+}: {
+  canvases: Canvas[];
+  canvas: Canvas | null;
+  onSelectCanvas: (canvas: Canvas) => void;
+  t: (key: string) => string;
+}) {
+  return (
+    <div className="mb-2 border-b pb-2" data-testid="canvas-mobile-picker">
+      <p className="px-3 pb-1 text-xs font-medium text-muted-foreground">
+        {t("canvases:canvases")}
+      </p>
+      {canvases.map((candidate) => (
+        <Button
+          key={candidate.id}
+          variant="ghost"
+          className="min-h-11 w-full justify-start cursor-pointer"
+          disabled={candidate.id === canvas?.id}
+          onClick={() => onSelectCanvas(candidate)}
+          data-testid={`canvas-mobile-picker-item-${candidate.id}`}
+        >
+          <IconLayoutGrid className="mr-2 h-4 w-4" />
+          <span className="truncate">{candidate.title}</span>
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+function MobileCanvasEditAction({
+  canvas,
+  editing,
+  onEdit,
+  t,
+}: {
+  canvas: Canvas;
+  editing: boolean;
+  onEdit: () => void;
+  t: (key: string) => string;
+}) {
+  const lifecycleLocked = canvas.status === "archived" || canvas.status === "disabled";
+  return (
+    <MobileCanvasAction
+      description={lifecycleLocked ? canvasLockHelp(canvas, t) : t("canvases:editCanvasHelp")}
+      testId="canvas-action-edit-help"
+    >
+      <Button
+        variant="ghost"
+        className="min-h-11 w-full justify-start cursor-pointer"
+        disabled={editing || lifecycleLocked}
+        onClick={onEdit}
+      >
+        <IconEdit className="mr-2 h-4 w-4" />
+        {t("canvases:editCanvas")}
+      </Button>
+    </MobileCanvasAction>
+  );
+}
+
+function MobileCanvasReleasesAction({
+  onReleases,
+  t,
+}: {
+  onReleases: () => void;
+  t: (key: string) => string;
+}) {
+  return (
+    <MobileCanvasAction
+      description={t("canvases:releasesAndPermissionsHelp")}
+      testId="canvas-action-releases-help"
+    >
+      <Button
+        variant="ghost"
+        className="min-h-11 w-full justify-start cursor-pointer"
+        onClick={onReleases}
+      >
+        <IconListDetails className="mr-2 h-4 w-4" />
+        {t("canvases:releasesAndPermissions")}
+      </Button>
+    </MobileCanvasAction>
+  );
+}
+
+function MobileCanvasPromoteAction({
+  canvas,
+  lifecycleLocked,
+  onPromote,
+  t,
+}: {
+  canvas: Canvas;
+  lifecycleLocked: boolean;
+  onPromote: () => void;
+  t: (key: string) => string;
+}) {
+  const promoteDisabled = lifecycleLocked || canvas.active_release_status !== "valid";
+  return (
+    <MobileCanvasAction
+      description={canvasPromotionHelp(canvas, t)}
+      testId="canvas-action-promote-help"
+    >
+      <Button
+        variant="ghost"
+        className="min-h-11 w-full justify-start cursor-pointer"
+        disabled={promoteDisabled}
+        onClick={onPromote}
+      >
+        <IconSparkles className="mr-2 h-4 w-4" />
+        {t("canvases:promoteCanvas")}
+      </Button>
+    </MobileCanvasAction>
+  );
+}
+
+function MobileCanvasNewTabAction({ canvas, t }: { canvas: Canvas; t: (key: string) => string }) {
+  return (
+    <MobileCanvasAction
+      description={t("canvases:openInNewTabHelp")}
+      testId="canvas-action-new-tab-help"
+    >
+      <Button variant="ghost" className="min-h-11 w-full justify-start cursor-pointer" asChild>
+        <a href={canvasHref(canvas.id)} target="_blank" rel="noreferrer">
+          <IconExternalLink className="mr-2 h-4 w-4" />
+          {t("canvases:openInNewTab")}
+        </a>
+      </Button>
+    </MobileCanvasAction>
+  );
+}
+
 export function MobileCanvasActions({
   canvas,
   canvases,
@@ -290,64 +514,26 @@ export function MobileCanvasActions({
     >
       <div className="flex flex-col gap-1 pb-2">
         {canvases.length > 0 && (
-          <div className="mb-2 border-b pb-2" data-testid="canvas-mobile-picker">
-            <p className="px-3 pb-1 text-xs font-medium text-muted-foreground">
-              {t("canvases:canvases")}
-            </p>
-            {canvases.map((candidate) => (
-              <Button
-                key={candidate.id}
-                variant="ghost"
-                className="min-h-11 w-full justify-start cursor-pointer"
-                disabled={candidate.id === canvas?.id}
-                onClick={() => onSelectCanvas(candidate)}
-                data-testid={`canvas-mobile-picker-item-${candidate.id}`}
-              >
-                <IconLayoutGrid className="mr-2 h-4 w-4" />
-                <span className="truncate">{candidate.title}</span>
-              </Button>
-            ))}
-          </div>
+          <MobileCanvasPicker
+            canvases={canvases}
+            canvas={canvas}
+            onSelectCanvas={onSelectCanvas}
+            t={t}
+          />
         )}
         {canvas?.scope_kind === "workspace" && (
-          <Button
-            variant="ghost"
-            className="min-h-11 justify-start cursor-pointer"
-            disabled={editing || lifecycleLocked}
-            onClick={onEdit}
-          >
-            <IconEdit className="mr-2 h-4 w-4" />
-            {t("canvases:editCanvas")}
-          </Button>
+          <MobileCanvasEditAction canvas={canvas} editing={editing} onEdit={onEdit} t={t} />
         )}
-        <Button
-          variant="ghost"
-          className="min-h-11 justify-start cursor-pointer"
-          onClick={onReleases}
-        >
-          <IconListDetails className="mr-2 h-4 w-4" />
-          {t("canvases:releasesAndPermissions")}
-        </Button>
-        {canvas?.scope_kind === "task" &&
-          !lifecycleLocked &&
-          canvas.active_release_status === "valid" && (
-            <Button
-              variant="ghost"
-              className="min-h-11 justify-start cursor-pointer"
-              onClick={onPromote}
-            >
-              <IconSparkles className="mr-2 h-4 w-4" />
-              {t("canvases:promoteCanvas")}
-            </Button>
-          )}
-        {canvas && (
-          <Button variant="ghost" className="min-h-11 justify-start cursor-pointer" asChild>
-            <a href={canvasHref(canvas.id)} target="_blank" rel="noreferrer">
-              <IconExternalLink className="mr-2 h-4 w-4" />
-              {t("canvases:openInNewTab")}
-            </a>
-          </Button>
+        <MobileCanvasReleasesAction onReleases={onReleases} t={t} />
+        {canvas?.scope_kind === "task" && (
+          <MobileCanvasPromoteAction
+            canvas={canvas}
+            lifecycleLocked={Boolean(lifecycleLocked)}
+            onPromote={onPromote}
+            t={t}
+          />
         )}
+        {canvas && <MobileCanvasNewTabAction canvas={canvas} t={t} />}
       </div>
     </MobilePickerSheet>
   );

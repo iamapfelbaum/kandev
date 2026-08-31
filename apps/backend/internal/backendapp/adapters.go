@@ -35,6 +35,9 @@ import (
 // lifecycle or agentctl implementation packages.
 type canvasAgentCtlClient interface {
 	CreateFile(context.Context, string, string) (*streams.FileCreateResponse, error)
+	ApplyFileDiff(context.Context, string, string, string, string, *string) (*streams.FileUpdateResponse, error)
+	DeleteFile(context.Context, string, string) (*streams.FileDeleteResponse, error)
+	RenameFile(context.Context, string, string, string) (*streams.FileRenameResponse, error)
 	StreamCanvasSource(context.Context, string) (io.ReadCloser, error)
 	CopyFiles(context.Context, string, []copyfiles.Entry) (canvasCopyFilesResult, error)
 }
@@ -104,6 +107,18 @@ type canvasAgentCtlAdapter struct {
 
 func (a canvasAgentCtlAdapter) CreateFile(ctx context.Context, path, repo string) (*streams.FileCreateResponse, error) {
 	return a.client.CreateFile(ctx, path, repo)
+}
+
+func (a canvasAgentCtlAdapter) ApplyFileDiff(ctx context.Context, path, diff, originalHash, repo string, desiredContent *string) (*streams.FileUpdateResponse, error) {
+	return a.client.ApplyFileDiff(ctx, path, diff, originalHash, repo, desiredContent)
+}
+
+func (a canvasAgentCtlAdapter) DeleteFile(ctx context.Context, path, repo string) (*streams.FileDeleteResponse, error) {
+	return a.client.DeleteFile(ctx, path, repo)
+}
+
+func (a canvasAgentCtlAdapter) RenameFile(ctx context.Context, oldPath, newPath, repo string) (*streams.FileRenameResponse, error) {
+	return a.client.RenameFile(ctx, oldPath, newPath, repo)
 }
 
 func (a canvasAgentCtlAdapter) StreamCanvasSource(ctx context.Context, root string) (io.ReadCloser, error) {

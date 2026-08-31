@@ -35,6 +35,32 @@ export type SeededCanvas = {
   session: SessionPage;
 };
 
+export async function expectCanvasFrameFillsHost(page: Page): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const host = document.querySelector('[data-testid="canvas-host-route"]');
+          const header = document.querySelector('[data-testid="canvas-host-header"]');
+          const frame = document.querySelector('[data-testid="web-app-frame"]');
+          if (!host || !header || !frame) return false;
+          const hostRect = host.getBoundingClientRect();
+          const headerRect = header.getBoundingClientRect();
+          const frameRect = frame.getBoundingClientRect();
+          const heightMatches =
+            Math.abs(frameRect.height - (hostRect.height - headerRect.height)) <= 2;
+          const widthMatches = Math.abs(frameRect.width - hostRect.width) <= 2;
+          const documentFits = document.documentElement.scrollWidth <= window.innerWidth;
+          return heightMatches && widthMatches && documentFits;
+        }),
+      {
+        timeout: 5_000,
+        message: "The canvas iframe host did not settle to the available viewport.",
+      },
+    )
+    .toBe(true);
+}
+
 export async function readCanvasFeature(apiClient: ApiClient): Promise<boolean | null> {
   const response = await apiClient.rawRequest("GET", "/api/v1/features");
   if (!response.ok) return null;
@@ -69,7 +95,10 @@ export async function enableCanvasFeature(
   return release;
 }
 
-async function listTaskCanvases(apiClient: ApiClient, taskId: string): Promise<CanvasRecord[]> {
+export async function listTaskCanvases(
+  apiClient: ApiClient,
+  taskId: string,
+): Promise<CanvasRecord[]> {
   const response = await apiClient.rawRequest(
     "GET",
     `/api/v1/tasks/${encodeURIComponent(taskId)}/canvases`,
@@ -179,6 +208,20 @@ function canvasFixtureScript(canvas: CanvasRecord): string {
   let lastEventId = "";
   let streamController;
   let streamReader;
+
+  const renderAppearance = () => {
+    const root = document.documentElement;
+    const styles = getComputedStyle(root);
+    text("canvas-fixture-appearance-mode", root.dataset.kandevAppearance || "loading");
+    text(
+      "canvas-fixture-appearance-background",
+      styles.getPropertyValue("--background").trim() || "loading",
+    );
+    text("canvas-fixture-appearance-color-scheme", root.style.colorScheme || "loading");
+  };
+  window.addEventListener("message", (event) => {
+    if (event.source === window.parent) renderAppearance();
+  });
 
   const loadProjection = async () => {
     const [context, taskPage, workflowPage] = await Promise.all([
@@ -322,11 +365,12 @@ function canvasFixtureScript(canvas: CanvasRecord): string {
   });
 
   text("canvas-fixture-script", "inline-ready");
+  renderAppearance();
   void loadProjection().then(() => connectEvents());
 })();`;
 }
 
-function writeCanvasSource(workspacePath: string, canvas: CanvasRecord): void {
+export function writeCanvasSource(workspacePath: string, canvas: CanvasRecord): void {
   const sourceDirectory = path.join(workspacePath, ".kandev", "canvases", canvas.id);
   fs.mkdirSync(sourceDirectory, { recursive: true });
   fs.writeFileSync(path.join(sourceDirectory, "manifest.yaml"), canvasManifest(canvas));
@@ -335,10 +379,11 @@ function writeCanvasSource(workspacePath: string, canvas: CanvasRecord): void {
     [
       "<!doctype html>",
       '<html lang="en">',
-      '  <head><meta charset="utf-8"><title>E2E Plugin Canvas</title></head>',
+      '  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>E2E Plugin Canvas</title><link rel="stylesheet" href="./styles.css"><script src="./appearance.js"></script></head>',
       "  <body>",
-      '    <main data-testid="canvas-fixture-content">',
-      "      <h1>E2E Plugin Canvas</h1>",
+      '    <main class="canvas-shell" data-testid="canvas-fixture-content">',
+      '      <header class="canvas-header"><p class="eyebrow" data-testid="canvas-fixture-eyebrow">E2E Plugin Canvas</p><h1>E2E Plugin Canvas</h1></header>',
+      '      <section class="canvas-card">',
       '      <p data-testid="canvas-fixture-script">loading</p>',
       '      <p data-testid="canvas-fixture-context">loading</p>',
       '      <p data-testid="canvas-fixture-task-count">0</p>',
@@ -350,13 +395,18 @@ function writeCanvasSource(workspacePath: string, canvas: CanvasRecord): void {
       '      <p data-testid="canvas-fixture-sse-status">loading</p>',
       '      <p data-testid="canvas-fixture-sse-events">0</p>',
       '      <p data-testid="canvas-fixture-sse-resync">idle</p>',
+      '      <p data-testid="canvas-fixture-appearance-mode">loading</p>',
+      '      <p data-testid="canvas-fixture-appearance-background">loading</p>',
+      '      <p data-testid="canvas-fixture-appearance-color-scheme">loading</p>',
       '      <button type="button" data-testid="canvas-fixture-continue">Continue</button>',
       '      <button type="button" data-testid="canvas-fixture-move">Move workflow step</button>',
       '      <button type="button" data-testid="canvas-fixture-state">Recover state</button>',
       '      <button type="button" data-testid="canvas-fixture-reconnect">Reconnect events</button>',
       '      <button type="button" data-testid="canvas-fixture-resync">Force resync</button>',
+      "      </section>",
       "    </main>",
       `    <script>${canvasFixtureScript(canvas)}</script>`,
+      '    <script src="./script.js"></script>',
       "  </body>",
       "</html>",
       "",
@@ -398,17 +448,41 @@ export async function seedTaskCanvas(
   await session.waitForLoad();
   await session.waitForChatIdle({ timeout: 45_000 });
 
+  const canvas = await waitForTaskCanvas(apiClient, task.id, title);
+
+  const publishedCanvas = await publishTaskCanvas({
+    apiClient,
+    taskId: task.id,
+    taskSessionId: task.session_id,
+    session,
+    canvas,
+    useMobileSubmit,
+  });
+
+  return {
+    taskId: task.id,
+    taskSessionId: task.session_id,
+    canvas: publishedCanvas,
+    session,
+  };
+}
+
+export async function waitForTaskCanvas(
+  apiClient: ApiClient,
+  taskId: string,
+  title: string,
+): Promise<CanvasRecord> {
   let canvas: CanvasRecord | null = null;
   await expect
     .poll(
       async () => {
-        const canvases = await listTaskCanvases(apiClient, task.id);
+        const canvases = await listTaskCanvases(apiClient, taskId);
         canvas =
           canvases.find(
             (candidate) =>
               candidate.title === title &&
               candidate.scope_kind === "task" &&
-              candidate.task_id === task.id,
+              candidate.task_id === taskId,
           ) ?? null;
         return canvas?.id ?? null;
       },
@@ -416,8 +490,27 @@ export async function seedTaskCanvas(
     )
     .not.toBeNull();
   if (!canvas) throw new Error("The canvas fixture returned no canvas record.");
+  return canvas;
+}
 
-  const workspacePath = await waitForSessionWorkspace(apiClient, task.id, task.session_id);
+type PublishTaskCanvasOptions = {
+  apiClient: ApiClient;
+  taskId: string;
+  taskSessionId: string;
+  session: SessionPage;
+  canvas: CanvasRecord;
+  useMobileSubmit?: boolean;
+};
+
+export async function publishTaskCanvas({
+  apiClient,
+  taskId,
+  taskSessionId,
+  session,
+  canvas,
+  useMobileSubmit = false,
+}: PublishTaskCanvasOptions): Promise<CanvasRecord> {
+  const workspacePath = await waitForSessionWorkspace(apiClient, taskId, taskSessionId);
   writeCanvasSource(workspacePath, canvas);
   const sourcePath = `.kandev/canvases/${canvas.id}`;
   const publishScript = `e2e:mcp:kandev:publish_canvas_kandev(${JSON.stringify({
@@ -429,13 +522,14 @@ export async function seedTaskCanvas(
   } else {
     await session.sendMessage(publishScript);
   }
-  await session.waitForChatIdle({ timeout: 45_000 });
-
+  // The release poll below is the authoritative completion signal. Waiting
+  // for the chat composer is an unrelated UI settle condition and can time
+  // out while the publish request is still being processed.
   let publishedCanvas: CanvasRecord | null = null;
   await expect
     .poll(
       async () => {
-        publishedCanvas = await getCanvas(apiClient, canvas!.id);
+        publishedCanvas = await getCanvas(apiClient, canvas.id);
         return Boolean(
           publishedCanvas?.pending_release ||
           publishedCanvas?.active_release_id ||
@@ -446,13 +540,7 @@ export async function seedTaskCanvas(
     )
     .toBe(true);
   if (!publishedCanvas) throw new Error("The canvas publish response was empty.");
-
-  return {
-    taskId: task.id,
-    taskSessionId: task.session_id,
-    canvas: publishedCanvas,
-    session,
-  };
+  return publishedCanvas;
 }
 
 export async function approvePendingCanvas(

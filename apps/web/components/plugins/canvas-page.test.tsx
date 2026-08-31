@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CanvasPage } from "./canvas-page";
 
@@ -14,7 +14,7 @@ describe("CanvasPage", () => {
     responsive.isMobile = false;
   });
 
-  it("renders a full-height host and forwards runtime and load lifecycle props", () => {
+  it("renders a full-height host and forwards runtime and load lifecycle props", async () => {
     const onLoad = vi.fn();
     render(
       <CanvasPage
@@ -36,7 +36,7 @@ describe("CanvasPage", () => {
 
     fireEvent.load(frame);
     expect(onLoad).toHaveBeenCalledOnce();
-    expect(screen.queryByRole("status")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
   });
 
   it("keeps the unavailable host state outside the iframe", () => {

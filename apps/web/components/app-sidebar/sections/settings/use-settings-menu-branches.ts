@@ -19,7 +19,6 @@ import { resolvePluginIcon } from "@/lib/plugins/icons";
 import { usePluginRegistry } from "@/lib/plugins/registry";
 import { isTreeSettingsMenuMode, type SettingsMenuMode } from "@/lib/settings/settings-menu-mode";
 import {
-  appendWorkspaceCanvasNodes,
   buildAgentsBranch,
   buildBranchRoot,
   buildExecutorsBranch,
@@ -96,15 +95,12 @@ export function useSettingsMenuBranches(mode: SettingsMenuMode): SettingsMenuBra
     return {
       ...branchEntry(
         WORKSPACES_SETTINGS_HREF,
-        appendWorkspaceCanvasNodes(
-          buildWorkspacesBranch(
-            workspaces,
-            activeWorkspaceId,
-            visibleIntegrationsFor,
-            integrationContributions,
-            pluginIntegrationEnabled,
-          ),
-          canvasesEnabled,
+        buildWorkspacesBranch(
+          workspaces,
+          activeWorkspaceId,
+          visibleIntegrationsFor,
+          integrationContributions,
+          { pluginIntegrationEnabled, canvasesEnabled },
         ),
       ),
       ...branchEntry(

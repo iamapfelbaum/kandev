@@ -5,6 +5,7 @@ import type { Canvas } from "@/lib/api/domains/canvas-api";
 
 const mocks = vi.hoisted(() => ({
   listWorkspaceCanvases: vi.fn(),
+  createCanvas: vi.fn(),
   enabled: true,
   pathname: "/",
   expanded: true,
@@ -13,7 +14,7 @@ const mocks = vi.hoisted(() => ({
 const state = {
   features: { canvases: true },
   workspaces: { activeId: "workspace-1" },
-  appSidebar: { sectionExpanded: { canvases: true } },
+  appSidebar: { sectionExpanded: { canvases: true } as Record<string, boolean> },
   toggleAppSidebarSection: vi.fn(),
   setAppSidebarCollapsed: vi.fn(),
 };
@@ -33,6 +34,13 @@ vi.mock("@/lib/api/domains/canvas-api", () => ({
     `/settings/workspaces/${encodeURIComponent(id)}/canvases`,
   listWorkspaceCanvases: mocks.listWorkspaceCanvases,
 }));
+vi.mock("@/components/canvas/canvas-task-create-launcher", () => ({
+  CanvasTaskCreateLauncher: ({ workspaceId }: { workspaceId: string }) => (
+    <button type="button" data-testid="sidebar-create-canvas" data-workspace-id={workspaceId}>
+      Create canvas
+    </button>
+  ),
+}));
 
 import { CanvasesSection, isActiveWorkspaceCanvas } from "./canvases-section";
 
@@ -47,6 +55,8 @@ const ACTIVE_CANVAS: Canvas = {
   active_release_id: "release-1",
   active_release_status: "valid",
 };
+const CANVASES_LABEL = "Canvases";
+const ACTIVE_CANVAS_TEST_ID = "sidebar-canvas-canvas-1";
 
 beforeEach(() => {
   mocks.enabled = true;
@@ -90,8 +100,8 @@ describe("CanvasesSection", () => {
       </TooltipProvider>,
     );
 
-    expect(await screen.findByTestId("sidebar-canvas-canvas-1")).toBeTruthy();
-    expect(screen.getByTestId("sidebar-canvas-canvas-1").getAttribute("href")).toBe(
+    expect(await screen.findByTestId(ACTIVE_CANVAS_TEST_ID)).toBeTruthy();
+    expect(screen.getByTestId(ACTIVE_CANVAS_TEST_ID).getAttribute("href")).toBe(
       "/canvases/canvas-1",
     );
     expect(screen.queryByText("Task only")).toBeNull();
@@ -101,6 +111,9 @@ describe("CanvasesSection", () => {
     expect(screen.queryByText("Unavailable release")).toBeNull();
     expect(screen.getByTestId("sidebar-canvases-settings").getAttribute("href")).toBe(
       "/settings/workspaces/workspace-1/canvases",
+    );
+    expect(screen.getByTestId("sidebar-create-canvas").getAttribute("data-workspace-id")).toBe(
+      "workspace-1",
     );
   });
 
@@ -112,8 +125,30 @@ describe("CanvasesSection", () => {
       </TooltipProvider>,
     );
 
-    await waitFor(() => expect(screen.getByText("Canvases")).toBeTruthy());
-    expect(screen.queryByTestId("sidebar-canvas-canvas-1")).toBeNull();
+    await waitFor(() => expect(screen.getByText(CANVASES_LABEL)).toBeTruthy());
+    expect(screen.queryByTestId(ACTIVE_CANVAS_TEST_ID)).toBeNull();
+  });
+
+  it("stays folded when the feature changes from off to on without a saved preference", async () => {
+    state.appSidebar.sectionExpanded = {};
+    mocks.enabled = false;
+    const { rerender } = render(
+      <TooltipProvider>
+        <CanvasesSection collapsed={false} />
+      </TooltipProvider>,
+    );
+
+    expect(screen.queryByText(CANVASES_LABEL)).toBeNull();
+
+    mocks.enabled = true;
+    rerender(
+      <TooltipProvider>
+        <CanvasesSection collapsed={false} />
+      </TooltipProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByText(CANVASES_LABEL)).toBeTruthy());
+    expect(screen.queryByTestId(ACTIVE_CANVAS_TEST_ID)).toBeNull();
   });
 });
 

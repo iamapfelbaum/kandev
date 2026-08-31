@@ -325,7 +325,7 @@ func canvasEditPrompt(item canvasservice.Canvas, sourceRoot, requestedPrompt str
 		grants = strings.Join(values, ", ")
 	}
 	return fmt.Sprintf(
-		"Edit canvas %q. Read the canvas authoring skill with read_canvas_authoring_skill_kandev, inspect the current source in %s, use only these effective grants: %s, apply the requested change, validate the result, and publish it with publish_canvas_kandev using canvas_id %s and source_path %s. Requested change: %s",
+		"Edit canvas %q. If the core authoring bundle is not already available, read it once with read_canvas_authoring_skill_kandev without a path. Inspect the current source in %s, use only these effective grants: %s, apply the requested change, validate the result, and publish it with publish_canvas_kandev using canvas_id %s and source_path %s. Requested change: %s",
 		item.Title, sourceRoot, grants, item.ID, sourceRoot, requestedPrompt,
 	)
 }

@@ -148,6 +148,7 @@ function buildTaskLayoutProps(params: {
 }) {
   const { taskProps, repository, effectiveSessionId, initialScripts, initialTerminals } = params;
   return {
+    taskId: taskProps.taskId,
     workspaceId: taskProps.workspaceId,
     workflowId: taskProps.workflowId,
     sessionId: effectiveSessionId,

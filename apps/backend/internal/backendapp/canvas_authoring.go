@@ -27,14 +27,15 @@ import (
 )
 
 const (
-	canvasSourceRootPrefix = ".kandev/canvases"
-	canvasPublishWindow    = 5 * time.Minute
-	canvasPublishAttempts  = 10
-	canvasSourceActor      = "agent"
-	canvasEditOrigin       = "canvas_edit"
-	canvasErrorCodeDefault = "canvas_error"
-	canvasErrorCodeInvalid = "invalid_canvas"
-	canvasInvalidRelease   = "invalid_release"
+	canvasSourceRootPrefix     = ".kandev/canvases"
+	canvasPublishWindow        = 5 * time.Minute
+	canvasPublishAttempts      = 10
+	canvasSourceCleanupTimeout = 10 * time.Second
+	canvasSourceActor          = "agent"
+	canvasEditOrigin           = "canvas_edit"
+	canvasErrorCodeDefault     = "canvas_error"
+	canvasErrorCodeInvalid     = "invalid_canvas"
+	canvasInvalidRelease       = "invalid_release"
 	// This key is written only by the authenticated canvas edit endpoint. MCP
 	// canvas authorization treats it as trusted session state, never as tool
 	// input or task metadata.
@@ -109,17 +110,20 @@ func (s *canvasAuthoringService) ReadCanvasAuthoringSkill(ctx context.Context, r
 	if err := canvasskill.EnsureMaterialized(s.home); err != nil {
 		return nil, canvasOperationError("skill_unavailable", "canvas authoring skill is unavailable", err)
 	}
+	if request.Path == "" {
+		bundle, err := canvasCoreBundle(s.home)
+		if err != nil {
+			return nil, canvasOperationError("skill_unavailable", "canvas authoring skill is unavailable", err)
+		}
+		return bundle, nil
+	}
 	content, err := canvasskill.ReadMaterialized(s.home, request.Path)
 	if err != nil {
 		return nil, canvasOperationError("skill_path_invalid", "canvas authoring skill path is not available", err)
 	}
-	path := request.Path
-	if path == "" {
-		path = "SKILL.md"
-	}
 	return map[string]any{
 		"slug": canvasskill.Slug, "version": canvasskill.Version,
-		"path": path, "content": string(content),
+		"path": request.Path, "content": string(content),
 	}, nil
 }
 
@@ -148,16 +152,27 @@ func (s *canvasAuthoringService) CreateCanvas(ctx context.Context, request mcpha
 		_ = s.canvases.Remove(ctx, created.ID)
 		return nil, canvasOperationError("agent_unavailable", "the task agent is not ready", errors.New("agentctl client is unavailable"))
 	}
-	// Creating a marker through agentctl establishes the directory for local,
-	// Docker, SSH, and other remote executors without assuming a host path.
-	if _, err := client.CreateFile(ctx, filepath.ToSlash(filepath.Join(root, ".canvas-root")), ""); err != nil {
-		_ = s.canvases.Remove(ctx, created.ID)
-		return nil, canvasOperationError("source_unavailable", "canvas source directory could not be created", err)
-	}
 	if err := canvasskill.EnsureMaterialized(s.home); err != nil {
 		_ = s.canvases.Remove(ctx, created.ID)
 		return nil, canvasOperationError("skill_unavailable", "canvas authoring skill is unavailable", err)
 	}
+	scaffold, err := canvasScaffoldFiles(created, request.Summary)
+	if err != nil {
+		_ = s.canvases.Remove(ctx, created.ID)
+		return nil, canvasOperationError("skill_unavailable", "canvas scaffold is unavailable", err)
+	}
+	// Stage the marker and every scaffold file under an authenticated agentctl
+	// path, then rename the complete directory into its assigned root. This
+	// keeps local, Docker, SSH, and other executors consistent and lets every
+	// failure path remove the complete staged tree.
+	if err := materializeCanvasScaffoldAtomically(ctx, client, created.ID, scaffold); err != nil {
+		_ = s.canvases.Remove(ctx, created.ID)
+		return nil, canvasOperationError("source_unavailable", "canvas scaffold could not be created", err)
+	}
+	return canvasCreateResponse(created, root, ownerID, scaffold), nil
+}
+
+func canvasCreateResponse(created *canvas.Canvas, root, ownerID string, scaffold []canvasScaffoldFile) map[string]any {
 	return map[string]any{
 		"canvas":      *created,
 		"canvas_id":   created.ID,
@@ -168,8 +183,128 @@ func (s *canvasAuthoringService) CreateCanvas(ctx context.Context, request mcpha
 			"slug": canvasskill.Slug, "version": canvasskill.Version,
 			"read_tool": "read_canvas_authoring_skill_kandev",
 		},
-		"manifest_scaffold": canvasManifestScaffold(created, request.Summary),
+		"manifest_scaffold":  string(scaffold[0].Content),
+		"scaffold_inventory": canvasskill.ScaffoldInventory(),
+	}
+}
+
+func canvasCoreBundle(home string) (map[string]any, error) {
+	files := make([]map[string]string, 0, len(canvasskill.CoreInventory()))
+	for _, rel := range canvasskill.CoreInventory() {
+		content, err := canvasskill.ReadMaterialized(home, rel)
+		if err != nil {
+			return nil, fmt.Errorf("read canvas core file %q: %w", rel, err)
+		}
+		files = append(files, map[string]string{"path": rel, "content": string(content)})
+	}
+	if len(files) == 0 {
+		return nil, errors.New("canvas core bundle is empty")
+	}
+	return map[string]any{
+		"slug": canvasskill.Slug, "version": canvasskill.Version,
+		"path": "SKILL.md", "content": files[0]["content"],
+		"inventory":          canvasskill.Inventory(),
+		"core_inventory":     canvasskill.CoreInventory(),
+		"scaffold_inventory": canvasskill.ScaffoldInventory(),
+		"core": map[string]any{
+			"inventory": canvasskill.CoreInventory(),
+			"files":     files,
+		},
 	}, nil
+}
+
+type canvasScaffoldFile struct {
+	Path    string
+	Content []byte
+}
+
+func canvasScaffoldFiles(item *canvas.Canvas, summary string) ([]canvasScaffoldFile, error) {
+	if item == nil {
+		return nil, errors.New("canvas is required for scaffold generation")
+	}
+	manifest := []byte(canvasManifestScaffold(item, summary))
+	templates, err := canvasskill.ScaffoldTemplateFiles()
+	if err != nil {
+		return nil, err
+	}
+	files := make([]canvasScaffoldFile, 0, 1+len(templates))
+	files = append(files, canvasScaffoldFile{Path: "manifest.yaml", Content: manifest})
+	for _, template := range templates {
+		files = append(files, canvasScaffoldFile{Path: template.Path, Content: template.Content})
+	}
+	return files, nil
+}
+
+func materializeCanvasScaffold(ctx context.Context, client canvasAgentCtlClient, root string, files []canvasScaffoldFile) error {
+	for _, file := range files {
+		path := filepath.ToSlash(filepath.Join(root, file.Path))
+		if _, err := client.CreateFile(ctx, path, ""); err != nil {
+			return fmt.Errorf("create %s: %w", file.Path, err)
+		}
+		content := string(file.Content)
+		if _, err := client.ApplyFileDiff(ctx, path, canvasScaffoldDiff(path, file.Content), "", "", &content); err != nil {
+			return fmt.Errorf("write %s: %w", file.Path, err)
+		}
+	}
+	return nil
+}
+
+func materializeCanvasScaffoldAtomically(ctx context.Context, client canvasAgentCtlClient, canvasID string, files []canvasScaffoldFile) error {
+	stagingRoot := canvasStagingRoot(canvasID)
+	finalRoot := canvasSourceRoot(canvasID)
+	cleanup := func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), canvasSourceCleanupTimeout)
+		defer cancel()
+		// Delete both paths. A failed rename can leave the staging tree, while a
+		// transport error after a successful rename can leave the final tree.
+		// DeleteFile is authenticated by the agentctl session and safely ignores
+		// whichever path was never created.
+		for _, root := range []string{stagingRoot, finalRoot} {
+			// Cleanup is best effort, but the original operation error remains
+			// the actionable response for the authoring tool.
+			_, _ = client.DeleteFile(cleanupCtx, root, "")
+		}
+	}
+
+	marker := filepath.ToSlash(filepath.Join(stagingRoot, ".canvas-root"))
+	if _, err := client.CreateFile(ctx, marker, ""); err != nil {
+		cleanup()
+		return fmt.Errorf("create canvas marker: %w", err)
+	}
+	if err := materializeCanvasScaffold(ctx, client, stagingRoot, files); err != nil {
+		cleanup()
+		return err
+	}
+	if _, err := client.RenameFile(ctx, stagingRoot, finalRoot, ""); err != nil {
+		cleanup()
+		return fmt.Errorf("activate canvas source directory: %w", err)
+	}
+	return nil
+}
+
+func canvasScaffoldDiff(path string, content []byte) string {
+	value := string(content)
+	hasFinalNewline := strings.HasSuffix(value, "\n")
+	value = strings.TrimSuffix(value, "\n")
+	lines := []string{}
+	if value != "" {
+		lines = strings.Split(value, "\n")
+	}
+
+	var diff strings.Builder
+	if len(lines) == 0 {
+		return fmt.Sprintf("--- %s\n+++ %s\n@@ -0,0 +0,0 @@\n", path, path)
+	}
+	fmt.Fprintf(&diff, "--- %s\n+++ %s\n@@ -0,0 +1,%d @@\n", path, path, len(lines))
+	for index, line := range lines {
+		diff.WriteByte('+')
+		diff.WriteString(line)
+		diff.WriteByte('\n')
+		if index == len(lines)-1 && !hasFinalNewline {
+			diff.WriteString("\\ No newline at end of file\n")
+		}
+	}
+	return diff.String()
 }
 
 func (s *canvasAuthoringService) GetCanvas(ctx context.Context, request mcphandlers.CanvasGetRequest) (any, error) {
@@ -511,6 +646,10 @@ func (s *canvasAuthoringService) endPublish(_ string, canvasID string) {
 
 func canvasSourceRoot(canvasID string) string {
 	return filepath.ToSlash(filepath.Join(canvasSourceRootPrefix, canvasID))
+}
+
+func canvasStagingRoot(canvasID string) string {
+	return filepath.ToSlash(filepath.Join(canvasSourceRootPrefix, ".canvas-"+canvasID+".staging"))
 }
 
 func canvasSourcePackageLimits() webapp.Limits {

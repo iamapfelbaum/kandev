@@ -1,7 +1,7 @@
 ---
 id: "01-workspace-canvas-discovery"
 title: "Align workspace canvas discovery"
-status: pending
+status: done
 wave: 1
 depends_on: []
 plan: "plan.md"
@@ -88,4 +88,19 @@ None.
 
 ## Results
 
-Pending.
+Implemented the feature-aware workspace canvas discovery surfaces:
+
+- kept the Canvases sidebar section folded by default and removed route-forced
+  expansion;
+- made the shared workspace settings catalog drive the settings tree, tab
+  strip, route shell, and responsive workspace summary cards;
+- added active valid canvas counts without requesting canvas data when the
+  feature is disabled;
+- kept the canvas settings route inside `WorkspaceSettingsShell`.
+
+Verification passed:
+
+- focused web suite: 7 files, 69 tests;
+- `pnpm run typecheck`;
+- `pnpm run lint`;
+- `pnpm run i18n:check`.

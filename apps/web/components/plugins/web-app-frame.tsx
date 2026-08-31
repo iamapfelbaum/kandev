@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useTheme } from "@/components/theme/app-theme";
 import { useResponsiveBreakpoint } from "@/hooks/use-responsive-breakpoint";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
+import { resolveWebAppAppearance } from "./web-app-appearance";
 
 type WebAppFrameProps = {
   /** A short-lived capability URL returned by the backend. */
@@ -25,18 +27,35 @@ type FrameState = "loading" | "ready" | "unavailable";
 export function WebAppFrame({ runtimeUrl, title, className, onLoad, onError }: WebAppFrameProps) {
   const { isMobile } = useResponsiveBreakpoint();
   const { t } = useTranslation();
+  const { resolvedTheme } = useTheme();
   const [frameState, setFrameState] = useState<FrameState>(runtimeUrl ? "loading" : "unavailable");
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const frameReadyRef = useRef(false);
 
   useEffect(() => {
+    frameReadyRef.current = false;
     setFrameState(runtimeUrl ? "loading" : "unavailable");
   }, [runtimeUrl]);
 
+  const sendAppearance = useCallback(() => {
+    const target = iframeRef.current?.contentWindow;
+    if (!target) return;
+    target.postMessage(resolveWebAppAppearance(document, resolvedTheme), "*");
+  }, [resolvedTheme]);
+
+  useEffect(() => {
+    if (frameReadyRef.current) sendAppearance();
+  }, [sendAppearance]);
+
   const handleLoad = () => {
-    setFrameState("ready");
+    sendAppearance();
+    frameReadyRef.current = true;
     onLoad?.();
+    window.requestAnimationFrame(() => setFrameState("ready"));
   };
 
   const handleError = () => {
+    frameReadyRef.current = false;
     setFrameState("unavailable");
     onError?.();
   };
@@ -58,6 +77,7 @@ export function WebAppFrame({ runtimeUrl, title, className, onLoad, onError }: W
           key={runtimeUrl}
           title={title}
           src={runtimeUrl}
+          ref={iframeRef}
           sandbox="allow-scripts allow-forms"
           referrerPolicy="no-referrer"
           loading="eager"

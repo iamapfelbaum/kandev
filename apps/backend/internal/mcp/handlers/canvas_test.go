@@ -12,6 +12,7 @@ import (
 
 type canvasAuthoringServiceFake struct {
 	create CanvasCreateRequest
+	read   []CanvasReadSkillRequest
 	called bool
 }
 
@@ -19,7 +20,8 @@ func (f *canvasAuthoringServiceFake) ListCanvases(context.Context, CanvasListReq
 	return map[string]any{"canvases": []any{}}, nil
 }
 
-func (f *canvasAuthoringServiceFake) ReadCanvasAuthoringSkill(context.Context, CanvasReadSkillRequest) (any, error) {
+func (f *canvasAuthoringServiceFake) ReadCanvasAuthoringSkill(_ context.Context, request CanvasReadSkillRequest) (any, error) {
+	f.read = append(f.read, request)
 	return map[string]any{"path": "SKILL.md"}, nil
 }
 
@@ -118,4 +120,16 @@ func TestCanvasHandlers_RequireBoundExecution(t *testing.T) {
 	var payload ws.ErrorPayload
 	require.NoError(t, json.Unmarshal(response.Payload, &payload))
 	require.Equal(t, ws.ErrorCodeUnauthorized, payload.Code)
+}
+
+func TestCanvasHandlers_ReadAuthoringSkillUsesOnePathlessCoreCall(t *testing.T) {
+	fake := &canvasAuthoringServiceFake{}
+	_, dispatcher := newCanvasHandlersForTest(t, fake)
+	message := makeWSMessage(t, ws.ActionMCPReadCanvasAuthoringSkill, map[string]any{})
+
+	response, err := dispatcher.Dispatch(canvasExecutionContext(), message)
+	require.NoError(t, err)
+	require.Equal(t, ws.MessageTypeResponse, response.Type)
+	require.Len(t, fake.read, 1)
+	require.Empty(t, fake.read[0].Path)
 }

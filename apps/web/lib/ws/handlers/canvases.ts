@@ -1,7 +1,9 @@
 import type { StoreApi } from "zustand";
 import type { AppState } from "@/lib/state/store";
-import { invalidateCanvasLifecycle } from "@/lib/canvas-lifecycle";
+import { recordCanvasLifecycle, type CanvasLifecycleAction } from "@/lib/canvas-lifecycle";
 import type { WsHandlers } from "@/lib/ws/handlers/types";
+import type { CanvasLifecyclePayload } from "@/lib/types/backend";
+import type { BackendMessage } from "@/lib/types/backend-message";
 
 /**
  * Canvas lifecycle notifications carry identity and status only. Visible
@@ -9,7 +11,8 @@ import type { WsHandlers } from "@/lib/ws/handlers/types";
  * snapshot so no WebSocket payload becomes a second canvas source of truth.
  */
 export function registerCanvasesHandlers(_store: StoreApi<AppState>): WsHandlers {
-  const invalidate = () => invalidateCanvasLifecycle();
+  const invalidate = (message: BackendMessage<CanvasLifecycleAction, CanvasLifecyclePayload>) =>
+    recordCanvasLifecycle(message.action, message.payload);
   return {
     "canvas.created": invalidate,
     "canvas.release.activated": invalidate,

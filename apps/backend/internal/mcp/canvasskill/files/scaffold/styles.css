@@ -1,8 +1,22 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   font-family: system-ui, sans-serif;
-  background: #101318;
-  color: #f4f6f8;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --border: oklch(0.922 0 0);
+  --primary: oklch(0.51 0.23 277);
+  --primary-foreground: oklch(0.96 0.02 272);
+  --accent: oklch(0.68 0.18 276);
+  --accent-foreground: oklch(0.98 0 0);
+  --destructive: oklch(0.58 0.22 27);
+  --destructive-foreground: oklch(0.96 0.02 27);
+  --ring: oklch(0.708 0 0);
+  background: var(--background);
+  color: var(--foreground);
 }
 
 * {
@@ -11,6 +25,8 @@
 
 body {
   margin: 0;
+  background: var(--background);
+  color: var(--foreground);
 }
 
 .canvas-shell {
@@ -25,7 +41,7 @@ body {
 
 .eyebrow {
   margin: 0 0 0.5rem;
-  color: #9eb4ff;
+  color: var(--primary);
   font-size: 0.8rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -37,8 +53,9 @@ h1 {
 }
 
 .canvas-card {
-  border: 1px solid #303846;
+  border: 1px solid var(--border);
   border-radius: 0.75rem;
   padding: 1rem;
-  background: #191e27;
+  background: var(--card);
+  color: var(--card-foreground);
 }

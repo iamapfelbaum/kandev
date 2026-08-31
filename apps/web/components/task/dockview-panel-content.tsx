@@ -219,7 +219,14 @@ function PlanContent() {
 function CanvasContent({ params }: { params: Record<string, unknown> }) {
   const enabled = useFeature("canvases");
   if (!enabled) return null;
-  return <CanvasHostRoute canvasId={typeof params.canvasId === "string" ? params.canvasId : ""} />;
+  return (
+    <div
+      className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
+      data-testid="canvas-panel-boundary"
+    >
+      <CanvasHostRoute canvasId={typeof params.canvasId === "string" ? params.canvasId : ""} />
+    </div>
+  );
 }
 
 const COMPONENT_ALIASES: Record<string, string> = {

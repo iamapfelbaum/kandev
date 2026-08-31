@@ -1,7 +1,7 @@
 ---
 id: "07-authoring-bundle-and-scaffold"
 title: "Reduce authoring skill reads"
-status: pending
+status: in_progress
 wave: 7
 depends_on:
   - "06-isolated-application-appearance"
@@ -88,4 +88,20 @@ git diff --check
 
 ## Results
 
-Pending.
+Replaced repeated authoring reads with one compact core bundle and a canonical
+ordered inventory. Added optional allowlisted reference reads, a generated
+manifest/HTML/script/styles/appearance scaffold, authenticated agentctl
+materialization with rollback, and response-shape coverage for local, Docker,
+and SSH-compatible executors. Updated the authoring prompt and browser
+reference to document the generated scaffold and appearance contract. The
+authoring contract is versioned as skill version 2.
+
+The handler-level ACP-compatible regression proves that the normal path makes
+one pathless core read and does not issue an invalid path call. The response
+parity regression covers local, Docker, and SSH executor labels. An external
+ACP provider evaluation artifact has not been captured in this worktree, so
+this work order remains in progress until that evaluation is run and recorded.
+
+Focused backend coverage for the affected packages and the new rollback,
+version, parity, and handler tests passes. The external ACP evaluation remains
+the only outstanding acceptance item.

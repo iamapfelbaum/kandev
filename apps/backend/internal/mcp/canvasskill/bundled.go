@@ -14,7 +14,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
@@ -23,7 +22,7 @@ const (
 	Slug = "kandev-canvas-authoring"
 	// Version changes when the authoring contract or its supporting references
 	// change. Canvas releases keep the version in their authoring metadata.
-	Version = "1"
+	Version = "2"
 
 	materializedDirectory = "system-skills"
 	versionFileName       = ".kandev-version"
@@ -37,22 +36,78 @@ const (
 //go:embed files
 var bundledFiles embed.FS
 
+// BundleFile is a file returned as part of the compact core bundle or used by
+// the generated source scaffold. Paths are always relative to the canvas
+// source directory and Content is copied before it is returned.
+type BundleFile struct {
+	Path    string
+	Content []byte
+}
+
+var canonicalInventory = []string{
+	"SKILL.md",
+	"references/browser-api.md",
+	"references/data-and-state.md",
+	"references/events-and-recovery.md",
+	"references/manifest.md",
+	"references/security.md",
+	"references/ui-patterns.md",
+	"scaffold/appearance.js",
+	"scaffold/index.html",
+	"scaffold/script.js",
+	"scaffold/styles.css",
+}
+
+var coreInventory = []string{
+	"SKILL.md",
+	"scaffold/index.html",
+	"scaffold/appearance.js",
+	"scaffold/script.js",
+	"scaffold/styles.css",
+}
+
+var scaffoldInventory = []string{
+	"manifest.yaml",
+	"index.html",
+	"appearance.js",
+	"script.js",
+	"styles.css",
+}
+
 // Inventory returns the stable, slash-separated list of files that Canvas MCP
-// may read. The returned slice is a new sorted value on every call.
+// may read. The returned slice is a new value on every call.
 func Inventory() []string {
-	paths := make([]string, 0)
-	_ = fs.WalkDir(bundledFiles, "files", func(name string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			return err
+	return append([]string(nil), canonicalInventory...)
+}
+
+// CoreInventory returns the single-read bundle in delivery order. Detailed
+// references remain available through Inventory and ReadMaterialized.
+func CoreInventory() []string {
+	return append([]string(nil), coreInventory...)
+}
+
+// ScaffoldInventory returns the exact files materialized in an assigned
+// canvas source directory. The manifest is generated from the canvas request;
+// the remaining files come from the embedded templates.
+func ScaffoldInventory() []string {
+	return append([]string(nil), scaffoldInventory...)
+}
+
+// ScaffoldTemplateFiles returns the static files copied into every new canvas
+// source directory. The returned byte slices are independent of the embed.
+func ScaffoldTemplateFiles() ([]BundleFile, error) {
+	files := make([]BundleFile, 0, len(coreInventory)-1)
+	for _, rel := range coreInventory[1:] {
+		content, err := fs.ReadFile(bundledFiles, filepath.ToSlash(filepath.Join("files", rel)))
+		if err != nil {
+			return nil, fmt.Errorf("read embedded canvas scaffold %q: %w", rel, err)
 		}
-		rel, ok := strings.CutPrefix(name, "files/")
-		if ok && rel != "" {
-			paths = append(paths, rel)
-		}
-		return nil
-	})
-	sort.Strings(paths)
-	return paths
+		files = append(files, BundleFile{
+			Path:    strings.TrimPrefix(rel, "scaffold/"),
+			Content: append([]byte(nil), content...),
+		})
+	}
+	return files, nil
 }
 
 // EnsureMaterialized writes the embedded skill into Kandev's system-owned

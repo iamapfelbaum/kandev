@@ -16,6 +16,7 @@ import {
 } from "@/lib/api/domains/canvas-api";
 import { cn } from "@/lib/utils";
 import { useCanvasLifecycleRevision } from "@/lib/canvas-lifecycle";
+import { CanvasTaskCreateLauncher } from "@/components/canvas/canvas-task-create-launcher";
 import {
   APP_SIDEBAR_SECTION_IDS,
   SIDEBAR_ITEM_ACTIVE,
@@ -133,7 +134,12 @@ export function CanvasesSection({ collapsed }: { collapsed: boolean }) {
       label={t("canvases:canvases")}
       collapsed={collapsed}
       icon={IconLayoutGrid}
-      headerAction={<OpenCanvasSettingsShortcut workspaceId={activeWorkspaceId} />}
+      headerAction={
+        <>
+          <CanvasTaskCreateLauncher workspaceId={activeWorkspaceId} presentation="sidebar" />
+          <OpenCanvasSettingsShortcut workspaceId={activeWorkspaceId} />
+        </>
+      }
       headerActionVisibility="always"
       collapsedSummary={activeCanvases.length > 0 ? activeCanvases.length : undefined}
       defaultExpanded={false}

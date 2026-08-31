@@ -98,6 +98,13 @@ vi.mock("@/components/state-provider", () => ({
 vi.mock("@/lib/routing/client-router", () => ({
   useRouter: () => ({ push: mocks.push }),
 }));
+vi.mock("@/components/canvas/canvas-task-create-launcher", () => ({
+  CanvasTaskCreateLauncher: ({ workspaceId }: { workspaceId: string }) => (
+    <button type="button" data-testid="settings-create-canvas" data-workspace-id={workspaceId}>
+      Create canvas
+    </button>
+  ),
+}));
 
 import { WorkspaceCanvasesPage } from "./workspace-canvases-page";
 
@@ -141,6 +148,15 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("WorkspaceCanvasesPage", () => {
+  it("offers the shared canvas task launcher for the selected workspace", async () => {
+    render(<WorkspaceCanvasesPage workspaceId="workspace-2" />);
+
+    expect(await screen.findByTestId("settings-create-canvas")).toBeTruthy();
+    expect(screen.getByTestId("settings-create-canvas").getAttribute("data-workspace-id")).toBe(
+      "workspace-2",
+    );
+  });
+
   it("shows the loading state first and renders active and archived canvases", async () => {
     const request = deferred<CanvasListResponse>();
     mocks.listWorkspaceCanvases.mockReturnValue(request.promise);

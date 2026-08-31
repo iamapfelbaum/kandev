@@ -19,7 +19,7 @@ func TestEnsureMaterialized_WritesKandevOwnedCanvasSkill(t *testing.T) {
 	skill, err := os.ReadFile(filepath.Join(root, "SKILL.md"))
 	require.NoError(t, err)
 	require.Contains(t, string(skill), "./_kandev/v1")
-	require.Contains(t, string(skill), "localStorage")
+	require.Contains(t, string(skill), "browser storage")
 	require.FileExists(t, filepath.Join(root, "references", "browser-api.md"))
 	require.NoDirExists(t, filepath.Join(home, "skills", Slug))
 }
@@ -32,6 +32,7 @@ func TestReadMaterialized_UsesAllowlistedInventory(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, content)
 	require.Equal(t, Version, MaterializedVersion(home))
+	require.Equal(t, "2", MaterializedVersion(home))
 
 	for _, path := range []string{"../outside.txt", filepath.Join(string(os.PathSeparator), "etc", "passwd"), "missing.md"} {
 		_, err := ReadMaterialized(home, path)
@@ -57,9 +58,60 @@ func TestReadMaterialized_RejectsSymlinkedSupportFile(t *testing.T) {
 
 func TestInventory_IsStableAndContainsSupportingReferences(t *testing.T) {
 	inventory := Inventory()
-	require.Contains(t, inventory, "SKILL.md")
-	require.Contains(t, inventory, "references/manifest.md")
+	require.Equal(t, []string{
+		"SKILL.md",
+		"references/browser-api.md",
+		"references/data-and-state.md",
+		"references/events-and-recovery.md",
+		"references/manifest.md",
+		"references/security.md",
+		"references/ui-patterns.md",
+		"scaffold/appearance.js",
+		"scaffold/index.html",
+		"scaffold/script.js",
+		"scaffold/styles.css",
+	}, inventory)
 	require.NotEmpty(t, Version)
+}
+
+func TestCoreInventory_IsOneReadAuthoringBundle(t *testing.T) {
+	require.Equal(t, []string{
+		"SKILL.md",
+		"scaffold/index.html",
+		"scaffold/appearance.js",
+		"scaffold/script.js",
+		"scaffold/styles.css",
+	}, CoreInventory())
+}
+
+func TestScaffoldInventory_IsTheGeneratedSourceContract(t *testing.T) {
+	require.Equal(t, []string{
+		"manifest.yaml",
+		"index.html",
+		"appearance.js",
+		"script.js",
+		"styles.css",
+	}, ScaffoldInventory())
+
+	files, err := ScaffoldTemplateFiles()
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"index.html",
+		"appearance.js",
+		"script.js",
+		"styles.css",
+	}, filePaths(files))
+	for _, file := range files {
+		require.NotEmpty(t, file.Content, file.Path)
+	}
+}
+
+func filePaths(files []BundleFile) []string {
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		paths = append(paths, file.Path)
+	}
+	return paths
 }
 
 func TestAuthoringReferencesMatchValidatedManifestAndProtocol(t *testing.T) {

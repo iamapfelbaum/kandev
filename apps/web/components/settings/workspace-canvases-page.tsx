@@ -35,6 +35,7 @@ import {
 } from "@/lib/api/domains/canvas-api";
 import { canvasErrorMessage } from "@/lib/api/domains/canvas-error-copy";
 import { useCanvasLifecycleRevision } from "@/lib/canvas-lifecycle";
+import { CanvasTaskCreateLauncher } from "@/components/canvas/canvas-task-create-launcher";
 import { SettingsErrorText, SettingsPageHeader } from "./settings-typography";
 import { CanvasReleaseDialog } from "./canvas-lifecycle-dialogs";
 
@@ -185,15 +186,18 @@ export function WorkspaceCanvasesPage({ workspaceId }: { workspaceId: string }) 
           workspace: workspaceName ?? t("common:workspace"),
         })}
         actions={
-          <Button
-            variant="outline"
-            className="min-h-11 w-full cursor-pointer md:min-h-7 md:w-auto"
-            onClick={reload}
-            disabled={loading}
-          >
-            <IconRefresh className="mr-1.5 h-4 w-4" />
-            {t("canvases:refresh")}
-          </Button>
+          <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row">
+            <CanvasTaskCreateLauncher workspaceId={workspaceId} presentation="settings" />
+            <Button
+              variant="outline"
+              className="min-h-11 w-full cursor-pointer md:min-h-7 md:w-auto"
+              onClick={reload}
+              disabled={loading}
+            >
+              <IconRefresh className="mr-1.5 h-4 w-4" />
+              {t("canvases:refresh")}
+            </Button>
+          </div>
         }
       />
       {error && <SettingsErrorText>{error}</SettingsErrorText>}

@@ -1,7 +1,7 @@
 ---
 id: "02-guided-canvas-task-launch"
 title: "Add guided canvas task launch"
-status: pending
+status: done
 wave: 2
 depends_on:
   - "01-workspace-canvas-discovery"
@@ -90,4 +90,12 @@ cd apps/web && pnpm e2e:run --project mobile-chrome tests/canvas/mobile-plugin-c
 
 ## Results
 
-Pending.
+Implemented the shared `CanvasTaskCreateLauncher` for the sidebar and workspace
+Canvases settings page. The launcher uses the standard task dialog with a
+scratch source and direct-local executor preference, while leaving workflow,
+step, and agent profile choices editable. Added state, reset, executor
+selection, and disabled-feature coverage plus localized copy in all required
+catalogs.
+
+Verification passed: focused web coverage included 6 files and 53 tests; web
+typecheck, lint, i18n checks, and the new-code ratchet passed.

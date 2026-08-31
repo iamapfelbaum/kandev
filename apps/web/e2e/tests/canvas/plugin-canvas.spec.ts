@@ -1,5 +1,11 @@
 import { expect, test } from "../../fixtures/test-base";
-import { enableCanvasFeature, removeCanvas, seedTaskCanvas } from "./canvas-fixture";
+import { resizeColumnViaSplitview } from "../../helpers/dockview-resize";
+import {
+  enableCanvasFeature,
+  expectCanvasFrameFillsHost,
+  removeCanvas,
+  seedTaskCanvas,
+} from "./canvas-fixture";
 
 test.describe("Plugin-backed canvases in the desktop task workbench", () => {
   test("discovers, reviews, and operates the first task canvas from the workbench", async ({
@@ -17,14 +23,21 @@ test.describe("Plugin-backed canvases in the desktop task workbench", () => {
       canvasId = seeded.canvas.id;
 
       await expect(testPage.getByTestId("dockview-task-layout")).toBeVisible();
-      await seeded.session.addPanelButton().click();
-
-      const canvasItem = testPage.getByTestId(`add-panel-canvas-item-${seeded.canvas.id}`);
-      await expect(canvasItem).toBeVisible();
-      await expect(canvasItem).toHaveText(/E2E Plugin Canvas/);
-      await canvasItem.click();
-
       await expect(testPage.getByTestId("canvas-host-route")).toBeVisible({ timeout: 20_000 });
+      await expect
+        .poll(
+          () =>
+            testPage.evaluate((id) => {
+              const dockview = (
+                window as unknown as {
+                  __dockviewApi__?: { panels?: Array<{ id: string }> };
+                }
+              ).__dockviewApi__;
+              return dockview?.panels?.filter((panel) => panel.id === `canvas:${id}`).length ?? 0;
+            }, seeded.canvas.id),
+          { timeout: 20_000 },
+        )
+        .toBe(1);
       await expect(testPage.getByTestId("canvas-host-state")).toHaveText(
         "Permission review required",
       );
@@ -52,8 +65,97 @@ test.describe("Plugin-backed canvases in the desktop task workbench", () => {
         "ready",
         { timeout: 20_000 },
       );
+      await expectCanvasFrameFillsHost(testPage);
+
+      const canvasPanelId = `canvas:${seeded.canvas.id}`;
+      const normalCanvasWidth = await testPage.evaluate((id) => {
+        const api = (
+          window as unknown as {
+            __dockviewApi__?: {
+              getPanel: (panelId: string) => { group: { width: number } } | undefined;
+            };
+          }
+        ).__dockviewApi__;
+        const panel = api?.getPanel(id);
+        if (!panel) throw new Error("canvas panel not found");
+        return panel.group.width;
+      }, canvasPanelId);
+      await testPage.evaluate((id) => {
+        const api = (
+          window as unknown as {
+            __dockviewApi__?: {
+              getPanel: (
+                panelId: string,
+              ) => { group: { api: { maximize: () => void } } } | undefined;
+            };
+          }
+        ).__dockviewApi__;
+        api?.getPanel(id)?.group.api.maximize();
+      }, canvasPanelId);
+      await expect
+        .poll(() =>
+          testPage.evaluate(() => {
+            const api = (
+              window as unknown as { __dockviewApi__?: { hasMaximizedGroup: () => boolean } }
+            ).__dockviewApi__;
+            return api?.hasMaximizedGroup() ?? false;
+          }),
+        )
+        .toBe(true);
+      await expectCanvasFrameFillsHost(testPage);
+      await testPage.evaluate((id) => {
+        const api = (
+          window as unknown as {
+            __dockviewApi__?: {
+              getPanel: (
+                panelId: string,
+              ) => { group: { api: { exitMaximized: () => void } } } | undefined;
+            };
+          }
+        ).__dockviewApi__;
+        api?.getPanel(id)?.group.api.exitMaximized();
+      }, canvasPanelId);
+      await expect
+        .poll(() =>
+          testPage.evaluate(() => {
+            const api = (
+              window as unknown as { __dockviewApi__?: { hasMaximizedGroup: () => boolean } }
+            ).__dockviewApi__;
+            return api?.hasMaximizedGroup() ?? false;
+          }),
+        )
+        .toBe(false);
+      await expectCanvasFrameFillsHost(testPage);
+
+      await resizeColumnViaSplitview(testPage, "right", 480);
+      await expect
+        .poll(() =>
+          testPage.evaluate(
+            ({ id, previous }) => {
+              const api = (
+                window as unknown as {
+                  __dockviewApi__?: {
+                    getPanel: (panelId: string) => { group: { width: number } } | undefined;
+                  };
+                }
+              ).__dockviewApi__;
+              const width = api?.getPanel(id)?.group.width;
+              return typeof width === "number" && Math.abs(width - previous) > 2;
+            },
+            { id: canvasPanelId, previous: normalCanvasWidth },
+          ),
+        )
+        .toBe(true);
+      await expectCanvasFrameFillsHost(testPage);
       const fixture = testPage.frameLocator('iframe[title="E2E Plugin Canvas"]');
       await expect(fixture.getByTestId("canvas-fixture-script")).toHaveText("inline-ready");
+      await expect(fixture.getByTestId("canvas-fixture-appearance-mode")).toHaveText("light");
+      await expect(fixture.getByTestId("canvas-fixture-appearance-color-scheme")).toHaveText(
+        "light",
+      );
+      const lightBackground = await fixture
+        .getByTestId("canvas-fixture-appearance-background")
+        .textContent();
       await expect(fixture.getByTestId("canvas-fixture-context")).toHaveText(seeded.taskId);
       await expect(fixture.getByTestId("canvas-fixture-task-count")).toHaveText("1");
       await expect(fixture.getByTestId("canvas-fixture-workflow-count")).toHaveText("1");
@@ -112,6 +214,21 @@ test.describe("Plugin-backed canvases in the desktop task workbench", () => {
           component: "canvas",
           canvasId: seeded.canvas.id,
         });
+
+      const themeToggle = testPage.getByRole("button", {
+        name: "Switch to Dark Mode",
+        exact: true,
+      });
+      await expect(themeToggle).toBeVisible();
+      await themeToggle.evaluate((element) => (element as HTMLButtonElement).click());
+      await expect(testPage.locator("html")).toHaveClass(/(^|\s)dark(\s|$)/);
+      await expect(fixture.getByTestId("canvas-fixture-appearance-mode")).toHaveText("dark");
+      await expect(fixture.getByTestId("canvas-fixture-appearance-color-scheme")).toHaveText(
+        "dark",
+      );
+      await expect
+        .poll(() => fixture.getByTestId("canvas-fixture-appearance-background").textContent())
+        .not.toBe(lightBackground);
     } finally {
       if (canvasId) await removeCanvas(apiClient, canvasId);
       await releaseFeature();

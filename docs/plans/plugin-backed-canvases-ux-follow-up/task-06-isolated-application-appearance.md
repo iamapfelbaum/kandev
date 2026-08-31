@@ -1,7 +1,7 @@
 ---
 id: "06-isolated-application-appearance"
 title: "Add isolated application appearance"
-status: pending
+status: done
 wave: 6
 depends_on:
   - "05-canvas-host-viewport"
@@ -86,4 +86,13 @@ cd apps/web && pnpm e2e:run --project mobile-chrome tests/canvas/mobile-plugin-c
 
 ## Results
 
-Pending.
+Added the typed version 1 presentation-only appearance envelope with a fixed
+semantic token allowlist, bounded color validation, safe fallbacks, and live
+theme delivery to the exact iframe window before frame reveal. The scaffold
+listener validates source, type, version, keys, and bounds before applying
+semantic CSS variables. Added protocol unit tests and light/dark assertions to
+both desktop and phone fixture flows.
+
+Verification passed: appearance and frame tests, desktop and phone Playwright
+flows with retries disabled, web typecheck, lint, i18n checks, and the
+new-code ratchet.
