@@ -66,6 +66,8 @@ interface ComboboxProps {
   loading?: boolean;
   /** Ref for consumers that anchor a local confirmation to this trigger. */
   triggerRef?: Ref<HTMLButtonElement>;
+  /** Notifies consumers when the popover opens or closes. */
+  onOpenChange?: (open: boolean) => void;
 }
 
 function TriggerLabel({
@@ -153,6 +155,18 @@ function OptionsList({
   );
 }
 
+function handleComboboxOpenChange(
+  next: boolean,
+  value: string,
+  setOpen: (open: boolean) => void,
+  setHighlighted: (value: string) => void,
+  onOpenChange?: (open: boolean) => void,
+) {
+  setOpen(next);
+  if (next) setHighlighted(value);
+  onOpenChange?.(next);
+}
+
 export const Combobox = memo(function Combobox({
   options,
   value,
@@ -176,6 +190,7 @@ export const Combobox = memo(function Combobox({
   headerAction,
   loading = false,
   triggerRef,
+  onOpenChange,
 }: ComboboxProps) {
   const [open, setOpen] = useState(false);
   const portalContainer = useTaskCreateDialogPopoverContainer();
@@ -185,10 +200,9 @@ export const Combobox = memo(function Combobox({
   return (
     <Popover
       open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (next) setHighlighted(value);
-      }}
+      onOpenChange={(next) =>
+        handleComboboxOpenChange(next, value, setOpen, setHighlighted, onOpenChange)
+      }
     >
       <PopoverTrigger asChild>
         <Button
