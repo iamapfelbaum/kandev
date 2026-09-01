@@ -1,6 +1,6 @@
 ---
 created: 2026-08-27
-status: in_progress
+status: completed
 requirements:
   - REQ-UI-MARKDOWN-FILE-EDITING-001
   - REQ-UI-MARKDOWN-FILE-EDITING-002
@@ -118,8 +118,8 @@ file surfaces before proving both flows with production-build E2E tests.
 - [x] [Task 03: Add Mobile Markdown Editing](task-03-mobile-markdown-editing.md)
 - [x] [Task 04: Prove Markdown Editing End to End](task-04-markdown-editor-e2e.md)
 - [x] [Task 05: Polish Code and Table Editing](task-05-polish-code-and-table-editing.md)
-- [ ] [Task 06: Add Positional Markdown Table Edits](task-06-positional-table-edits.md)
-- [ ] [Task 07: Add Table Edge Editing Chrome](task-07-table-edge-editing-chrome.md)
+- [x] [Task 06: Add Positional Markdown Table Edits](task-06-positional-table-edits.md)
+- [x] [Task 07: Add Table Edge Editing Chrome](task-07-table-edge-editing-chrome.md)
 
 ## Verification results
 
@@ -135,6 +135,11 @@ file surfaces before proving both flows with production-build E2E tests.
   production build. Production-build E2E passed 4/4 desktop Chromium cases and
   1/1 mobile-chrome case, including real syntax tokens, bordered tables,
   source-preserving row and column edits, and mobile touch targets.
+- Positional table edits and edge chrome passed 18 focused Vitest tests, web
+  typecheck, focused ESLint, i18n checks, desktop Markdown E2E (4/4), mobile
+  Markdown E2E (1/1), and specification lint. Coverage includes delimiter
+  hiding, outside-cell insertion controls, mode-switch width retention,
+  coarse-pointer hit targets, touch resizing, and source-preserving saves.
 
 ## Risks
 

@@ -1,7 +1,7 @@
 ---
 id: "07-table-edge-editing-chrome"
 title: "Add Table Edge Editing Chrome"
-status: pending
+status: completed
 wave: 7
 depends_on: ["06-positional-table-edits"]
 plan: "plan.md"
@@ -68,6 +68,7 @@ python3 scripts/lint-spec-files.py --all
 
 ## Files likely touched
 
+- `apps/web/components/editors/markdown/hybrid-markdown-table-edge.tsx`
 - `apps/web/components/editors/markdown/hybrid-markdown-editor.tsx`
 - `apps/web/components/editors/markdown/hybrid-markdown-editor.css`
 - `apps/web/components/editors/markdown/hybrid-markdown-editor.test.tsx`
@@ -98,4 +99,18 @@ python3 scripts/lint-spec-files.py --all
 
 ## Results
 
-Pending.
+- Replaced the active-table toolbar with source-neutral edge chrome: row
+  actions in the left gutter, column actions in the top gutter, and delimiter
+  hiding scoped to the active hybrid table.
+- Added escaped-pipe-aware positional source edits, transient per-tab column
+  widths, pointer/touch/keyboard resizing, bounded minimum widths, and
+  mutation/resize reconciliation after upstream DOM updates.
+- Added focused component coverage for visible-index mapping, one-history-edit
+  column insertion, keyboard resizing, and width reapplication after a DOM
+  rerender.
+- Added desktop and mobile production E2E coverage for delimiter hiding,
+  outside-cell controls, positional edits, mode-switch width retention,
+  coarse-pointer hit targets, touch resizing, and source-preserving saves.
+- Passed the focused Vitest suite with 18 tests, web typecheck, focused ESLint,
+  i18n checks, desktop Markdown E2E (4 tests), mobile Markdown E2E (1 test),
+  and specification lint.

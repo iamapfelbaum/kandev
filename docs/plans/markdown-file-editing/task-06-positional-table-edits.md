@@ -1,7 +1,7 @@
 ---
 id: "06-positional-table-edits"
 title: "Add Positional Markdown Table Edits"
-status: pending
+status: completed
 wave: 6
 depends_on: ["05-polish-code-and-table-editing"]
 plan: "plan.md"
@@ -78,4 +78,12 @@ pnpm run typecheck
 
 ## Results
 
-Pending.
+- Added escaped-pipe-aware positional row and column insertion helpers.
+- Header-adjacent row insertion keeps the delimiter row in place and all
+  existing row edits preserve source line endings, alignment markers, and
+  outer-pipe style.
+- Added focused tests for header/body row insertion, middle-column insertion,
+  CRLF, omitted outer pipes, escaped pipes, selection offsets, and no-op
+  indices.
+- Passed `pnpm exec vitest run components/editors/markdown/markdown-table-edit.test.ts`
+  with 9 tests and `pnpm run typecheck`.

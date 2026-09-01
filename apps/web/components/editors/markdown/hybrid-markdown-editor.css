@@ -205,8 +205,14 @@
 }
 
 .kandev-hybrid-markdown-editor .md-table-wrapper {
+  position: relative;
   margin: 0.75rem 0;
   overflow-x: auto;
+}
+
+.kandev-hybrid-markdown-editor .md-table-wrapper.kandev-markdown-table-edge-wrapper {
+  padding-top: 3.5rem;
+  padding-left: 1.75rem;
 }
 
 .kandev-hybrid-markdown-editor .md-table {
@@ -230,30 +236,96 @@
 }
 
 .kandev-markdown-table-controls-host {
-  position: sticky;
+  position: absolute;
+  inset: 0;
   z-index: 12;
-  top: 0.25rem;
-  left: 100%;
-  width: 0;
-  height: 0;
-  overflow: visible;
-}
-
-.kandev-markdown-table-controls {
-  display: flex;
-  width: max-content;
-  gap: 2px;
-  padding: 2px;
   pointer-events: none;
-  background: color-mix(in oklab, var(--background) 90%, transparent);
-  border: 1px solid var(--border);
-  border-radius: 2px;
-  box-shadow: var(--shadow-sm);
-  transform: translateX(calc(-100% - 0.25rem));
 }
 
-.kandev-markdown-table-control {
+.kandev-markdown-table-edge-layer {
+  position: relative;
+  min-width: 100%;
+  pointer-events: none;
+}
+
+.kandev-markdown-table-edge-actions {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.kandev-markdown-table-edge-action {
+  position: absolute;
+  z-index: 2;
+  width: 1.5rem;
+  height: 1.5rem;
+  transform: translate(-50%, -50%);
   pointer-events: auto;
+  opacity: 1;
+  color: var(--muted-foreground);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.kandev-markdown-table-edge-action::before {
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 999px;
+  background: var(--muted-foreground);
+  content: "";
+}
+
+.kandev-markdown-table-edge-action > svg {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.kandev-markdown-table-edge-action:is(:hover, :focus-visible) {
+  color: var(--foreground);
+  background: color-mix(in oklab, var(--background) 92%, transparent);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.kandev-markdown-table-edge-action:is(:hover, :focus-visible)::before {
+  opacity: 0;
+}
+
+.kandev-markdown-table-edge-action:is(:hover, :focus-visible) > svg {
+  opacity: 1;
+}
+
+.kandev-markdown-table-resizer-guide {
+  position: absolute;
+  z-index: 1;
+  width: 1px;
+  transform: translateX(-0.5px);
+  pointer-events: none;
+  background: color-mix(in oklab, var(--primary) 45%, transparent);
+  opacity: 0.35;
+}
+
+.kandev-markdown-table-resizer {
+  position: absolute;
+  z-index: 3;
+  width: 0.75rem;
+  margin-left: -0.375rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: col-resize;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+}
+
+.kandev-markdown-table-resizer:hover,
+.kandev-markdown-table-resizer:focus-visible,
+.kandev-markdown-table-resizer[data-active="true"] {
+  background: color-mix(in oklab, var(--primary) 45%, transparent);
+  outline: none;
 }
 
 .kandev-hybrid-markdown-editor .md-selection-path {
@@ -279,8 +351,58 @@
 }
 
 @media (pointer: coarse) {
-  .kandev-markdown-table-control {
+  .kandev-hybrid-markdown-editor .md-table-wrapper.kandev-markdown-table-edge-wrapper {
+    padding-top: 6rem;
+    padding-left: 3rem;
+  }
+
+  .kandev-markdown-table-edge-action {
     width: 44px;
     height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    opacity: 1;
+    background: color-mix(in oklab, var(--background) 92%, transparent);
+    border-color: var(--border);
+    box-shadow: var(--shadow-sm);
   }
+
+  .kandev-markdown-table-edge-action::before {
+    opacity: 0;
+  }
+
+  .kandev-markdown-table-edge-action > svg {
+    opacity: 1;
+  }
+
+  .kandev-markdown-table-resizer {
+    width: 44px;
+    min-width: 44px;
+    margin-left: -22px;
+    opacity: 0.55;
+  }
+
+  .kandev-markdown-table-resizer:active,
+  .kandev-markdown-table-resizer:focus-visible,
+  .kandev-markdown-table-resizer[data-active="true"] {
+    opacity: 1;
+  }
+}
+
+@media (pointer: fine) {
+  .kandev-markdown-table-edge-action:focus-visible {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 640px) {
+  .kandev-hybrid-markdown-editor .md-table-wrapper.kandev-markdown-table-edge-wrapper {
+    padding-right: 1rem;
+  }
+}
+
+/* The delimiter row remains in the source model, but is not an interactive
+   visual row while a table is active. */
+.kandev-hybrid-markdown-editor .md-table .md-table-delimiter-row {
+  display: none !important;
 }

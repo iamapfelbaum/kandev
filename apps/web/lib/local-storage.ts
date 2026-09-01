@@ -3,6 +3,13 @@ import { attachmentContentUrl } from "@/lib/api/domains/attachment-api";
 import { isMarkdownFile } from "@/lib/utils/file-types";
 import { resolveStoredMarkdownFileMode } from "@/components/task/markdown-file-mode";
 import type { MarkdownFileMode } from "@/lib/types/workspace-files";
+import {
+  getEnvLayoutProfile,
+  removeEnvLayoutProfile,
+  setEnvLayoutProfile,
+} from "./local-storage-layout-profile";
+
+export { getEnvLayoutProfile, removeEnvLayoutProfile, setEnvLayoutProfile };
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
@@ -801,6 +808,7 @@ export function cleanupTaskStorage(
   for (const envId of envIds) {
     removeEnvMaximizeState(envId);
     removeSessionStorage(`${DOCKVIEW_ENV_LAYOUT_PREFIX}${envId}`);
+    removeEnvLayoutProfile(envId);
     clearManualRightWidth(envId);
   }
 

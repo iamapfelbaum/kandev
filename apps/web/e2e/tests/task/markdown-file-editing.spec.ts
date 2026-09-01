@@ -450,7 +450,10 @@ const ready = true;
     await expect(hybrid.locator(".md-code-block")).toHaveClass(/md-block-active/);
     await expect(keyword).toBeVisible();
     const table = hybrid.locator(".md-table");
-    await table.locator("td").first().click();
+    const firstCell = table.locator("tr:not(.md-table-delimiter-row) td").filter({
+      hasText: "Preview",
+    });
+    await firstCell.click();
     await expect(table).toHaveClass(/md-block-active/);
     expect(await table.evaluate((element) => getComputedStyle(element).borderRadius)).toBe("2px");
     expect(
@@ -460,8 +463,74 @@ const ready = true;
         .evaluate((cell) => getComputedStyle(cell).borderTopWidth),
     ).toBe("1px");
 
-    await testPage.getByRole("button", { name: "Add row below" }).click();
-    await testPage.getByRole("button", { name: "Add column right" }).click();
+    await expect(table.locator(".md-table-delimiter-row")).toBeHidden();
+    const rowAction = hybrid.getByTestId("markdown-table-row-insert-0");
+    const columnAction = hybrid.getByTestId("markdown-table-column-insert-1");
+    await expect(rowAction).toBeVisible();
+    await expect(columnAction).toBeVisible();
+    const [tableBox, rowActionBox, columnActionBox] = await Promise.all([
+      table.boundingBox(),
+      rowAction.boundingBox(),
+      columnAction.boundingBox(),
+    ]);
+    expect(tableBox).not.toBeNull();
+    expect(rowActionBox).not.toBeNull();
+    expect(columnActionBox).not.toBeNull();
+    expect(rowActionBox!.x + rowActionBox!.width).toBeLessThanOrEqual(tableBox!.x);
+    expect(columnActionBox!.y + columnActionBox!.height).toBeLessThanOrEqual(tableBox!.y);
+
+    await testPage.mouse.move(2, 2);
+    const fineAffordance = await columnAction.evaluate((element) => {
+      const icon = element.querySelector("svg");
+      return {
+        dotContent: getComputedStyle(element, "::before").content,
+        dotOpacity: getComputedStyle(element, "::before").opacity,
+        iconOpacity: icon ? getComputedStyle(icon).opacity : "",
+        opacity: getComputedStyle(element).opacity,
+      };
+    });
+    expect(fineAffordance.opacity).toBe("1");
+    expect(fineAffordance.dotContent).not.toBe("none");
+    expect(fineAffordance.dotOpacity).toBe("1");
+    expect(fineAffordance.iconOpacity).toBe("0");
+    await columnAction.hover();
+    await expect
+      .poll(() =>
+        columnAction.evaluate((element) => {
+          const icon = element.querySelector("svg");
+          return icon ? getComputedStyle(icon).opacity : "";
+        }),
+      )
+      .toBe("1");
+
+    await clickAfterText(testPage, firstCell, "Preview");
+    await testPage.keyboard.insertText("!");
+    await expect(firstCell).toContainText("Preview!");
+
+    const resizer = hybrid.getByTestId("markdown-table-resizer-0");
+    await expect(resizer).toHaveAttribute("role", "separator");
+    await resizer.focus();
+    await testPage.keyboard.press("ArrowRight");
+    await expect(hybrid.locator("colgroup")).toHaveCount(1);
+    const resizerBox = await resizer.boundingBox();
+    expect(resizerBox).not.toBeNull();
+    expect(resizerBox!.y + resizerBox!.height).toBeLessThanOrEqual(tableBox!.y);
+    await testPage.mouse.move(resizerBox!.x + resizerBox!.width / 2, resizerBox!.y + 20);
+    await testPage.mouse.down();
+    await testPage.mouse.move(resizerBox!.x + resizerBox!.width / 2 + 16, resizerBox!.y + 20);
+    await testPage.mouse.up();
+
+    const resizedWidth = await hybrid.locator("colgroup col").first().getAttribute("style");
+    await editor.getByTestId("markdown-mode-preview").click();
+    await expect(testPage.getByTestId("markdown-preview")).toBeVisible();
+    await editor.getByTestId("markdown-mode-edit").click();
+    await expect(hybrid).toBeVisible();
+    await expect
+      .poll(() => hybrid.locator("colgroup col").first().getAttribute("style"))
+      .toBe(resizedWidth);
+
+    await columnAction.click();
+    await rowAction.click();
     await editor.getByTestId("markdown-file-save").click();
 
     await expect
@@ -470,7 +539,7 @@ const ready = true;
     expect(fs.readFileSync(filePath, "utf8")).toBe(
       content.replace(
         "| Area | State |\n| --- | --- |\n| Preview | Ready |\n",
-        "| Area | State |  |\n| --- | --- | --- |\n| Preview | Ready |  |\n|  |  |  |\n",
+        "| Area | State |  |\n| --- | --- | --- |\n|  |  |  |\n| Preview! | Ready |  |\n",
       ),
     );
   });
