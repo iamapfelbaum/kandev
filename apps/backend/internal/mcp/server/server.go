@@ -100,6 +100,7 @@ type Server struct {
 	backend             BackendClient
 	sessionID           string
 	taskID              string
+	agentType           string
 	disableAskQuestion  bool
 	mode                string // "task" (default), "task-title-pending", "config", or "office"
 	mcpProviders        []string
@@ -127,11 +128,22 @@ type Server struct {
 // port is the HTTP server port used to build the SSE base URL (http://localhost:<port>).
 // mcpLogFile is an optional file path for MCP debug logging; pass "" to disable.
 func New(backend BackendClient, sessionID, taskID string, port int, log *logger.Logger, mcpLogFile string, disableAskQuestion bool, mcpMode string, mcpProviders ...[]string) *Server {
+	return NewForAgent(
+		backend, sessionID, taskID, port, log, mcpLogFile, disableAskQuestion,
+		mcpMode, "", mcpProviders...,
+	)
+}
+
+// NewForAgent creates an MCP server with compatibility for the named ACP agent.
+func NewForAgent(backend BackendClient, sessionID, taskID string, port int, log *logger.Logger, mcpLogFile string, disableAskQuestion bool, mcpMode, agentType string, mcpProviders ...[]string) *Server {
 	var providers []string
 	if len(mcpProviders) > 0 {
 		providers = mcpProviders[0]
 	}
-	s := newServerWithProfile(backend, sessionID, taskID, log, mcpLogFile, mcpprofile.Legacy(mcpMode, disableAskQuestion, providers))
+	s := newServerWithProfile(
+		backend, sessionID, taskID, log, mcpLogFile,
+		mcpprofile.Legacy(mcpMode, disableAskQuestion, providers), agentType,
+	)
 
 	// Create SSE server for Claude Desktop, Cursor, etc.
 	// WithBaseURL ensures the SSE endpoint event includes the full message URL
@@ -153,10 +165,19 @@ func New(backend BackendClient, sessionID, taskID string, port int, log *logger.
 // callers can add or remove one context-specific group without copying a full
 // mode branch.
 func NewWithProfile(backend BackendClient, sessionID, taskID string, port int, log *logger.Logger, mcpLogFile string, disableAskQuestion bool, profileContext mcpprofile.Context) *Server {
+	return NewWithProfileForAgent(
+		backend, sessionID, taskID, port, log, mcpLogFile, disableAskQuestion,
+		profileContext, "",
+	)
+}
+
+// NewWithProfileForAgent creates a profiled MCP server with compatibility for
+// the named ACP agent.
+func NewWithProfileForAgent(backend BackendClient, sessionID, taskID string, port int, log *logger.Logger, mcpLogFile string, disableAskQuestion bool, profileContext mcpprofile.Context, agentType string) *Server {
 	if disableAskQuestion {
 		profileContext = profileContext.WithoutCapability(mcpprofile.CapabilityUserQuestion)
 	}
-	s := newServerWithProfile(backend, sessionID, taskID, log, mcpLogFile, profileContext)
+	s := newServerWithProfile(backend, sessionID, taskID, log, mcpLogFile, profileContext, agentType)
 	s.sseServer = server.NewSSEServer(s.mcpServer,
 		server.WithBaseURL(fmt.Sprintf("http://localhost:%d", port)),
 	)
@@ -171,7 +192,7 @@ func NewWithProfile(backend BackendClient, sessionID, taskID string, port int, l
 // configuration and create tasks. Routes are mounted under /mcp on the backend.
 func NewExternal(backend BackendClient, log *logger.Logger, mcpLogFile string) *Server {
 	// External mode has no live session, so disable ask-question and use empty IDs.
-	s := newServerWithProfile(backend, "", "", log, mcpLogFile, mcpprofile.Legacy(ModeExternal, true, nil))
+	s := newServerWithProfile(backend, "", "", log, mcpLogFile, mcpprofile.Legacy(ModeExternal, true, nil), "")
 
 	// SSE handlers are mounted at /mcp/sse and /mcp/message — the static base path
 	// makes the SSE endpoint event emit /mcp/message. Keeping the message endpoint
@@ -194,15 +215,19 @@ func NewExternal(backend BackendClient, log *logger.Logger, mcpLogFile string) *
 // Callers are responsible for constructing sseServer and httpServer with the
 // transport configuration appropriate for their hosting environment.
 func newServer(backend BackendClient, sessionID, taskID string, log *logger.Logger, mcpLogFile string, disableAskQuestion bool, mcpMode string, mcpProviders []string) *Server {
-	return newServerWithProfile(backend, sessionID, taskID, log, mcpLogFile, mcpprofile.Legacy(mcpMode, disableAskQuestion, mcpProviders))
+	return newServerWithProfile(
+		backend, sessionID, taskID, log, mcpLogFile,
+		mcpprofile.Legacy(mcpMode, disableAskQuestion, mcpProviders), "",
+	)
 }
 
-func newServerWithProfile(backend BackendClient, sessionID, taskID string, log *logger.Logger, mcpLogFile string, profileContext mcpprofile.Context) *Server {
+func newServerWithProfile(backend BackendClient, sessionID, taskID string, log *logger.Logger, mcpLogFile string, profileContext mcpprofile.Context, agentType string) *Server {
 	profileContext = mcpprofile.New(profileContext.Surface, profileContext.Capabilities, profileContext.Providers)
 	s := &Server{
 		backend:            backend,
 		sessionID:          sessionID,
 		taskID:             taskID,
+		agentType:          agentType,
 		disableAskQuestion: !profileContext.HasCapability(mcpprofile.CapabilityUserQuestion),
 		mode:               modeForProfile(profileContext),
 		mcpProviders:       mcpproviders.Normalize(profileContext.Providers),
@@ -969,6 +994,7 @@ func (s *Server) registerTools() {
 	if s.profile.Surface != mcpprofile.SurfaceAutomation {
 		s.registerPluginTools()
 	}
+	s.applyAuggieToolTitleCompatibility()
 	s.logger.Info("registered MCP tools",
 		zap.String("mode", s.mode),
 		zap.Int("count", len(s.mcpServer.ListTools())),

@@ -9,6 +9,9 @@ const (
 	auggieAgentID          = "auggie"
 	auggieMCPToolKind      = "other"
 	auggieKandevToolSuffix = "_kandev"
+	auggieTitleCarrierArg  = "summary"
+	auggieReviewSummaryArg = "review_summary"
+	auggieReviewToolName   = "publish_review_findings_kandev"
 )
 
 var auggieKandevToolTitlePattern = regexp.MustCompile(`^[a-z0-9_]+_kandev(_kandev)?$`)
@@ -41,5 +44,25 @@ func parseAuggieMCPToolCall(
 	if name == auggieKandevToolSuffix {
 		return mcpToolCallFrame{}, false
 	}
-	return mcpToolCallFrame{name: name, arguments: arguments}, true
+	return mcpToolCallFrame{name: name, arguments: normalizeAuggieMCPArguments(name, arguments)}, true
+}
+
+func normalizeAuggieMCPArguments(name string, arguments map[string]any) map[string]any {
+	carrier, ok := arguments[auggieTitleCarrierArg].(string)
+	if !ok || carrier != name {
+		return arguments
+	}
+
+	normalized := make(map[string]any, len(arguments)-1)
+	for key, value := range arguments {
+		if key != auggieTitleCarrierArg && key != auggieReviewSummaryArg {
+			normalized[key] = value
+		}
+	}
+	if name == auggieReviewToolName {
+		if summary, exists := arguments[auggieReviewSummaryArg]; exists {
+			normalized[auggieTitleCarrierArg] = summary
+		}
+	}
+	return normalized
 }

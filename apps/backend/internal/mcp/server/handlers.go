@@ -1174,7 +1174,7 @@ func (s *Server) publishReviewFindingsHandler() server.ToolHandlerFunc {
 
 		payload := map[string]interface{}{
 			"task_id":  taskID,
-			"summary":  req.GetString("summary", ""),
+			"summary":  req.GetString(s.reviewSummaryArgument(), ""),
 			"findings": findingsRaw,
 		}
 		var result map[string]interface{}

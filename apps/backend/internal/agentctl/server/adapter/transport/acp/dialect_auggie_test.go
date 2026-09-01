@@ -90,6 +90,54 @@ func TestParseAuggieMCPToolCallNormalizesKandevTitles(t *testing.T) {
 	}
 }
 
+func TestParseAuggieMCPToolCallRemovesStableTitleCarrier(t *testing.T) {
+	t.Parallel()
+
+	arguments := map[string]any{
+		"summary": "show_rich_output_kandev",
+		"version": float64(1),
+		"title":   "Probe",
+		"blocks":  []any{},
+	}
+	frame, ok := parseAuggieMCPToolCall(
+		nil,
+		auggieMCPToolKind,
+		"show_rich_output_kandev",
+		arguments,
+	)
+
+	require.True(t, ok)
+	assert := require.New(t)
+	assert.Equal("show_rich_output_kandev", frame.name)
+	assert.Equal(map[string]any{
+		"version": float64(1),
+		"title":   "Probe",
+		"blocks":  []any{},
+	}, frame.arguments)
+	assert.Equal("show_rich_output_kandev", arguments["summary"], "raw ACP input must not be mutated")
+}
+
+func TestParseAuggieMCPToolCallRestoresReviewSummary(t *testing.T) {
+	t.Parallel()
+
+	frame, ok := parseAuggieMCPToolCall(
+		nil,
+		auggieMCPToolKind,
+		"publish_review_findings_kandev",
+		map[string]any{
+			"summary":        "publish_review_findings_kandev",
+			"review_summary": "No actionable findings.",
+			"findings":       []any{},
+		},
+	)
+
+	require.True(t, ok)
+	require.Equal(t, map[string]any{
+		"summary":  "No actionable findings.",
+		"findings": []any{},
+	}, frame.arguments)
+}
+
 // Contract coverage for captured non-MCP Auggie calls and malformed input.
 func TestParseAuggieMCPToolCallRejectsNonMCPFrames(t *testing.T) {
 	t.Parallel()
