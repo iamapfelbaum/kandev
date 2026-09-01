@@ -137,6 +137,7 @@ interface UseSessionMessagesReturn {
   isLoading: boolean;
   isInitialMessagesLoading: boolean;
   messages: Message[];
+  historyInitialized: boolean;
   hasMore: boolean;
   oldestCursor: string | null;
 }
@@ -149,7 +150,13 @@ type InFlightMessageRequest = {
 };
 
 const EMPTY_MESSAGES: Message[] = [];
-const EMPTY_META = { isLoading: false, isLoadingMore: false, hasMore: false, oldestCursor: null };
+const EMPTY_META = {
+  isLoading: false,
+  isLoadingMore: false,
+  historyInitialized: false,
+  hasMore: false,
+  oldestCursor: null,
+};
 const inFlightMessageRequests = new Map<string, InFlightMessageRequest>();
 
 /** Debug-only summary of a fetch response (no-op unless debug logging is on). */
@@ -274,6 +281,7 @@ async function fetchAndStoreMessages(
   // preserving object/array identity for unchanged messages so the periodic
   // refetch doesn't re-render the whole chat (see reconcileMessages).
   store.getState().mergeMessages(sessionId, merged, {
+    historyInitialized: true,
     hasMore: response.has_more ?? false,
     oldestCursor,
   });
@@ -705,6 +713,7 @@ export function useSessionMessages(taskSessionId: string | null): UseSessionMess
     isLoading: isLoading || isWaitingForInitialMessages || messagesMeta.isLoading,
     isInitialMessagesLoading: isWaitingForInitialMessages,
     messages,
+    historyInitialized: messagesMeta.historyInitialized,
     hasMore: messagesMeta.hasMore,
     oldestCursor: messagesMeta.oldestCursor,
   };
