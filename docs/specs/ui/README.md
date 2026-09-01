@@ -11,15 +11,13 @@ owners:
 
 ## Purpose
 
-UI owns web navigation, settings, boards, tasks, review, chat, feedback, and
-responsive behavior. Provider and task systems own backend state.
+The UI owns web presentation and interaction.
 
 ## Exclusions
 
-- [Tasks](../tasks/README.md): task behavior.
-- [Agents](../agents/README.md): agent profiles.
-- [Plugins](../plugins/README.md): plugin contributions.
-- [Integrations](../integrations/README.md): provider state and actions.
+- Domain behavior and state belong to [Tasks](../tasks/README.md),
+  [Agents](../agents/README.md), [Plugins](../plugins/README.md), and
+  [Integrations](../integrations/README.md).
 
 ## Specification map
 
@@ -93,6 +91,7 @@ responsive behavior. Provider and task systems own backend state.
 - [Prompt Turn Duration on Message Hover](requirements/prompt-turn-duration.md)
 - [Published Docs Preview Reliability](requirements/published-docs-preview-reliability.md)
 - [Quick Chat elevation](requirements/quick-chat-elevation.md)
+- [Quick Chat viewport layout](requirements/quick-chat-viewport-layout.md)
 - [Quick Chat Idle Dot](requirements/quick-chat-idle-dot.md)
 - [Quick Chat and Terminal Tabs](requirements/quick-terminal.md)
 - [Relative Last Seen in Account Security](requirements/relative-last-seen.md)
@@ -167,6 +166,7 @@ responsive behavior. Provider and task systems own backend state.
 - [PR Task Status Summary](system-design/pr-task-status-summary.md)
 - [Prompt History Panel](system-design/prompt-history-panel.md)
 - [Quick Chat and terminal elevation](system-design/quick-chat-elevation.md)
+- [Quick Chat viewport layout](system-design/quick-chat-viewport-layout.md)
 - [Quick Chat and Terminal Tabs](system-design/quick-terminal.md)
 - [Responsive Plan Formatting](system-design/responsive-plan-formatting.md)
 - [Task Confirmation Warning Hierarchy](system-design/confirmation-warning-hierarchy.md)
@@ -179,10 +179,6 @@ responsive behavior. Provider and task systems own backend state.
 - [Thinking Message Preview](system-design/thinking-message-preview.md)
 - [Task Transcript History Visibility](system-design/task-prompt-transcript-visibility.md)
 - [Transcript Auto-scroll Stability](system-design/transcript-auto-scroll.md)
-
-## Migration record
-
-Legacy detail is moving to the documents above.
 
 ## Related
 
