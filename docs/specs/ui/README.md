@@ -11,22 +11,19 @@ owners:
 
 ## Ownership
 
-UI owns presentation and responsive interaction.
-
-## Exclusions
-
+UI owns reusable presentation and responsive interaction.
 [Tasks](../tasks/README.md), [Agents](../agents/README.md),
-[Plugins](../plugins/README.md), and [Integrations](../integrations/README.md)
-own feature behavior/state.
+[Plugins](../plugins/README.md), and [Integrations](../integrations/README.md) own
+feature behavior and state.
 
 ## Specification map
 
 ### Requirements
 
-- [ACP Model Configuration Summary](requirements/acp-model-configuration-summary.md)
+- [ACP model summary](requirements/acp-model-configuration-summary.md)
 - [ACP Shell Command Output](requirements/acp-shell-command-output.md)
 - [Adaptive Kanban](requirements/adaptive-kanban.md)
-- [Task Add-Panel PR Submenu](requirements/add-panel-pr-submenu.md)
+- [Add-panel PR submenu](requirements/add-panel-pr-submenu.md)
 - [Agent Launch Prompt Composer](requirements/agent-launch-prompt-composer.md)
 - [Growing dialog content containment](requirements/dialog-content-containment.md)
 - [Surface text](requirements/surface-text-hierarchy.md)
@@ -37,7 +34,7 @@ own feature behavior/state.
 - [Browser inspect annotation submission](requirements/browser-inspect-annotations-save.md)
 - [Backend-owned cancel-turn progress](requirements/cancel-turn-progress.md)
 - [Changes File Row Containment](requirements/changes-file-row-containment.md)
-- [Responsive Changes Walkthrough Action](requirements/changes-walkthrough-toolbar-width.md)
+- [Changes walkthrough action](requirements/changes-walkthrough-toolbar-width.md)
 - [Task PR Automation Controls](requirements/ci-pr-automation.md)
 - [Merge Queue Recovery Controls](requirements/ci-pr-merge-queue-recovery-controls.md)
 - [Clarification Shared Context](requirements/clarification-context.md)
@@ -50,15 +47,16 @@ own feature behavior/state.
 - [Composer Suggestion Overlays](requirements/composer-suggestion-overlays.md)
 - [Context Compaction Count](requirements/context-compaction-count.md)
 - [Context Window Reset Freshness](requirements/context-window-reset-freshness.md)
-- [Context Window Unmeasured State](requirements/context-window-unmeasured-state.md)
-- [Embedded VS Code Executor Availability](requirements/embedded-vscode-executor-availability.md)
-- [Embedded VS Code Windows Availability](requirements/embedded-vscode-windows-availability.md)
-- [Empty-Turn Notice and Slash-Command Hint](requirements/empty-turn-notice.md)
+- [Unmeasured context window](requirements/context-window-unmeasured-state.md)
+- [Embedded VS Code executor](requirements/embedded-vscode-executor-availability.md)
+- [Embedded VS Code on Windows](requirements/embedded-vscode-windows-availability.md)
+- [Empty-turn notice and command hint](requirements/empty-turn-notice.md)
 - [Entity Reference Composer](requirements/entity-reference-composer.md)
 - [Executor settings card spacing](requirements/executor-settings-card-spacing.md)
 - [External VCS File Links](requirements/external-vcs-file-links.md)
 - [File Tree Chat Context](requirements/file-tree-chat-context.md)
-- [Reload Kandev after frozen-tab restore](requirements/fix-duplicated-tab-stale-data.md)
+- [File Tree Keyboard Scope](requirements/file-tree-keyboard-scope.md)
+- [Frozen-tab restore](requirements/fix-duplicated-tab-stale-data.md)
 - [GitHub PR Review Actions](requirements/github-pr-review-actions.md)
 - [GitHub Saved-Query Default Views](requirements/github-saved-query-defaults.md)
 - [Kandev MCP Tool Results](requirements/kandev-mcp-tool-results.md)
@@ -116,7 +114,7 @@ own feature behavior/state.
 - [Sidebar Task Focus](requirements/sidebar-task-focus.md)
 - [Sidebar Task Completion Icons](requirements/sidebar-task-completion-icons.md)
 - [Sidebar Task Row Presentation](requirements/sidebar-task-row-presentation.md)
-- [Direct Sidebar View Creation](requirements/sidebar-view-creation.md)
+- [Sidebar view creation](requirements/sidebar-view-creation.md)
 - [Slash Command Composer Selection](requirements/slash-command-composer.md)
 - [Subagent Observability](requirements/subagent-observability.md)
 - [Nested Submodule Review](requirements/submodule-review.md)
@@ -125,7 +123,7 @@ own feature behavior/state.
 - [Task Agent Tab Reconciliation](requirements/task-agent-tab-reconciliation.md)
 - [Task Listing Display Preferences](requirements/task-listing-display-preferences.md)
 - [Task transcript history visibility](requirements/task-prompt-transcript-visibility.md)
-- [Task Review Shortcut Switcher](requirements/task-review-shortcut.md)
+- [Review shortcut switcher](requirements/task-review-shortcut.md)
 - [Task surface refresh and mobile create](requirements/task-surface-refresh.md)
 - [Task Workspace Content Search](requirements/task-workspace-content-search.md)
 - [Terminal close feedback](requirements/terminal-close-feedback.md)
@@ -158,6 +156,7 @@ own feature behavior/state.
 - [Task PR Automation Controls System Design Part 3](system-design/ci-pr-automation-03.md)
 - [Merge Queue Recovery Controls](system-design/ci-pr-merge-queue-recovery-controls.md)
 - [Entity Reference Composer](system-design/entity-reference-composer.md)
+- [File Tree Keyboard Scope](system-design/file-tree-keyboard-scope.md)
 - [Kandev MCP Tool Results](system-design/kandev-mcp-tool-results.md)
 - [Mobile Task Chrome](system-design/mobile-task-chrome.md)
 - [Markdown File Editing](system-design/markdown-file-editing.md)
@@ -184,6 +183,6 @@ own feature behavior/state.
 
 ## Related systems
 
-- [Tasks](../tasks/README.md): task state.
-- [Plugins](../plugins/README.md): contributions.
-- [Platform](../platform/README.md): runtime state.
+- [Tasks](../tasks/README.md)
+- [Plugins](../plugins/README.md)
+- [Platform](../platform/README.md)
