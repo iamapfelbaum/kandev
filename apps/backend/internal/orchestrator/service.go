@@ -976,6 +976,11 @@ type Service struct {
 	// execution. Claims expire with the same bounded grace period used for
 	// completed-execution stream markers.
 	executionTeardownClaims sync.Map
+	// parkedProfileSwitchStops remembers exact executions whose deliberate
+	// parked-switch lifecycle event was already consumed. It is a short-lived
+	// duplicate-delivery optimization; the durable consumed tombstone lives in
+	// session metadata.
+	parkedProfileSwitchStops sync.Map
 
 	// steerInFlight tracks sessions with an unacknowledged mid-turn steer.
 	// The spec allows at most one in-flight steer per session; a second attempt

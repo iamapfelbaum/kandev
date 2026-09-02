@@ -174,6 +174,7 @@ func (s *Service) reconcileWaitingStuckSignalSessionIfDue(ctx context.Context, s
 	}
 	guard := s.lockCancelInFlightGuard(session.ID)
 	defer guard.release()
+	ctx = withWorkflowProfileSwitchGuardHeld(ctx, session.ID, "")
 	if s.isCancelInFlight(session.ID) {
 		return true
 	}
@@ -219,6 +220,7 @@ func (s *Service) reclaimStuckSignalSessionIfDue(ctx context.Context, session *m
 
 	guard := s.lockCancelInFlightGuard(session.ID)
 	defer guard.release()
+	ctx = withWorkflowProfileSwitchGuardHeld(ctx, session.ID, "")
 	if s.isCancelInFlight(session.ID) {
 		return
 	}
