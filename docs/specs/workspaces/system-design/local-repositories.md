@@ -296,6 +296,27 @@ Tauri WebView cannot use it as a fallback.
 Diagnostic bundles can contain local paths. Public recovery documentation must
 state this before a user exports a bundle.
 
+## Explicit local repository validation
+
+The workspace system canonicalizes an explicit repository path before it is
+saved or used. Automatic discovery roots do not constrain explicit selection.
+
+Standalone `.git` directories remain valid when they do not redirect their
+common directory. A regular-file `.git` pointer is accepted through one of two
+independent reciprocal validators: linked worktrees require `gitdir`,
+`commondir`, and placement under `<common>/worktrees`; initialized submodules
+require a non-empty `[core] worktree` value in module metadata. Relative values
+resolve from the canonical metadata directory and must canonically equal the
+selected repository. A `commondir` file excludes the submodule validator. Git
+include sections and `extensions.worktreeConfig` are rejected for submodule
+metadata because the validator does not evaluate alternate configuration
+sources.
+
+When neither validator succeeds, their errors are joined to retain diagnostics.
+
+The explicit repository validation contract is recorded in [Explicit submodule
+repository trust](../../../decisions/2026-08-28-explicit-submodule-repository-trust.md).
+
 ## Verification strategy
 
 - Go tests cover runtime policy, canonical roots, cache freshness, single-flight

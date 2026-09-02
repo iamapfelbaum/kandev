@@ -81,6 +81,7 @@ func (m *Manager) configureTracker(tracker *WorkspaceTracker, repositoryName str
 	if m.cfg != nil {
 		tracker.SetDiagnosticIdentity(m.cfg.TaskID, m.cfg.SessionID)
 	}
+	tracker.SetGitEnvironment(m.trackerGitEnvironment())
 	tracker.SetAllowedSourceRoots(roots)
 	if !tracker.IsSubmodule() {
 		tracker.SetBaseBranch(lookupBaseBranch(m.getBaseBranches(), repositoryName))
@@ -126,7 +127,7 @@ func (m *Manager) reconcileWorkspaceTrackerGraph(
 		root = oldRoot
 		rootReused = true
 		syncTrackerConfiguration(root, desiredRoot, roots)
-		m.prepareTrackerComparisonTarget(ctx, root)
+		m.prepareTrackerComparisonTarget(root)
 		desiredRoot.Stop()
 	}
 	if !rootReused {
@@ -140,7 +141,7 @@ func (m *Manager) reconcileWorkspaceTrackerGraph(
 		identity := repositoryTrackerIdentity(desired.RepositoryName(), desired.workDir)
 		if existing := oldByIdentity[identity]; existing != nil {
 			syncTrackerConfiguration(existing, desired, roots)
-			m.prepareTrackerComparisonTarget(ctx, existing)
+			m.prepareTrackerComparisonTarget(existing)
 			desired.Stop()
 			retained = append(retained, existing)
 			used[existing] = struct{}{}

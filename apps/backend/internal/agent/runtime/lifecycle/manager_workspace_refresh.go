@@ -18,10 +18,11 @@ func (m *Manager) finalWorkspaceRefresh(execution *AgentExecution, trigger strin
 	if execution == nil {
 		return
 	}
-	client := execution.GetAgentCtlClient()
+	client, releaseClient := execution.AcquireAgentCtlClient()
 	if client == nil {
 		return
 	}
+	defer releaseClient()
 	timeout := finalWorkspaceRefreshTimeout
 	if timeout <= 0 {
 		timeout = 10 * time.Second
