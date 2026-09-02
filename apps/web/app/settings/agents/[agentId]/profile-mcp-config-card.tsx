@@ -614,7 +614,7 @@ export function ProfileMcpConfigCard({
 
   if (!supportsMcp) return null;
 
-  if (!state.isDraft) {
+  if (!state.isDraft && workspaceId) {
     return <ProfileMCPSelectionCard profileId={profileId} workspaceId={workspaceId} />;
   }
 
