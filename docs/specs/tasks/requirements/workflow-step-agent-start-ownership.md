@@ -44,16 +44,20 @@ repeating that description during later workflow entries.
 
 - **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003.1:** When an unprompted
 session enters an automatic-start step with no step prompt, the system shall send
-the task description once.
+the task description once. Admission of this fallback shall be atomic with the
+session's first-prompt boundary.
 - **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003.2:** When a prompted session
 enters an automatic-start step with no step prompt, the system shall not send the
-task description again.
+task description again. A concurrent direct user prompt and automatic fallback
+shall not both qualify as the first prompt.
 - **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003.3:** When an
 automatic-start step has a step prompt, the system shall send the evaluated step
 prompt regardless of earlier session prompts.
-- **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003.4:** When suppression removes
-all prompt content, the system shall not create a user message or dispatch an
-empty agent turn.
+- **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003.4:** When fallback
+suppression removes all textual prompt content and no queued attachment remains,
+the system shall not create a user message or dispatch an empty agent turn. A
+queued attachment-only handoff shall remain durable user input and shall be
+dispatched with its attachment metadata.
 - **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003.5:** The automatic
 `on_enter` path and the explicit workflow-step launch path shall use the same
 task-description fallback rule.

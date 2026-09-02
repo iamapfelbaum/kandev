@@ -206,6 +206,14 @@ test.describe("start step vs auto-start step", () => {
       )
       .toBe(planStep.id);
 
+    const beforeMoveMessages = await apiClient.listSessionMessages(sessionId);
+    const beforeMoveTurns = await apiClient.listSessionTurns(sessionId);
+    const beforeMoveSession = (await apiClient.listTaskSessions(taskId)).sessions.find(
+      (candidate) => candidate.id === sessionId,
+    );
+    expect(beforeMoveSession).toBeTruthy();
+    const beforeMoveUpdatedAt = beforeMoveSession?.updated_at;
+
     await apiClient.moveTask(taskId, workflow.id, autoStartStep.id);
     await expect
       .poll(
@@ -217,16 +225,80 @@ test.describe("start step vs auto-start step", () => {
       )
       .toBe(autoStartStep.id);
 
-    // If the empty step incorrectly re-sends the description, the duplicate
-    // turn must finish before the idle input becomes available again.
-    await session.showSessionContext();
-    await session.waitForChatIdle({ timeout: 30_000 });
+    // The move response only confirms task placement. The session review reset
+    // is the first durable signal from the asynchronous on_enter path, so wait
+    // for that post-move write before inspecting the transcript.
+    await expect
+      .poll(
+        async () => {
+          const { sessions } = await apiClient.listTaskSessions(taskId);
+          const current = sessions.find((candidate) => candidate.id === sessionId);
+          return current?.updated_at && current.updated_at !== beforeMoveUpdatedAt
+            ? current.updated_at
+            : null;
+        },
+        {
+          timeout: 30_000,
+          message: "Waiting for asynchronous workflow on_enter processing to write session state",
+        },
+      )
+      .not.toBeNull();
 
-    const userDescriptionMessages = await apiClient.listSessionMessages(sessionId);
+    // Suppression is intentionally silent, so there is no new idle transition
+    // for waitForChatIdle to observe. Require a stable server-side snapshot
+    // after the causal write, which also catches a late duplicate turn.
+    let previousSnapshot = "";
+    let stableReads = 0;
+    await expect
+      .poll(
+        async () => {
+          const [{ messages }, { turns }, { sessions }] = await Promise.all([
+            apiClient.listSessionMessages(sessionId),
+            apiClient.listSessionTurns(sessionId),
+            apiClient.listTaskSessions(taskId),
+          ]);
+          const current = sessions.find((candidate) => candidate.id === sessionId);
+          const snapshot = JSON.stringify({
+            state: current?.state,
+            messages: messages.map((message) => ({
+              id: message.id,
+              author_type: message.author_type,
+              content: message.content,
+            })),
+            turns: turns.map((turn) => ({ id: turn.id, completed_at: turn.completed_at })),
+          });
+          if (snapshot === previousSnapshot) {
+            stableReads += 1;
+          } else {
+            previousSnapshot = snapshot;
+            stableReads = 0;
+          }
+          return stableReads;
+        },
+        {
+          timeout: 30_000,
+          intervals: [250, 500, 750, 1_000],
+          message: "Waiting for workflow on_enter prompt admission to settle",
+        },
+      )
+      .toBeGreaterThanOrEqual(3);
+
+    const afterMoveMessages = await apiClient.listSessionMessages(sessionId);
+    const afterMoveTurns = await apiClient.listSessionTurns(sessionId);
+    const userMessages = afterMoveMessages.messages.filter(
+      (message) => message.author_type === "user",
+    );
+    await session.showSessionContext();
+
+    const userDescriptionMessages = userMessages.filter((message) =>
+      message.content.includes(description),
+    );
+    const emptyUserMessages = userMessages.filter((message) => message.content.trim() === "");
+    expect(userDescriptionMessages).toHaveLength(1);
+    expect(emptyUserMessages).toHaveLength(0);
+    expect(afterMoveTurns.turns).toHaveLength(beforeMoveTurns.turns.length);
     expect(
-      userDescriptionMessages.messages.filter(
-        (message) => message.author_type === "user" && message.content.includes(description),
-      ),
+      beforeMoveMessages.messages.filter((message) => message.author_type === "user"),
     ).toHaveLength(1);
     await expect(session.activeChat().getByText(description, { exact: true })).toHaveCount(1);
   });

@@ -20,7 +20,7 @@ system_design:
 
 ## Summary
 
-Add a Playwright regression for the reported task flow. The test will prove the visible transcript contains one task-description message after the later step entry.
+Add a Playwright regression for the reported task flow. The test will prove the visible transcript contains one task-description message after the later step entry, with no empty user row or extra turn.
 
 ## In scope
 
@@ -28,7 +28,7 @@ Add a Playwright regression for the reported task flow. The test will prove the 
 - Create and start a task in plan mode through the task dialog.
 - Wait for the first agent turn to finish.
 - Move the idle task into the empty automatic-start step.
-- Assert one visible task-description message.
+- Assert one visible task-description message, no empty user row, and no additional turn.
 
 ## Out of scope
 
@@ -45,7 +45,7 @@ Add a Playwright regression for the reported task flow. The test will prove the 
 ## Verification
 
 ```bash
-cd apps/web && pnpm e2e:run tests/workflow/start-step-vs-auto-start-step.spec.ts -- --grep "does not repeat the plan-mode task description"
+(cd apps/web && pnpm e2e:run tests/workflow/start-step-vs-auto-start-step.spec.ts -- --grep "does not repeat the plan-mode task description")
 ```
 
 ## Files likely touched
@@ -77,11 +77,13 @@ cd apps/web && pnpm e2e:run tests/workflow/start-step-vs-auto-start-step.spec.ts
 - Added the requested browser regression using a dedicated two-step workflow:
   plan-mode creation lands on the first step, then an idle task enters an empty
   automatic-start step.
-- The test waits for the first turn and backend task placement, then checks the
-  final API transcript and visible chat for exactly one task-description message.
+- The test waits for the first turn, backend task placement, the asynchronous
+  on-enter session write, and a stable transcript/turn snapshot. It then checks
+  the final API transcript and visible chat for exactly one task-description
+  message, no empty user row, and no additional turn.
 - The production Vite build passed, including the pseudo-locale build used by
   the E2E runner.
-- `cd apps/web && pnpm e2e:run tests/workflow/start-step-vs-auto-start-step.spec.ts -- --grep "does not repeat the plan-mode task description"` passed: 1 test.
+- `(cd apps/web && pnpm e2e:run tests/workflow/start-step-vs-auto-start-step.spec.ts -- --grep "does not repeat the plan-mode task description")` passed: 1 test.
 - No mobile-only test was added because this is a transport-neutral prompt
   decision with no mobile layout or interaction change; the existing shared
   session surface is exercised by the browser regression.

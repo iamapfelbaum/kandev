@@ -431,7 +431,7 @@ func (s *Service) StartCreatedSession(
 ) (*executor.TaskExecution, error) {
 	return s.startCreatedSession(
 		ctx, taskID, sessionID, agentProfileID, prompt,
-		skipMessageRecord, planMode, autoStart, attachments, references, "",
+		skipMessageRecord, planMode, autoStart, attachments, references, "", startCreatedSessionOptions{},
 	)
 }
 
@@ -449,8 +449,39 @@ func (s *Service) StartCreatedSessionWithPromptContext(
 ) (*executor.TaskExecution, error) {
 	return s.startCreatedSession(
 		ctx, taskID, sessionID, agentProfileID, prompt,
-		skipMessageRecord, planMode, autoStart, attachments, references, promptReferenceContext,
+		skipMessageRecord, planMode, autoStart, attachments, references, promptReferenceContext, startCreatedSessionOptions{},
 	)
+}
+
+// startCreatedSessionWithComposedPrompt launches a prepared session from an
+// auto-start path whose prompt was already composed and recorded by the
+// orchestrator. The ordinary public entry point intentionally applies the
+// workflow/config/plan transforms itself; reapplying them here would duplicate
+// wrappers and would also fall back to the task description for an empty,
+// already-prompted workflow step. Keep this seam private to the auto-start
+// admission path so user-initiated starts retain their existing contract.
+func (s *Service) startCreatedSessionWithComposedPrompt(
+	ctx context.Context,
+	taskID, sessionID, agentProfileID, prompt string,
+	retryPrompt string,
+	skipMessageRecord, planMode, autoStart bool,
+	attachments []v1.MessageAttachment,
+	references []v1.EntityReference,
+) (*executor.TaskExecution, error) {
+	return s.startCreatedSession(
+		ctx, taskID, sessionID, agentProfileID, prompt,
+		skipMessageRecord, planMode, autoStart, attachments, references, "", startCreatedSessionOptions{
+			skipTaskDescriptionFallback: true,
+			promptAlreadyComposed:       true,
+			retryPrompt:                 retryPrompt,
+		},
+	)
+}
+
+type startCreatedSessionOptions struct {
+	skipTaskDescriptionFallback bool
+	promptAlreadyComposed       bool
+	retryPrompt                 string
 }
 
 //nolint:cyclop,funlen,gocognit // Existing complexity inherited from session-lifecycle handling.
@@ -461,6 +492,7 @@ func (s *Service) startCreatedSession(
 	attachments []v1.MessageAttachment,
 	references []v1.EntityReference,
 	promptReferenceContext string,
+	options startCreatedSessionOptions,
 ) (*executor.TaskExecution, error) {
 	releaseLifecycleLock := s.acquireSessionLifecycleLock(sessionID)
 	defer releaseLifecycleLock()
@@ -579,7 +611,7 @@ func (s *Service) startCreatedSession(
 	}
 
 	effectivePrompt := prompt
-	if effectivePrompt == "" {
+	if effectivePrompt == "" && !options.skipTaskDescriptionFallback {
 		effectivePrompt = task.Description
 	}
 
@@ -633,20 +665,26 @@ func (s *Service) startCreatedSession(
 			return nil, fmt.Errorf("failed to claim first-turn task title: %w", err)
 		}
 	}
-	effectivePrompt, planModeActive, generatedPromptReferenceContext := s.applyWorkflowAndPlanModeWithPromptContext(
-		ctx, effectivePrompt, taskID, sessionID, dbTask.WorkflowStepID,
-		planMode, task.IsEphemeral, session.IsPassthrough, promptReferenceContext,
-	)
-	if generatedPromptReferenceContext != "" {
-		// The workflow helper preserves a direct message's acceptance-time
-		// context. Auto-started workflow prompts have no prior context, so their
-		// launch-time expansion becomes the trusted value here.
-		promptReferenceContext = generatedPromptReferenceContext
+	planModeActive := planMode
+	if !options.promptAlreadyComposed {
+		var generatedPromptReferenceContext string
+		effectivePrompt, planModeActive, generatedPromptReferenceContext = s.applyWorkflowAndPlanModeWithPromptContext(
+			ctx, effectivePrompt, taskID, sessionID, dbTask.WorkflowStepID,
+			planMode, task.IsEphemeral, session.IsPassthrough, promptReferenceContext,
+		)
+		if generatedPromptReferenceContext != "" {
+			// The workflow helper preserves a direct message's acceptance-time
+			// context. Auto-started workflow prompts have no prior context, so their
+			// launch-time expansion becomes the trusted value here.
+			promptReferenceContext = generatedPromptReferenceContext
+		}
 	}
 
 	// Inject config context for config-mode sessions (dedicated settings chat)
 	if configMode {
-		effectivePrompt = sysprompt.InjectConfigContext(sessionID, effectivePrompt)
+		if !options.promptAlreadyComposed {
+			effectivePrompt = sysprompt.InjectConfigContext(sessionID, effectivePrompt)
+		}
 	}
 
 	// Wrap the first prompt with the Kandev MCP system block. See the
@@ -667,7 +705,11 @@ func (s *Service) startCreatedSession(
 
 	// Cache the raw prompt so a transient-provider-error (529) retry can
 	// re-drive this first turn — initial launches bypass PromptTask.
-	s.rememberTurnPrompt(sessionID, prompt, "", planMode, attachments)
+	retryPrompt := prompt
+	if options.promptAlreadyComposed {
+		retryPrompt = options.retryPrompt
+	}
+	s.rememberTurnPrompt(sessionID, retryPrompt, "", planMode, attachments)
 
 	mcpMode := ""
 	if isOfficeTask {
@@ -1923,9 +1965,9 @@ func (s *Service) buildWorkflowPrompt(ctx context.Context, basePrompt string, st
 }
 
 // buildWorkflowEntryPrompt applies the task-description fallback for one
-// workflow entry. Empty steps use the description only for a session that has
-// never accepted a user prompt; non-empty step prompts keep their existing
-// placeholder and replacement semantics.
+// workflow entry. Empty steps use the description only when this call
+// atomically claims the session's first prompt slot; non-empty step prompts
+// keep their existing placeholder and replacement semantics.
 func (s *Service) buildWorkflowEntryPrompt(
 	ctx context.Context,
 	taskDescription string,
@@ -1934,15 +1976,18 @@ func (s *Service) buildWorkflowEntryPrompt(
 	isPassthrough bool,
 ) (string, error) {
 	basePrompt := taskDescription
-	if step.Prompt == "" {
-		hasHistory, err := s.repo.HasUserPromptHistory(ctx, sessionID)
+	if step.Prompt == "" && strings.TrimSpace(taskDescription) != "" {
+		claimed, err := s.repo.ClaimInitialPromptFallback(ctx, sessionID)
 		if err != nil {
-			return "", fmt.Errorf("failed to read workflow prompt history: %w", err)
+			return "", fmt.Errorf("failed to claim workflow prompt fallback: %w", err)
 		}
-		if hasHistory {
+		if !claimed {
 			basePrompt = ""
 		}
 	}
+	// A replacement session is intentionally a fresh prompt boundary. It has
+	// no prior claim, so the task description is eligible again after a reused
+	// session terminalizes during workflow entry.
 	return s.buildWorkflowPrompt(ctx, basePrompt, step, taskID, sessionID, isPassthrough), nil
 }
 
@@ -2410,7 +2455,13 @@ func (s *Service) StartSessionForWorkflowStep(ctx context.Context, taskID, sessi
 	// step prompt. The helper reloads the session so a resume-created runtime
 	// state cannot be overwritten by the stale request snapshot.
 	s.applyWorkflowSessionConfigOnEnter(ctx, taskID, session, step)
-	if strings.TrimSpace(effectivePrompt) == "" {
+	stepPlanMode := step.HasOnEnterAction(wfmodels.OnEnterEnablePlanMode)
+	// The plan/config transforms can make an otherwise empty workflow prompt
+	// actionable. Decide whether to dispatch only after applying those same
+	// transforms that PromptTask applies downstream.
+	session = s.latestSession(ctx, session)
+	promptForEmptinessCheck := s.effectivePromptForSession(sessionID, effectivePrompt, stepPlanMode, session)
+	if strings.TrimSpace(promptForEmptinessCheck) == "" {
 		s.logger.Info("workflow step has no prompt after entry fallback",
 			zap.String("task_id", taskID),
 			zap.String("session_id", sessionID),
@@ -2418,7 +2469,6 @@ func (s *Service) StartSessionForWorkflowStep(ctx context.Context, taskID, sessi
 		return nil
 	}
 
-	stepPlanMode := step.HasOnEnterAction(wfmodels.OnEnterEnablePlanMode)
 	_, err = s.PromptTask(ctx, taskID, sessionID, effectivePrompt, "", stepPlanMode, nil, false)
 	if err != nil {
 		return fmt.Errorf("failed to prompt session: %w", err)

@@ -23,7 +23,7 @@ system_design:
 
 ## Summary
 
-Add a durable prompt-history query and use it for workflow prompt composition. Empty steps can use the task description only for the first session prompt.
+Add a durable prompt-history counter and atomic first-prompt claim for workflow prompt composition. Only an empty step prompt can use the task description as the one-time fallback.
 
 ## In scope
 
@@ -45,14 +45,16 @@ Add a durable prompt-history query and use it for workflow prompt composition. E
 - An empty automatic-start step does not repeat a task description for a prompted session.
 - An unprompted session still receives the task description once.
 - A non-empty step prompt still dispatches, and an empty result creates no turn or message.
+- Attachment-only handoffs are persisted and dispatched with their attachment metadata.
+- Concurrent direct and automatic first-prompt admissions allow at most one initial fallback.
 
 ## Verification
 
 ```bash
-cd apps/backend && go test -race ./internal/task/repository/sqlite ./internal/orchestrator -run '^(TestHasUserPromptHistory|TestWorkflowAutoStartEmptyPrompt|TestWorkflowAutoStartNonEmptyPrompt|TestStartSessionForWorkflowStepEmptyPrompt)' -count=1
+(cd apps/backend && go test -race -tags fts5 ./internal/task/repository/sqlite ./internal/orchestrator -run '^(TestHasUserPromptHistory|TestClaimInitialPromptFallbackSerializesPromptAdmission|TestDeleteTaskSessionRemovesPromptHistoryClaim|TestWorkflowAutoStartEmptyPrompt|TestWorkflowAutoStartNonEmptyPrompt|TestStartSessionForWorkflowStepEmptyPrompt|TestWorkflowAutoStartPlanModeOnlyPrompt|TestWorkflowAutoStartPlanModeOnlyPromptForCreatedSession|TestStartSessionForWorkflowStepPlanModeOnlyPrompt|TestWorkflowAutoStartAttachmentOnlyHandoffIsRecorded|TestWorkflowAutoStartPassthroughDrainsSuppressedHandoff)' -count=1)
 make -C apps/backend test
 make -C apps/backend lint
-cd apps/backend && golangci-lint run ./... --new-from-rev="$(git merge-base HEAD origin/main)" --timeout=5m
+(cd apps/backend && golangci-lint run ./... --new-from-rev="$(git merge-base HEAD origin/main)" --timeout=5m)
 ```
 
 ## Files likely touched
@@ -89,12 +91,14 @@ None.
 
 ## Results
 
-- Added the durable `HasUserPromptHistory` query and applied one entry-prompt
+- Added the durable `HasUserPromptHistory` query plus the atomic
+  `ClaimInitialPromptFallback` admission boundary and applied one entry-prompt
   decision to automatic and explicit workflow-step launches.
 - Added coverage for prompted and unprompted empty steps, non-empty step
-  prompts, passthrough suppression, prompt-history errors, handoff preservation,
-  and the no-turn/no-message empty result.
-- The focused race suite passed with 9 tests.
+  prompts, passthrough suppression, prompt-history errors, plan-mode-only
+  instructions, attachment-only handoffs, prompt-admission races, session-ID
+  reuse cleanup, and the no-turn/no-message empty result.
+- The focused race suite passed with 18 tests, including both prompt-admission orderings, concurrent fallback claims, plan-only prompts, attachment-only handoffs, passthrough draining, and session-ID reuse cleanup.
 - `env KANDEV_INTERNAL_CONFIG_FILE= KANDEV_INTERNAL_CONFIG_HOME_FILE= make -C apps/backend test` passed for every backend package. The unmodified
   `make -C apps/backend test` form was also attempted, but this task session's
   injected launcher config caused unrelated home-config discovery failures.

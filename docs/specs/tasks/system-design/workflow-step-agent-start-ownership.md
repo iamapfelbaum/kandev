@@ -35,8 +35,10 @@ The cancellation coordinator owns active-turn quiescence. It uses the internal c
 
 `lifecycle.SessionManager` owns prompt serialization and the dispatch-only completion barrier. Prompt generations continue to identify completion ownership.
 
-The orchestrator owns the task-description fallback. The task repository owns
-the durable prompt-history query that supports this decision.
+The orchestrator owns the task-description fallback decision. The task
+repository owns the durable prompt counter and its atomic initial-fallback
+claim. Direct user-message persistence and the fallback claim use the same
+per-session write boundary.
 
 ## Session states
 
@@ -99,14 +101,22 @@ behavior.
 ## Prompt-history contract
 
 `task_session_prompt_seq.last_seq` is the durable session prompt counter. A
-value greater than zero means that the session has accepted a user prompt.
+positive value is an accepted user-prompt ordinal. The zero value is reserved
+for an admitted empty-step fallback whose visible message has not been written
+yet. The repository also exposes an atomic insert-if-absent claim for the
+empty-step task-description fallback. A direct user-message write and this
+claim take the same per-session write boundary, so the first committed
+admission wins.
 
 The counter does not decrease after message deletion. This property prevents a
 deleted transcript row from making the task description eligible again.
 
-The task repository exposes a bounded existence query for this state. The
-orchestrator does not load the complete session transcript to make the fallback
-decision. This change needs no schema migration.
+The task repository exposes a bounded existence query for this state and the
+atomic fallback claim. The existence of the counter row, including a
+zero-valued reservation marker, is the history signal. The orchestrator does not
+load the complete session transcript to make the fallback decision. The
+replay-safe counter table has no foreign key, so session deletion explicitly
+removes the counter before commit. This change needs no schema migration.
 
 ## Workflow-entry prompt flow
 
@@ -114,19 +124,25 @@ decision. This change needs no schema migration.
 composition helper. The helper applies these rules:
 
 1. If `WorkflowStep.Prompt` is non-empty, retain the task description for
-   placeholder evaluation.
-2. If the step prompt is empty, read the durable session prompt counter.
-3. If the counter is zero, use the task description as the base prompt.
-4. If the counter is greater than zero, use an empty base prompt.
+   placeholder evaluation. Non-empty prompts, including `{{task_prompt}}`, keep
+   their existing semantics.
+2. If the step prompt is empty, atomically claim the initial fallback slot.
+3. If the claim succeeds, use the task description as the base prompt.
+4. If the claim is already taken, use an empty base prompt.
 5. Build the workflow prompt with the existing workflow instructions and
    reference expansion.
 
 The `on_enter` caller applies this result before it selects ACP or passthrough
 delivery. Thus, both transports use the same fallback rule.
 
+Before emptiness is decided, the explicit and automatic paths apply the same
+plan-mode and session-configuration transforms that prompt dispatch applies.
 The ACP path still lets `autoStartStepPrompt` merge a queued handoff. If the
 merged result has no content or attachments, it returns without a message or
-agent dispatch.
+agent dispatch. An attachment-only handoff is admitted, persisted with its
+attachment metadata, and dispatched even when its text is empty. A started
+passthrough session drains the queued handoff before returning from a suppressed
+empty-step decision.
 
 The explicit workflow-step launch keeps its existing resume and session-setting
 behavior. It does not call `PromptTask` when the composed prompt is empty.
@@ -139,14 +155,15 @@ If provider reset or configuration restoration fails, the existing reset reconci
 
 If a stale predecessor barrier times out, the successor prompt fails before dispatch. The session guard becomes available for cancellation and recovery.
 
-If the prompt-history query fails, prompt composition returns an error. The
-automatic entry uses the existing waiting-state recovery. An explicit
-workflow-step launch returns the error to its caller.
+If the prompt-history read or atomic claim fails, prompt composition returns an
+error. The automatic entry uses the existing waiting-state recovery. An
+explicit workflow-step launch returns the error to its caller.
 
 This repair does not reconcile sessions that became stuck before the new boundary existed. Users can replace such a session with a new session.
 
-The prompt-history query is durable across backend restarts. A restart cannot
-make an earlier task description eligible for another fallback dispatch.
+The prompt counter and fallback claim are durable across backend restarts. A
+restart cannot make an earlier task description eligible for another fallback
+dispatch, and deleting/recreating a session ID starts a new prompt boundary.
 
 ## Observability
 

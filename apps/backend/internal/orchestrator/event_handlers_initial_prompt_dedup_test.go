@@ -8,6 +8,10 @@ import (
 	"time"
 
 	"github.com/kandev/kandev/internal/orchestrator/executor"
+	"github.com/kandev/kandev/internal/orchestrator/messagequeue"
+	"github.com/kandev/kandev/internal/orchestrator/queue"
+	"github.com/kandev/kandev/internal/orchestrator/scheduler"
+	"github.com/kandev/kandev/internal/sysprompt"
 	"github.com/kandev/kandev/internal/task/models"
 	sqliterepo "github.com/kandev/kandev/internal/task/repository/sqlite"
 	wfmodels "github.com/kandev/kandev/internal/workflow/models"
@@ -124,6 +128,183 @@ func TestWorkflowAutoStartNonEmptyPrompt(t *testing.T) {
 	}
 }
 
+func TestWorkflowAutoStartPlanModeOnlyPrompt(t *testing.T) {
+	fixture := newInitialPromptDedupFixture(t, true, false)
+	fixture.step.Events.OnEnter = []wfmodels.OnEnterAction{
+		{Type: wfmodels.OnEnterEnablePlanMode},
+		{Type: wfmodels.OnEnterAutoStartAgent},
+	}
+
+	fixture.svc.launchAfterOnEnterDispatch(
+		context.Background(), fixture.taskID, fixture.session, fixture.step,
+		fixture.taskDescription, true, true, false,
+	)
+
+	if got := fixture.agent.capturedPrompts; len(got) != 1 || strings.Count(got[0], sysprompt.PlanMode()) != 1 {
+		t.Fatalf("captured prompts = %#v, want the plan-mode instructions", got)
+	}
+}
+
+func TestWorkflowAutoStartPlanModeOnlyPromptForCreatedSession(t *testing.T) {
+	fixture := newInitialPromptDedupFixture(t, true, false)
+	fixture.step.Events.OnEnter = []wfmodels.OnEnterAction{{Type: wfmodels.OnEnterEnablePlanMode}}
+	fixture.session.State = models.TaskSessionStateCreated
+	fixture.session.AgentProfileID = "profile-initial-prompt-dedup"
+	if err := fixture.repo.UpdateTaskSession(context.Background(), fixture.session); err != nil {
+		t.Fatalf("update created session: %v", err)
+	}
+	fixture.svc.scheduler = scheduler.NewScheduler(
+		queue.NewTaskQueue(10), fixture.svc.executor, fixture.svc.taskRepo,
+		testLogger(), scheduler.SchedulerConfig{},
+	)
+	fixture.svc.activeTurns.Store(fixture.sessionID, "turn-initial-prompt-dedup")
+	var launchPrompt string
+	fixture.agent.launchAgentFunc = func(_ context.Context, request *executor.LaunchAgentRequest) (*executor.LaunchAgentResponse, error) {
+		launchPrompt = request.TaskDescription
+		return &executor.LaunchAgentResponse{AgentExecutionID: "exec-created-plan-only"}, nil
+	}
+
+	if err := fixture.svc.autoStartStepPrompt(
+		context.Background(), fixture.taskID, fixture.session, fixture.step, "", true, true,
+	); err != nil {
+		t.Fatalf("autoStartStepPrompt returned error: %v", err)
+	}
+
+	if launchPrompt == "" && len(fixture.agent.setExecutionDescriptionCalls) > 0 {
+		launchPrompt = fixture.agent.setExecutionDescriptionCalls[len(fixture.agent.setExecutionDescriptionCalls)-1].Prompt
+	}
+	if strings.Count(launchPrompt, sysprompt.PlanMode()) != 1 {
+		t.Fatalf("created launch prompt = %q, want one plan-mode instruction block", launchPrompt)
+	}
+}
+
+func TestStartSessionForWorkflowStepPlanModeOnlyPrompt(t *testing.T) {
+	fixture := newInitialPromptDedupFixture(t, true, false)
+	fixture.step.Events.OnEnter = []wfmodels.OnEnterAction{{Type: wfmodels.OnEnterEnablePlanMode}}
+
+	if err := fixture.svc.StartSessionForWorkflowStep(
+		context.Background(), fixture.taskID, fixture.sessionID, fixture.step.ID,
+	); err != nil {
+		t.Fatalf("StartSessionForWorkflowStep returned error: %v", err)
+	}
+
+	if got := fixture.agent.capturedPrompts; len(got) != 1 || !strings.Contains(got[0], sysprompt.PlanMode()) {
+		t.Fatalf("captured prompts = %#v, want the plan-mode instructions", got)
+	}
+}
+
+func TestWorkflowAutoStartAttachmentOnlyHandoffIsRecorded(t *testing.T) {
+	attachment := messagequeue.MessageAttachment{
+		Type:         "resource",
+		AttachmentID: "attachment-only",
+		MimeType:     "text/plain",
+		Name:         "handoff.txt",
+		Data:         "aGVsbG8=",
+	}
+	for _, state := range []models.TaskSessionState{
+		models.TaskSessionStateWaitingForInput,
+		models.TaskSessionStateCreated,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			fixture := newInitialPromptDedupFixture(t, false, false)
+			fixture.svc.messageCreator = &repositoryBackedMessageCreator{
+				mockMessageCreator: fixture.messages,
+				repo:               fixture.repo,
+			}
+			fixture.session.State = state
+			fixture.session.AgentProfileID = "profile-initial-prompt-dedup"
+			if err := fixture.repo.UpdateTaskSession(context.Background(), fixture.session); err != nil {
+				t.Fatalf("update session: %v", err)
+			}
+			if state == models.TaskSessionStateCreated {
+				fixture.svc.scheduler = scheduler.NewScheduler(
+					queue.NewTaskQueue(10), fixture.svc.executor, fixture.svc.taskRepo,
+					testLogger(), scheduler.SchedulerConfig{},
+				)
+			}
+			// The fixture deliberately has no turn service. Reuse its seeded turn
+			// so the repository-backed creator can satisfy the message FK without
+			// introducing a second turn unrelated to this admission test.
+			fixture.svc.activeTurns.Store(fixture.sessionID, "turn-initial-prompt-dedup")
+
+			if _, err := fixture.svc.messageQueue.QueueMessage(
+				context.Background(), fixture.sessionID, fixture.taskID, "", "", "user", false, []messagequeue.MessageAttachment{attachment},
+			); err != nil {
+				t.Fatalf("queue attachment-only handoff: %v", err)
+			}
+
+			if err := fixture.svc.autoStartStepPrompt(
+				context.Background(), fixture.taskID, fixture.session, fixture.step,
+				"", false, true,
+			); err != nil {
+				t.Fatalf("autoStartStepPrompt returned error: %v", err)
+			}
+
+			if got := len(fixture.messages.userMessages); got != 1 {
+				t.Fatalf("recorded user messages = %d, want 1", got)
+			}
+			if state == models.TaskSessionStateCreated {
+				for _, call := range fixture.agent.setExecutionDescriptionCalls {
+					if strings.Contains(call.Prompt, fixture.taskDescription) {
+						t.Fatalf("created attachment-only handoff reintroduced task description: %#v", fixture.agent.setExecutionDescriptionCalls)
+					}
+				}
+			}
+			metadata, ok := fixture.messages.userMessages[0].metadata["attachments"].([]v1.MessageAttachment)
+			if !ok || len(metadata) != 1 || metadata[0].AttachmentID != attachment.AttachmentID {
+				t.Fatalf("recorded attachment metadata = %#v, want attachment-only handoff", fixture.messages.userMessages[0].metadata["attachments"])
+			}
+			if hasHistory, err := fixture.repo.HasUserPromptHistory(context.Background(), fixture.sessionID); err != nil {
+				t.Fatalf("read attachment-only prompt history: %v", err)
+			} else if !hasHistory {
+				t.Fatal("attachment-only handoff did not advance durable prompt history")
+			}
+			persisted, err := fixture.repo.ListMessages(context.Background(), fixture.sessionID)
+			if err != nil {
+				t.Fatalf("list persisted attachment-only handoff: %v", err)
+			}
+			if len(persisted) != 1 || len(persisted[0].Metadata) == 0 {
+				t.Fatalf("persisted attachment-only messages = %#v, want one message with metadata", persisted)
+			}
+			persistedAttachments, ok := persisted[0].Metadata["attachments"].([]interface{})
+			if !ok || len(persistedAttachments) != 1 {
+				t.Fatalf("persisted attachment metadata = %#v, want one attachment", persisted[0].Metadata["attachments"])
+			}
+		})
+	}
+}
+
+func TestWorkflowAutoStartPassthroughDrainsSuppressedHandoff(t *testing.T) {
+	fixture := newInitialPromptDedupFixture(t, true, true)
+	stdinDone := make(chan struct{})
+	fixture.agent.passthroughStdinFunc = func(context.Context, string, string) error {
+		close(stdinDone)
+		return nil
+	}
+	if err := fixture.svc.messageQueue.SetAutoRun(context.Background(), fixture.sessionID, true); err != nil {
+		t.Fatalf("enable queue auto-run: %v", err)
+	}
+	if _, err := fixture.svc.messageQueue.QueueMessage(
+		context.Background(), fixture.sessionID, fixture.taskID, "Finish the handoff", "", "user", false, nil,
+	); err != nil {
+		t.Fatalf("queue handoff: %v", err)
+	}
+
+	fixture.svc.launchAfterOnEnterDispatch(
+		context.Background(), fixture.taskID, fixture.session, fixture.step,
+		fixture.taskDescription, false, true, false,
+	)
+
+	select {
+	case <-stdinDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for passthrough handoff drain")
+	}
+	if got := fixture.agent.passthroughStdinCalls; len(got) != 1 || !strings.Contains(got[0].Data, "Finish the handoff") {
+		t.Fatalf("passthrough writes = %#v, want the queued handoff", got)
+	}
+}
+
 func TestStartSessionForWorkflowStepEmptyPrompt(t *testing.T) {
 	fixture := newInitialPromptDedupFixture(t, true, false)
 	beforeTurns := countSessionTurns(t, fixture.repo, fixture.sessionID)
@@ -159,7 +340,34 @@ type promptHistoryErrorRepo struct {
 	err error
 }
 
+type repositoryBackedMessageCreator struct {
+	*mockMessageCreator
+	repo *sqliterepo.Repository
+}
+
+func (m *repositoryBackedMessageCreator) CreateUserMessage(
+	ctx context.Context,
+	taskID, content, sessionID, turnID string,
+	metadata map[string]interface{},
+) error {
+	if err := m.mockMessageCreator.CreateUserMessage(ctx, taskID, content, sessionID, turnID, metadata); err != nil {
+		return err
+	}
+	return m.repo.CreateMessage(ctx, &models.Message{
+		TaskID:        taskID,
+		TaskSessionID: sessionID,
+		TurnID:        turnID,
+		AuthorType:    models.MessageAuthorUser,
+		Content:       content,
+		Metadata:      metadata,
+	})
+}
+
 func (r promptHistoryErrorRepo) HasUserPromptHistory(context.Context, string) (bool, error) {
+	return false, r.err
+}
+
+func (r promptHistoryErrorRepo) ClaimInitialPromptFallback(context.Context, string) (bool, error) {
 	return false, r.err
 }
 

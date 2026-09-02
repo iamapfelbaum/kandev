@@ -39,11 +39,11 @@ Correct the two canonical MCP names in active-plan context. Add focused coverage
 ## Verification
 
 ```bash
-cd apps && pnpm --filter @kandev/web test -- --run hooks/use-message-handler.test.ts
-cd apps/web && pnpm run typecheck
-cd apps/web && pnpm exec eslint hooks/use-message-handler.ts hooks/use-message-handler.test.ts
-cd apps/web && pnpm run i18n:check
-cd apps/web && pnpm run i18n:ratchet
+(cd apps && pnpm --filter @kandev/web test -- --run hooks/use-message-handler.test.ts)
+(cd apps/web && pnpm run typecheck)
+(cd apps/web && pnpm exec eslint hooks/use-message-handler.ts hooks/use-message-handler.test.ts)
+(cd apps/web && pnpm run i18n:check)
+(cd apps/web && pnpm run i18n:ratchet)
 ```
 
 ## Files likely touched
