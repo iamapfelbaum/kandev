@@ -23,7 +23,7 @@ apps/
 - **Web-only scripts** live in `apps/web/package.json`; run them from `apps/web` (for example `pnpm run i18n:check` or `pnpm run i18n:ratchet`) or use `pnpm --filter @kandev/web ...`, not from `apps/`.
 - **Desktop**: Tauri shell (`cd apps && pnpm --filter @kandev/desktop build|e2e`; Rust tests from `apps/desktop/src-tauri`)
 - **UI**: Shadcn components via `@kandev/ui`
-- **E2E**: Playwright (`cd apps/web && pnpm e2e:raw`). The `containers` project (gated on `KANDEV_E2E_CONTAINERS=1`, formerly `docker`) covers both the Docker executor and the SSH executor — anything that needs a real Docker daemon on the host lives there. See `apps/web/e2e/README.md`.
+- **E2E**: Playwright (`cd apps/web && pnpm e2e:raw`). The `containers` project (gated on `KANDEV_E2E_CONTAINERS=1`, formerly `docker`) covers Docker, SSH, and Kind-backed Kubernetes executor scenarios — anything that needs a real Docker daemon on the host lives there. See `apps/web/e2e/README.md`.
 - **GitHub repo**: `https://github.com/kdlbs/kandev`
 - **Container image**: `ghcr.io/kdlbs/kandev` (GitHub Container Registry)
 
@@ -82,6 +82,8 @@ Static analysis runs in CI and pre-commit. Each subtree has its own thresholds:
 - TypeScript limits: see `apps/web/AGENTS.md` (and `apps/web/eslint.config.mjs`).
 
 When you hit a limit: extract a helper function, custom hook, or sub-component. Prefer composition over growing a single function.
+
+Production comments state the invariant, not the argument for it: no `AC-NN` reference, no "Review round N", no "BLOCKING FINDING", no narration of a bug's history. That context belongs in the spec, the plan, or the PR body — a comment that has to argue the code is correct usually means the code is not constrained enough to be obviously correct.
 
 ### Testing
 
