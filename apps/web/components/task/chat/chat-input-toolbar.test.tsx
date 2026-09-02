@@ -89,7 +89,11 @@ vi.mock("./context-popover", () => ({
 }));
 
 vi.mock("./implement-plan-button", () => ({
-  ImplementPlanButton: () => <button type="button">Implement plan</button>,
+  ImplementPlanButton: ({ presentation = "desktop" }: { presentation?: "desktop" | "mobile" }) => (
+    <button type="button" data-testid="mock-implement-plan-button" data-presentation={presentation}>
+      Implement plan
+    </button>
+  ),
 }));
 
 vi.mock("./reset-context-button", () => ({
@@ -412,6 +416,15 @@ describe("ChatInputToolbar responsive wrapper", () => {
       expect(control.className).not.toContain("min-h-11");
       expect(control.className).not.toContain("min-w-11");
     }
+  });
+
+  it("passes the touch presentation to plan implementation on tablets", () => {
+    responsiveMock.breakpoint = "tablet";
+    renderFullToolbar({ planModeEnabled: true, onImplementPlan: () => {} });
+
+    expect(screen.getByTestId("mock-implement-plan-button").getAttribute("data-presentation")).toBe(
+      "mobile",
+    );
   });
 
   it("routes mobile breakpoints to the compact toolbar without a duplicate sessions control", () => {

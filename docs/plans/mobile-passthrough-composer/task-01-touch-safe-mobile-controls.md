@@ -58,9 +58,9 @@ minimum 44-by-44 CSS-pixel touch target without changing desktop geometry.
 ## Verification
 
 ```bash
-cd apps/web && pnpm exec vitest run components/task/passthrough-toolbar.test.tsx components/task/chat/chat-input-toolbar.test.tsx
-cd apps/web && pnpm run typecheck
-cd apps/web && pnpm run lint
+(cd apps/web && pnpm exec vitest run components/task/passthrough-toolbar.test.tsx components/task/chat/chat-input-toolbar.test.tsx)
+(cd apps/web && pnpm run typecheck)
+(cd apps/web && pnpm run lint)
 ```
 
 ## Results

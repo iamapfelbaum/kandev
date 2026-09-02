@@ -52,10 +52,10 @@ Wave 2:
 ## Verification
 
 ```bash
-cd apps/web && pnpm exec vitest run components/task/passthrough-toolbar.test.tsx components/task/chat/chat-input-toolbar.test.tsx
-cd apps/web && pnpm run typecheck
-cd apps/web && pnpm run lint
-cd apps/web && pnpm e2e:run --project mobile-chrome e2e/tests/cli-mode/mobile-passthrough-composer.spec.ts
+(cd apps/web && pnpm exec vitest run components/task/passthrough-toolbar.test.tsx components/task/chat/chat-input-toolbar.test.tsx)
+(cd apps/web && pnpm run typecheck)
+(cd apps/web && pnpm run lint)
+(cd apps/web && pnpm e2e:run --project mobile-chrome e2e/tests/cli-mode/mobile-passthrough-composer.spec.ts)
 python3 scripts/lint-spec-files.py --all
 ```
 
@@ -63,6 +63,7 @@ Complete the issue's manual smoke matrix on iPhone Safari and Android Chrome.
 Verify composer focus with the software keyboard open, `@` selection, operating
 system file selection, task-switch draft restoration, and explicit send.
 
-Automated coverage is complete. Physical-device smoke remains an explicit
-environment blocker because this workspace has no iPhone Safari or Android
-Chrome device runner.
+Automated coverage and implementation are complete. Physical-device smoke
+remains an explicit environment blocker because this workspace has no iPhone
+Safari or Android Chrome device runner. Issue `#2809` remains open for that
+manual closure gate.

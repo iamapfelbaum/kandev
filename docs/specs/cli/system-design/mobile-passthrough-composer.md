@@ -1,5 +1,5 @@
 ---
-status: draft
+status: current
 system: cli
 requirements:
   - REQ-CLI-MOBILE-PASSTHROUGH-COMPOSER-001
@@ -29,25 +29,26 @@ surface with `100dvh`, safe-area padding, and one flexible terminal region.
 ## Components and responsibilities
 
 - `PassthroughToolbar` owns the vertical terminal, optional composer, comments,
-  and passthrough status-row composition. It applies mobile-only touch geometry
-  to status controls while preserving compact desktop controls.
+  and passthrough status-row composition. It applies touch geometry to mobile
+  and coarse-pointer tablet status controls while preserving compact desktop
+  controls.
 - `PassthroughComposerPanel` configures the shared `ChatInputContainer` for a
   passthrough session. It disables unadvertised agent commands and external
   entity references while retaining context mentions, attachments, plan
   context, and session-scoped draft behavior.
-- `MobileChatInputToolbar` owns the mobile presentation of shared composer
-  controls. Its context, attachment, plan, cancel, and send controls use a
-  mobile presentation with a minimum 44-by-44 CSS-pixel touch target. Desktop
-  toolbar geometry does not change.
+- `MobileChatInputToolbar` owns the mobile and coarse-pointer tablet
+  presentation of shared composer controls. Its context, attachment, plan,
+  cancel, send, and split Implement controls use a touch presentation with a
+  minimum 44-by-44 CSS-pixel target. Desktop toolbar geometry does not change.
 - `PassthroughTerminal` remains the raw PTY surface and the only flexible child
   in the toolbar. On mobile, it retains touch scrolling.
 - The shared suggestion popup remains responsible for visual-viewport
   containment, internal result scrolling, and touch selection.
 
 The current defect comes from fixed `h-6` and `h-7` classes in the passthrough
-status row and shared composer primitives. The mobile layout reuses those
-desktop-sized controls without a touch presentation, which produces measured
-24-to-28 CSS-pixel targets.
+status row and shared composer primitives. The mobile and tablet layouts reused
+those desktop-sized controls without a touch presentation, which produced
+measured 24-to-28 CSS-pixel targets.
 
 ## Data and contracts
 
@@ -82,10 +83,12 @@ composer toolbar by this capability.
 
 ## Responsive behavior
 
-Mobile presentation is selected by the existing responsive breakpoint. The
-terminal stays `min-h-0` and flexible; the composer and status row keep their
-intrinsic height. This prevents the document from becoming a second scroll
-container when the composer opens.
+Touch presentation is selected by the existing responsive breakpoint. The
+mobile and coarse-pointer tablet branches use touch-sized controls; fine-pointer
+desktop branches retain compact controls. The terminal stays `min-h-0` and
+flexible; the composer and status row keep their intrinsic height. This
+prevents the document from becoming a second scroll container when the composer
+opens.
 
 All interactive controls in the mobile composer and passthrough status row use
 at least 44-by-44 CSS-pixel hit areas. Visual glyphs can remain smaller. A

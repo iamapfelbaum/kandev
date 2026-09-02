@@ -57,7 +57,7 @@ the repository has a concrete real-device sign-off checklist.
 ## Verification
 
 ```bash
-cd apps/web && pnpm e2e:run --project mobile-chrome e2e/tests/cli-mode/mobile-passthrough-composer.spec.ts
+(cd apps/web && pnpm e2e:run --project mobile-chrome e2e/tests/cli-mode/mobile-passthrough-composer.spec.ts)
 python3 scripts/lint-spec-files.py --all
 ```
 

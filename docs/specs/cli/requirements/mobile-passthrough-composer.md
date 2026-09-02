@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 system: cli
 created: 2026-09-02
 owners:
@@ -11,10 +11,11 @@ owners:
 ## Overview
 
 CLI passthrough sessions expose an agent terminal and a Kandev composer in the
-same task surface. Phone users must be able to compose and send a structured
-follow-up without losing terminal output, drafts, attachments, or contextual
-references. The CLI system owns this contract because submission must preserve
-the raw PTY delivery semantics of a passthrough session.
+same task surface. Phone users and coarse-pointer tablet users must be able to
+compose and send a structured follow-up without losing terminal output, drafts,
+attachments, or contextual references. The CLI system owns this contract
+because submission must preserve the raw PTY delivery semantics of a
+passthrough session.
 
 ## Terminology
 
@@ -40,12 +41,12 @@ desktop keyboard.
 #### Acceptance criteria
 
 - **AC-CLI-MOBILE-PASSTHROUGH-COMPOSER-001.1:** When a user opens a CLI
-  passthrough session on a phone, the system shall keep the terminal, composer
-  toggle, status controls, and open composer inside the visible application
-  surface without horizontal document overflow.
+  passthrough session on a phone or coarse-pointer tablet, the system shall
+  keep the terminal, composer toggle, status controls, and open composer inside
+  the visible application surface without horizontal document overflow.
 - **AC-CLI-MOBILE-PASSTHROUGH-COMPOSER-001.2:** When an interactive composer or
-  passthrough status control is shown on a phone, its touch target shall be at
-  least 44 CSS pixels high and 44 CSS pixels wide.
+  passthrough status control is shown on a phone or coarse-pointer tablet, its
+  touch target shall be at least 44 CSS pixels high and 44 CSS pixels wide.
 - **AC-CLI-MOBILE-PASSTHROUGH-COMPOSER-001.3:** When the user types content and
   activates explicit send, the system shall create one user message and deliver
   the resolved prompt once through the active passthrough session's configured
