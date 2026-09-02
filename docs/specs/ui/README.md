@@ -11,12 +11,7 @@ owners:
 
 ## Ownership
 
-UI owns reusable presentation and responsive interaction.
-[Tasks](../tasks/README.md), [Agents](../agents/README.md),
-[Plugins](../plugins/README.md), and [Integrations](../integrations/README.md) own
-feature behavior and state.
-
-## Specification map
+UI owns reusable presentation and responsive interaction. Feature systems own their behavior and state.
 
 ### Requirements
 
@@ -129,6 +124,7 @@ feature behavior and state.
 - [Task Workspace Content Search](requirements/task-workspace-content-search.md)
 - [Terminal close feedback](requirements/terminal-close-feedback.md)
 - [Terminal Rendering](requirements/terminal-rendering.md)
+- [Terminal Touch Scrolling](requirements/terminal-touch-scrolling.md)
 - [Thinking Message Preview](requirements/thinking-message-preview.md)
 - [Transcript Auto-scroll Stability](requirements/transcript-auto-scroll.md)
 - [Transcript Navigation Settings](requirements/transcript-navigation-settings.md)
@@ -179,6 +175,7 @@ feature behavior and state.
 - [Command-panel Sidebar Task Reveal](system-design/command-panel-sidebar-task-reveal.md)
 - [Command Panel Task Activity Icons](system-design/command-panel-task-activity-icons.md)
 - [Terminal Rendering](system-design/terminal-rendering.md)
+- [Terminal Touch Scrolling](system-design/terminal-touch-scrolling.md)
 - [Thinking Message Preview](system-design/thinking-message-preview.md)
 - [Task Transcript History Visibility](system-design/task-prompt-transcript-visibility.md)
 - [Transcript Auto-scroll Stability](system-design/transcript-auto-scroll.md)
