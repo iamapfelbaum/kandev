@@ -84,12 +84,18 @@ func (r lifecycleCanvasExecutionResolver) ResolveCanvasExecution(executionID str
 		return nil, errors.New("agent execution is unavailable")
 	}
 	execution, ok := r.manager.GetExecution(executionID)
-	if !ok || execution == nil || execution.GetAgentCtlClient() == nil {
+	if !ok || execution == nil {
 		return nil, errors.New("agent execution is unavailable")
 	}
+	client, release := execution.AcquireAgentCtlClient()
+	if client == nil {
+		release()
+		return nil, errors.New("agent execution is unavailable")
+	}
+	release()
 	return &canvasAgentExecution{
 		TaskID: execution.TaskID, SessionID: execution.SessionID,
-		client: canvasAgentCtlAdapter{client: execution.GetAgentCtlClient()},
+		client: canvasAgentCtlAdapter{acquire: execution.AcquireAgentCtlClient},
 	}, nil
 }
 
@@ -102,35 +108,113 @@ func (r lifecycleCanvasExecutionResolver) ResolveAgentCtl(executionID string) (c
 }
 
 type canvasAgentCtlAdapter struct {
-	client *client.Client
+	client  *client.Client
+	acquire func() (*client.Client, func())
+}
+
+func (a canvasAgentCtlAdapter) acquireClient() (*client.Client, func(), error) {
+	if a.acquire != nil {
+		client, release := a.acquire()
+		if client == nil {
+			release()
+			return nil, func() {}, errors.New("agentctl client is unavailable")
+		}
+		return client, release, nil
+	}
+	if a.client == nil {
+		return nil, func() {}, errors.New("agentctl client is unavailable")
+	}
+	return a.client, func() {}, nil
 }
 
 func (a canvasAgentCtlAdapter) CreateFile(ctx context.Context, path, repo string) (*streams.FileCreateResponse, error) {
-	return a.client.CreateFile(ctx, path, repo)
+	client, release, err := a.acquireClient()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return client.CreateFile(ctx, path, repo)
 }
 
 func (a canvasAgentCtlAdapter) ApplyFileDiff(ctx context.Context, path, diff, originalHash, repo string, desiredContent *string) (*streams.FileUpdateResponse, error) {
-	return a.client.ApplyFileDiff(ctx, path, diff, originalHash, repo, desiredContent)
+	client, release, err := a.acquireClient()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return client.ApplyFileDiff(ctx, path, diff, originalHash, repo, desiredContent)
 }
 
 func (a canvasAgentCtlAdapter) DeleteFile(ctx context.Context, path, repo string) (*streams.FileDeleteResponse, error) {
-	return a.client.DeleteFile(ctx, path, repo)
+	client, release, err := a.acquireClient()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return client.DeleteFile(ctx, path, repo)
 }
 
 func (a canvasAgentCtlAdapter) RenameFile(ctx context.Context, oldPath, newPath, repo string) (*streams.FileRenameResponse, error) {
-	return a.client.RenameFile(ctx, oldPath, newPath, repo)
+	client, release, err := a.acquireClient()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return client.RenameFile(ctx, oldPath, newPath, repo)
 }
 
 func (a canvasAgentCtlAdapter) StreamCanvasSource(ctx context.Context, root string) (io.ReadCloser, error) {
-	return a.client.StreamCanvasSource(ctx, root)
+	client, release, err := a.acquireClient()
+	if err != nil {
+		return nil, err
+	}
+	stream, err := client.StreamCanvasSource(ctx, root)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	if stream == nil {
+		release()
+		return nil, errors.New("agentctl returned an empty source stream")
+	}
+	return &canvasSourceReadCloser{ReadCloser: stream, release: release}, nil
 }
 
 func (a canvasAgentCtlAdapter) CopyFiles(ctx context.Context, repo string, entries []copyfiles.Entry) (canvasCopyFilesResult, error) {
-	response, err := a.client.CopyFiles(ctx, repo, entries)
+	client, release, err := a.acquireClient()
+	if err != nil {
+		return canvasCopyFilesResult{}, err
+	}
+	defer release()
+	response, err := client.CopyFiles(ctx, repo, entries)
 	if response == nil {
 		return canvasCopyFilesResult{}, err
 	}
 	return canvasCopyFilesResult{Warnings: append([]string(nil), response.Warnings...), Present: true}, err
+}
+
+type canvasSourceReadCloser struct {
+	io.ReadCloser
+	release func()
+	once    sync.Once
+}
+
+func (r *canvasSourceReadCloser) releaseClient() {
+	r.once.Do(r.release)
+}
+
+func (r *canvasSourceReadCloser) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	if err != nil {
+		r.releaseClient()
+	}
+	return n, err
+}
+
+func (r *canvasSourceReadCloser) Close() error {
+	err := r.ReadCloser.Close()
+	r.releaseClient()
+	return err
 }
 
 // taskGetterRepo is the minimal interface needed by the scheduler adapter.
@@ -774,6 +858,7 @@ func (a *lifecycleAdapter) PollRemoteStatusForRecords(ctx context.Context, recor
 	lcRecords := make([]lifecycle.RemoteStatusPollRecord, len(records))
 	for i, r := range records {
 		lcRecords[i] = lifecycle.RemoteStatusPollRecord{
+			TaskID:           r.TaskID,
 			SessionID:        r.SessionID,
 			Runtime:          r.Runtime,
 			AgentExecutionID: r.AgentExecutionID,
@@ -850,7 +935,8 @@ func (a *lifecycleAdapter) GetGitLog(ctx context.Context, sessionID, baseCommit 
 	if !ok {
 		return nil, nil // No execution, not an error
 	}
-	agentClient := execution.GetAgentCtlClient()
+	agentClient, releaseClient := execution.AcquireAgentCtlClient()
+	defer releaseClient()
 	if agentClient == nil {
 		return nil, nil
 	}
@@ -863,7 +949,8 @@ func (a *lifecycleAdapter) GetCumulativeDiff(ctx context.Context, sessionID, bas
 	if !ok {
 		return nil, nil // No execution, not an error
 	}
-	agentClient := execution.GetAgentCtlClient()
+	agentClient, releaseClient := execution.AcquireAgentCtlClient()
+	defer releaseClient()
 	if agentClient == nil {
 		return nil, nil
 	}
@@ -879,7 +966,8 @@ func (a *lifecycleAdapter) GetGitStatus(ctx context.Context, sessionID string) (
 	if !ok {
 		return nil, nil // No execution, not an error
 	}
-	agentClient := execution.GetAgentCtlClient()
+	agentClient, releaseClient := execution.AcquireAgentCtlClient()
+	defer releaseClient()
 	if agentClient == nil {
 		return nil, nil
 	}
@@ -892,7 +980,8 @@ func (a *lifecycleAdapter) GetGitStatusFresh(ctx context.Context, sessionID stri
 	if !ok {
 		return nil, nil
 	}
-	agentClient := execution.GetAgentCtlClient()
+	agentClient, releaseClient := execution.AcquireAgentCtlClient()
+	defer releaseClient()
 	if agentClient == nil {
 		return nil, nil
 	}
