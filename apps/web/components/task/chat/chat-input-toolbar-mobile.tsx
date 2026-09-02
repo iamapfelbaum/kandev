@@ -67,7 +67,7 @@ function mobileContextButton(contextCount: number) {
       type="button"
       variant="ghost"
       size="sm"
-      className="h-7 gap-1.5 px-2 cursor-pointer hover:bg-muted/40 relative"
+      className="min-h-11 min-w-11 gap-1.5 px-2 cursor-pointer hover:bg-muted/40 relative"
       data-testid="chat-context-button"
       aria-label={t("task:sessionContext")}
     >
@@ -89,6 +89,7 @@ function MobileDefaultLeftActions(props: MobileToolbarProps) {
           planModeEnabled={props.planModeEnabled}
           planModeAvailable={props.planModeAvailable}
           onPlanModeChange={props.onPlanModeChange}
+          presentation="mobile"
         />
       )}
       {!props.hideAgentControls && (
@@ -119,7 +120,9 @@ function MobileDefaultLeftActions(props: MobileToolbarProps) {
           )}
         </>
       )}
-      {props.onAttachFiles && <AttachFilesButton onClick={props.onAttachFiles} />}
+      {props.onAttachFiles && (
+        <AttachFilesButton onClick={props.onAttachFiles} presentation="mobile" />
+      )}
       <div data-testid="toolbar-item-context">
         <ContextPopover
           open={props.contextPopoverOpen}
@@ -236,6 +239,7 @@ export function MobileChatInputToolbar(props: MobileToolbarProps) {
             onCancel={props.onCancel}
             onSubmit={props.onSubmit}
             submitShortcut={props.submitShortcut}
+            presentation="mobile"
           />
         </div>
       ) : null}

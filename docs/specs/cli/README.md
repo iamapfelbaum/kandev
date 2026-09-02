@@ -28,16 +28,13 @@ and CLI-specific compatibility behavior.
 
 ### Requirements
 
-
-
 - [CLI-Mode Task Parity (Kanban)](requirements/cli-mode-parity.md)
+- [Mobile Passthrough Composer](requirements/mobile-passthrough-composer.md)
 - [Native Kandev CLI](requirements/native-kandev-cli.md)
 
 ### System design
 
-
-
-- None.
+- [Mobile Passthrough Composer](system-design/mobile-passthrough-composer.md)
 
 ## Migration record
 

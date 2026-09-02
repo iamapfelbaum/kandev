@@ -28,6 +28,9 @@ const TID_CONTEXT = "chat-context-button";
 let mockSessionState: string | null = null;
 let mockKeyboardShortcuts: Record<string, { key: string; modifiers?: Record<string, boolean> }> =
   {};
+const responsiveMock = vi.hoisted(() => ({
+  breakpoint: "desktop" as "mobile" | "desktop",
+}));
 let mockPendingByFile: Record<string, import("@/lib/state/slices/comments").DiffComment[]> = {};
 let mockPlanModeEnabled = false;
 let mockImplementPlanHandler: ((fresh: boolean) => void) | undefined;
@@ -105,6 +108,10 @@ vi.mock("@/lib/state/slices/comments/comments-store", () => ({
 
 vi.mock("@/hooks/use-file-editors", () => ({
   useFileEditors: () => ({ openFile: mockOpenFile }),
+}));
+
+vi.mock("@/hooks/use-responsive-breakpoint", () => ({
+  useResponsiveBreakpoint: () => ({ isMobile: responsiveMock.breakpoint === "mobile" }),
 }));
 
 vi.mock("@/lib/ws/connection", () => ({
@@ -277,6 +284,7 @@ async function openComposer() {
 function resetMocks() {
   mockSessionState = null;
   mockKeyboardShortcuts = {};
+  responsiveMock.breakpoint = "desktop";
   mockPendingByFile = {};
   mockPlanModeEnabled = false;
   mockImplementPlanHandler = undefined;
@@ -329,6 +337,43 @@ describe("PassthroughToolbar – default state", () => {
     const row = screen.getByTestId("passthrough-status-row");
     expect(row.className).toContain("flex-wrap");
     expect(row.lastElementChild?.className).toContain("flex-wrap");
+  });
+});
+
+describe("PassthroughToolbar – mobile touch targets", () => {
+  beforeEach(resetMocks);
+  afterEach(cleanup);
+
+  it("sizes status and comment-send controls for touch without changing desktop geometry", async () => {
+    responsiveMock.breakpoint = "mobile";
+    mockSessionState = "IDLE";
+    mockPendingByFile = { [SRC_FILE]: [makeDiffComment("c1")] };
+    mockNextStep = { proceedStepName: "Review", proceed: vi.fn(), isMoving: false };
+    renderToolbar();
+
+    for (const testId of [TID_TOGGLE, TID_TOGGLE_COMMENTS, TID_PROCEED]) {
+      const control = screen.getByTestId(testId);
+      expect(control.className).toContain("min-h-11");
+      expect(control.className).toContain("min-w-11");
+    }
+
+    fireEvent.click(screen.getByTestId(TID_TOGGLE_COMMENTS));
+    await waitFor(() => expect(screen.getByTestId(TID_COMMENTS_PANEL)).toBeTruthy());
+    const sendComments = screen.getByTestId("passthrough-send-comments");
+    expect(sendComments.className).toContain("min-h-11");
+    expect(sendComments.className).toContain("min-w-11");
+
+    cleanup();
+    responsiveMock.breakpoint = "desktop";
+    mockPendingByFile = { [SRC_FILE]: [makeDiffComment("c1")] };
+    mockNextStep = { proceedStepName: "Review", proceed: vi.fn(), isMoving: false };
+    renderToolbar();
+    for (const testId of [TID_TOGGLE, TID_TOGGLE_COMMENTS, TID_PROCEED]) {
+      const control = screen.getByTestId(testId);
+      expect(control.className).toContain("h-6");
+      expect(control.className).not.toContain("min-h-11");
+      expect(control.className).not.toContain("min-w-11");
+    }
   });
 });
 
