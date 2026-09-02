@@ -74,8 +74,8 @@ spec: "../../specs/platform/requirements/lsp-file-intelligence.md"
 - `golangci-lint run ./... --new-from-rev=c51ec0a21b1997fb267289cecf493d941112d7a7
   --timeout=5m` reported `0 issues`.
 - `pnpm vitest run hooks/domains/lsp/use-task-lsp.test.tsx lib/ws/client.test.ts
-  components/task/task-top-bar.test.tsx` passed 34 tests; the complete focused task-LSP suite passed
-  233 tests.
+  components/task/task-top-bar.test.tsx` passed 34 tests; the final complete 28-file LSP and
+  WebSocket-focused suite passed 245 tests.
 - `pnpm run typecheck`, changed-file ESLint, `pnpm run i18n:check`,
   `pnpm run i18n:ratchet`, and the Vite production build passed.
 - Production-build Playwright passed all 10 desktop task-LSP lifecycle scenarios and all three
