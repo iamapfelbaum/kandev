@@ -5,6 +5,7 @@ import type { JiraTicket } from "@/lib/types/jira";
 import type { LinearIssue } from "@/lib/types/linear";
 import type { Repository } from "@/lib/types/http";
 import type { RepositoryBranchesState } from "@/lib/state/slices/workspace/types";
+import { branchOptionValue } from "@/components/task-create-dialog-branch-options";
 import { SHORTCUTS } from "@/lib/keyboard/constants";
 import { useIsUtilityConfigured } from "@/hooks/use-is-utility-configured";
 import { useKeyboardShortcutHandler } from "@/hooks/use-keyboard-shortcut";
@@ -226,7 +227,7 @@ function canUseFreshBranch(fs: DialogFormState, isLocalExecutor: boolean): boole
   return !fs.useRemote && isLocalExecutor && fs.repositories.length === 1;
 }
 
-function hasUnavailableSavedBase(
+export function hasUnavailableSavedBase(
   rows: DialogFormState["repositories"],
   repositoryBranches: RepositoryBranchesState,
 ): boolean {
@@ -234,13 +235,7 @@ function hasUnavailableSavedBase(
     if (!row.repositoryId || !row.baseBranch) return false;
     if (!repositoryBranches.loadedByRepositoryId[row.repositoryId]) return false;
     const branches = repositoryBranches.itemsByRepositoryId[row.repositoryId] ?? [];
-    return !branches.some(
-      (branch) =>
-        branch.name === row.baseBranch ||
-        (branch.type === "remote" &&
-          Boolean(branch.remote) &&
-          branch.remote + "/" + branch.name === row.baseBranch),
-    );
+    return !branches.some((branch) => branchOptionValue(branch) === row.baseBranch);
   });
 }
 

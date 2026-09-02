@@ -26,18 +26,37 @@ export function buildRepoBaseBranchData({
     (repository) => repository.path === row.localPath,
   );
   const defaultBranch = workspaceRepo?.default_branch ?? discoveredRepo?.default_branch ?? "";
+  return {
+    defaultBranch,
+    baseBranchOptions: buildBaseBranchOptions({
+      branches,
+      branchesLoaded,
+      savedBaseBranch,
+      defaultBranch,
+    }),
+  };
+}
+
+export function buildBaseBranchOptions({
+  branches,
+  branchesLoaded,
+  savedBaseBranch,
+  defaultBranch,
+}: {
+  branches: Branch[];
+  branchesLoaded: boolean;
+  savedBaseBranch?: string;
+  defaultBranch: string;
+}): PillOption[] {
   const available = sortBranches(branches).map(branchToOption);
   const savedBaseOption = savedBaseBranch
     ? savedBaseBranchOption(savedBaseBranch, branchesLoaded, available)
     : null;
-  return {
-    defaultBranch,
-    baseBranchOptions: [
-      ...(savedBaseOption ? [savedBaseOption] : []),
-      taskDefaultBranchOption(defaultBranch),
-      ...available,
-    ],
-  };
+  return [
+    ...(savedBaseOption ? [savedBaseOption] : []),
+    taskDefaultBranchOption(defaultBranch),
+    ...available,
+  ];
 }
 
 function savedBaseBranchOption(
@@ -82,12 +101,13 @@ function savedBranchToOption(branch: string): PillOption {
 }
 
 function taskDefaultBranchOption(defaultBranch: string): PillOption {
-  const branchLabel = defaultBranch || t("common:repositoryDefaultBranchOption");
-  const label = t("workspaces:repositorySetsTaskDefault", { branch: branchLabel });
+  const label = defaultBranch
+    ? t("workspaces:repositorySetsTaskDefault", { branch: defaultBranch })
+    : t("workspaces:repositorySetsTaskDefaultNoBranch");
   return {
     value: "",
     label,
-    keywords: [label, branchLabel],
+    keywords: [label, defaultBranch].filter(Boolean),
     group: "branches",
     groupLabel: t("task:branchesGroup"),
   };
