@@ -65,7 +65,7 @@ func TestPrepareExecutionCreateRequest_ReuseRequiredDockerUsesEnvironmentControl
 	store := newInMemorySecretStore()
 	store.store["session-auth"] = &secrets.SecretWithValue{Value: "sibling-session-token"}
 	store.store["container-control"] = &secrets.SecretWithValue{Value: "environment-control-token"}
-	mgr.secretStore = store
+	mgr.runtimeSecretStore = store
 
 	prepared, err := mgr.prepareExecutionCreateRequest(context.Background(), "task-1", &WorkspaceInfo{
 		TaskID:            "task-1",

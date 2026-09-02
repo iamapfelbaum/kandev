@@ -10,6 +10,8 @@ import {
 import type { TaskLspAction, TaskLspPolicy } from "@/lib/types/http-lsp";
 import { getWebSocketClient } from "@/lib/ws/connection";
 
+type TaskLspWebSocketClient = NonNullable<ReturnType<typeof getWebSocketClient>>;
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -75,23 +77,29 @@ function taskControlErrorEpoch(store: ReturnType<typeof useAppStoreApi>, taskId:
   return store.getState().taskLsp.byTaskId[taskId]?.controlErrorEpoch ?? 0;
 }
 
-function useTaskLspSubscription(
+function useTaskLspSubscription(taskId: string | null, client: TaskLspWebSocketClient | null) {
+  useEffect(() => {
+    if (!taskId || !client) return;
+    const subscription = client.subscribeTaskWithReady(taskId);
+    return subscription.unsubscribe;
+  }, [client, taskId]);
+}
+
+function useTaskLspSubscriptionRefresh(
   taskId: string | null,
   connectionStatus: string,
   load: (signal?: AbortSignal) => Promise<void>,
+  client: TaskLspWebSocketClient | null,
 ) {
   useEffect(() => {
-    if (!taskId) return;
-    const client = getWebSocketClient();
-    if (!client) return;
+    if (!taskId || !client || connectionStatus !== "connected") return;
     const controller = new AbortController();
-    const subscription = client.subscribeTaskWithReady(taskId);
-    void subscription.ready.then(() => load(controller.signal)).catch(() => undefined);
-    return () => {
-      controller.abort();
-      subscription.unsubscribe();
-    };
-  }, [connectionStatus, load, taskId]);
+    void client
+      .getTaskSubscriptionReadiness(taskId)
+      .then(() => load(controller.signal))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [client, connectionStatus, load, taskId]);
 }
 
 function useTransientRefresh(taskId: string | null, loaded: boolean, needed: boolean) {
@@ -130,6 +138,7 @@ export function useTaskLsp(taskId: string | null) {
   const task = useAppStore((state) => (taskId ? state.taskLsp.byTaskId[taskId] : undefined));
   const pendingByKey = useAppStore((state) => state.taskLsp.pendingByKey);
   const connectionStatus = useAppStore((state) => state.connection.status);
+  const websocketClient = getWebSocketClient();
   const loaded = isLoadedTaskState(task);
 
   const load = useCallback(
@@ -154,7 +163,8 @@ export function useTaskLsp(taskId: string | null) {
     [store, taskId],
   );
 
-  useTaskLspSubscription(taskId, connectionStatus, load);
+  useTaskLspSubscription(taskId, websocketClient);
+  useTaskLspSubscriptionRefresh(taskId, connectionStatus, load, websocketClient);
 
   useEffect(() => {
     if (!taskId || loaded) return;

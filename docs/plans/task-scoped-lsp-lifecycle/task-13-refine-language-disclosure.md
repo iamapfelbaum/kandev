@@ -5,7 +5,7 @@ status: completed
 wave: 6
 depends_on: ["12-persist-status-visibility"]
 plan: "plan.md"
-spec: "../../specs/lsp-file-intelligence/spec.md"
+spec: "../../specs/platform/requirements/lsp-file-intelligence.md"
 ---
 
 # Task 13: Refine Language Disclosure

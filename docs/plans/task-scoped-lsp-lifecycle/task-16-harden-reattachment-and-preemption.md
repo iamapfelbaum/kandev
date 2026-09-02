@@ -5,7 +5,7 @@ status: completed
 wave: 8
 depends_on: ["15-harden-shared-environment-recovery"]
 plan: "plan.md"
-spec: "../../specs/lsp-file-intelligence/spec.md"
+spec: "../../specs/platform/requirements/lsp-file-intelligence.md"
 ---
 
 # Task 16: Harden Task-Host Reattachment and Terminal Preemption
@@ -206,4 +206,4 @@ Completed on 2026-08-13 after rebasing onto `origin/main`. Verification results:
 - `apps/web/hooks/use-lsp*`
 - `apps/web/hooks/domains/lsp/**`
 - `docs/decisions/2026-08-05-task-scoped-lsp-ownership.md`
-- `docs/specs/lsp-file-intelligence/spec.md`
+- `docs/specs/platform/requirements/lsp-file-intelligence.md`

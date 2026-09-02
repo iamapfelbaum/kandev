@@ -1,7 +1,6 @@
 package lsp
 
 import (
-	"os"
 	"testing"
 	"time"
 )
@@ -64,26 +63,6 @@ func TestCapacityQueueOrderUsesAcceptanceThenTaskLanguage(t *testing.T) {
 		}
 		current = expected
 		currentGeneration = 2
-	}
-}
-
-func TestCapacityEnvironmentParsingPrefersServersAndFallsBackToLegacy(t *testing.T) {
-	t.Setenv("KANDEV_LSP_MAX_SERVERS", "3")
-	t.Setenv("KANDEV_LSP_MAX_CONNECTIONS", "7")
-	if got := NewCapacityFromEnv().Limit(); got != 3 {
-		t.Fatalf("preferred capacity = %d, want 3", got)
-	}
-
-	if err := os.Unsetenv("KANDEV_LSP_MAX_SERVERS"); err != nil {
-		t.Fatal(err)
-	}
-	if got := NewCapacityFromEnv().Limit(); got != 7 {
-		t.Fatalf("legacy capacity = %d, want 7", got)
-	}
-
-	t.Setenv("KANDEV_LSP_MAX_SERVERS", "invalid")
-	if got := NewCapacityFromEnv().Limit(); got != DefaultMaxServers {
-		t.Fatalf("invalid preferred capacity = %d, want default %d", got, DefaultMaxServers)
 	}
 }
 

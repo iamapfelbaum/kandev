@@ -1,5 +1,5 @@
 ---
-spec: docs/specs/lsp-file-intelligence/spec.md
+spec: docs/specs/platform/requirements/lsp-file-intelligence.md
 created: 2026-08-05
 status: completed
 ---
@@ -100,10 +100,12 @@ order only and do not authorize subagents.
 - Add a backend executor-capability resolver keyed by the canonical task environment. Local
   PC/Worktree and Local Docker are true; Remote Docker, SSH, Sprites, missing, and unknown are
   false. Apply it before capacity and `GetOrEnsureExecutionForEnvironment`.
-- Replace the browser-stream limiter with a task/language server limiter. Parse
-  `KANDEV_LSP_MAX_SERVERS`, fall back to deprecated `KANDEV_LSP_MAX_CONNECTIONS` only when unset,
-  hold one slot from process admission through complete reaping, and keep desired overflow in a
-  deterministic queue without starting/resuming task resources.
+- Replace the browser-stream limiter with a task/language server limiter. Consume the canonical
+  typed startup setting `limits.lspMaxServers`, whose preferred environment alias is
+  `KANDEV_LSP_MAX_SERVERS`; accept deprecated `limits.lspMaxConnections` and
+  `KANDEV_LSP_MAX_CONNECTIONS` only as fallbacks. Hold one slot from process admission through
+  complete reaping, and keep desired overflow in a deterministic queue without starting/resuming
+  task resources.
 - Add the task-scoped REST routes and `/lsp/tasks/:taskId/:language/attach` proxy. Remove
   `/lsp/:sessionId` and all public session language ownership. Handlers stamp human origin; request
   bodies cannot supply task/session/runtime IDs, generation, initiator, or reason.
@@ -284,8 +286,8 @@ evidence so tests assert process truth rather than only UI labels.
   progress.
 - Update the Language servers row in `docs/public/feature-status.md` (reference) to remove the
   active-file/session/browser ownership boundary.
-- Update `docs/public/configuration.md` (reference) for `KANDEV_LSP_MAX_SERVERS` and the deprecated
-  fallback variable.
+- Update `docs/public/configuration.md` (reference) for `limits.lspMaxServers`,
+  `KANDEV_LSP_MAX_SERVERS`, and the deprecated YAML/environment fallbacks.
 - Update `apps/backend/AGENTS.md` and `apps/backend/internal/agentctl/AGENTS.md` only after the new
   architecture lands, replacing the now-inaccurate session-owned LSP guidance.
 
@@ -593,6 +595,10 @@ Wave 7 — independent review and CI remediation:
 Wave 8 — exact-head recovery and concurrency remediation:
 
 - [x] [Task 16: Harden task-host reattachment and terminal preemption](task-16-harden-reattachment-and-preemption.md)
+
+Wave 9 — current-main integration audit:
+
+- [x] [Task 17: Rebase and reconcile current-main lifecycle contracts](task-17-rebase-current-main.md)
 
 After all task checks pass, follow the repository commit, push, PR, and PR-fixup workflows. The PR
 must use the repository template, include docs impact and production E2E evidence, and remain in

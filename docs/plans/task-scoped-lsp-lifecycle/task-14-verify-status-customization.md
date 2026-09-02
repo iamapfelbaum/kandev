@@ -5,7 +5,7 @@ status: completed
 wave: 6
 depends_on: ["13-refine-language-disclosure"]
 plan: "plan.md"
-spec: "../../specs/lsp-file-intelligence/spec.md"
+spec: "../../specs/platform/requirements/lsp-file-intelligence.md"
 ---
 
 # Task 14: Verify Status Customization

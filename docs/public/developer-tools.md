@@ -243,7 +243,7 @@ service is healthy and any rotated Local Docker credentials are durably stored. 
 workspace-root refresh use one admission barrier, so a late refresh cannot recreate task-host state
 after stop, archive, or delete begins.
 
-Kandev admits eight real task/language servers by default. Operators can change the startup limit with `KANDEV_LSP_MAX_SERVERS`; browser attachments and editor mounts do not consume slots. Excess task/language starts remain queued without launching or resuming task resources and are promoted after a real server is fully reaped. If a control reports the server unavailable, distinguish a missing task-host binary, an unsupported executor, a queued capacity state, and a server error before retrying.
+Kandev admits eight real task/language servers by default. Operators can change the startup limit with `limits.lspMaxServers` in `config.yaml` or override it with `KANDEV_LSP_MAX_SERVERS`; browser attachments and editor mounts do not consume slots. The old `limits.lspMaxConnections` and `KANDEV_LSP_MAX_CONNECTIONS` names are fallback-only compatibility aliases. Excess task/language starts remain queued without launching or resuming task resources and are promoted after a real server is fully reaped. If a control reports the server unavailable, distinguish a missing task-host binary, an unsupported executor, a queued capacity state, and a server error before retrying.
 
 ## Integrated terminal
 

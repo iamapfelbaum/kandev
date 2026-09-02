@@ -5,7 +5,7 @@ status: completed
 wave: 7
 depends_on: ["14-verify-status-customization"]
 plan: "plan.md"
-spec: "../../specs/lsp-file-intelligence/spec.md"
+spec: "../../specs/platform/requirements/lsp-file-intelligence.md"
 ---
 
 # Task 15: Harden Shared-Environment Recovery

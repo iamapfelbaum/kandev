@@ -1462,7 +1462,9 @@ func deterministicTaskEnvironmentRuntimeSecretID(taskEnvironmentID, metadataKey 
 
 func runtimeSecretKind(metadataKey string) string {
 	switch metadataKey {
-	case MetadataKeyAuthTokenSecret:
+	case MetadataKeyAuthTokenSecret, MetadataKeyContainerControlAuthSecret:
+		// Docker's container-control handle and task-host auth handle point at
+		// the same task-environment-owned token after deterministic migration.
 		return "agentctl-auth"
 	case MetadataKeyBootstrapNonceSecret:
 		return "agentctl-bootstrap"
@@ -1471,10 +1473,10 @@ func runtimeSecretKind(metadataKey string) string {
 	}
 }
 
-// DeleteTaskEnvironmentRuntimeSecrets removes the two deterministic encrypted
-// control credentials owned by a task environment. It is intentionally
-// idempotent so teardown can retry after partial cleanup without retaining a
-// stale secret or deleting any user-visible credential.
+// DeleteTaskEnvironmentRuntimeSecrets removes supplied legacy handles plus the
+// deterministic encrypted control credentials owned by a task environment.
+// It is intentionally idempotent so teardown can retry after partial cleanup
+// without retaining a stale secret or deleting any user-visible credential.
 func (m *Manager) DeleteTaskEnvironmentRuntimeSecrets(
 	ctx context.Context,
 	taskEnvironmentID, authSecretID, bootstrapSecretID string,
@@ -1498,7 +1500,11 @@ func (m *Manager) deleteSupersededRuntimeSecrets(
 	before, after map[string]interface{},
 ) error {
 	var superseded []string
-	for _, key := range []string{MetadataKeyAuthTokenSecret, MetadataKeyBootstrapNonceSecret} {
+	for _, key := range []string{
+		MetadataKeyAuthTokenSecret,
+		MetadataKeyBootstrapNonceSecret,
+		MetadataKeyContainerControlAuthSecret,
+	} {
 		oldID := getMetadataString(before, key)
 		if oldID != "" && oldID != getMetadataString(after, key) {
 			superseded = append(superseded, oldID)
@@ -1582,10 +1588,10 @@ func (m *Manager) revealContainerControlAuthToken(ctx context.Context, metadata 
 		}
 		return m.revealRuntimeSecret(ctx, metadata, MetadataKeyAuthTokenSecret), nil
 	}
-	if m.secretStore == nil {
+	if m.runtimeSecretStore == nil {
 		return "", errors.New("container control-token secret store is unavailable")
 	}
-	token, err := revealGlobalSecret(ctx, m.secretStore, secretID)
+	token, err := revealGlobalSecret(ctx, m.runtimeSecretStore, secretID)
 	if err != nil {
 		return "", fmt.Errorf("reveal container control token: %w", err)
 	}

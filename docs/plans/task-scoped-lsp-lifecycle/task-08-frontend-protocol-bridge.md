@@ -5,7 +5,7 @@ status: completed
 wave: 4
 depends_on: ["07-lifecycle-reconciliation"]
 plan: "plan.md"
-spec: "../../specs/lsp-file-intelligence/spec.md"
+spec: "../../specs/platform/requirements/lsp-file-intelligence.md"
 ---
 
 # Task 08: Frontend Task Protocol Bridge

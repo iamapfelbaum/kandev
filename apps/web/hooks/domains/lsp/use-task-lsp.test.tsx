@@ -11,10 +11,17 @@ const api = vi.hoisted(() => ({
   restart: vi.fn(),
   policy: vi.fn(),
 }));
-const websocket = vi.hoisted(() => ({
-  subscribeTaskWithReady: vi.fn(),
-  unsubscribe: vi.fn(),
-}));
+const websocket = vi.hoisted(() => {
+  const subscribeTaskWithReady = vi.fn();
+  const getTaskSubscriptionReadiness = vi.fn();
+  return {
+    available: true,
+    subscribeTaskWithReady,
+    getTaskSubscriptionReadiness,
+    unsubscribe: vi.fn(),
+    client: { subscribeTaskWithReady, getTaskSubscriptionReadiness },
+  };
+});
 
 vi.mock("@/lib/api/domains/lsp-api", () => ({
   getTaskLsp: api.get,
@@ -25,7 +32,7 @@ vi.mock("@/lib/api/domains/lsp-api", () => ({
 }));
 
 vi.mock("@/lib/ws/connection", () => ({
-  getWebSocketClient: () => ({ subscribeTaskWithReady: websocket.subscribeTaskWithReady }),
+  getWebSocketClient: () => (websocket.available ? websocket.client : null),
 }));
 
 import { useTaskLsp } from "./use-task-lsp";
@@ -68,6 +75,15 @@ function wrapper({ children }: { children: ReactNode }) {
   return createElement(StateProvider, null, children);
 }
 
+function connectedWrapper({ children }: { children: ReactNode }) {
+  return createElement(StateProvider, {
+    children,
+    initialState: {
+      connection: { status: "connected", error: null, issueSeverity: "none" },
+    },
+  });
+}
+
 function cachedConnectedWrapper({ children }: { children: ReactNode }) {
   return createElement(StateProvider, {
     children,
@@ -93,14 +109,21 @@ function subject(taskId: string | null) {
   return { lsp: useTaskLsp(taskId), store: useAppStoreApi() };
 }
 
-beforeEach(() => {
-  for (const mock of Object.values(api)) mock.mockReset();
-  websocket.subscribeTaskWithReady.mockReset();
-  websocket.unsubscribe.mockReset();
+function mockTaskSubscriptionReady(ready: Promise<void>) {
   websocket.subscribeTaskWithReady.mockReturnValue({
-    ready: new Promise<void>(() => undefined),
+    ready,
     unsubscribe: websocket.unsubscribe,
   });
+  websocket.getTaskSubscriptionReadiness.mockReturnValue(ready);
+}
+
+beforeEach(() => {
+  websocket.available = true;
+  for (const mock of Object.values(api)) mock.mockReset();
+  websocket.subscribeTaskWithReady.mockReset();
+  websocket.getTaskSubscriptionReadiness.mockReset();
+  websocket.unsubscribe.mockReset();
+  mockTaskSubscriptionReady(new Promise<void>(() => undefined));
   api.get.mockResolvedValue(snapshot());
 });
 
@@ -131,17 +154,41 @@ describe("useTaskLsp", () => {
 });
 
 describe("useTaskLsp reconnection", () => {
+  it("acquires its lease when the shared WebSocket client becomes available", async () => {
+    websocket.available = false;
+    const view = renderHook(() => subject("task-1"), { wrapper });
+    await waitFor(() => expect(view.result.current.lsp.loaded).toBe(true));
+    expect(websocket.subscribeTaskWithReady).not.toHaveBeenCalled();
+
+    websocket.available = true;
+    act(() => view.result.current.store.getState().setConnectionStatus("connected"));
+
+    await waitFor(() => expect(websocket.subscribeTaskWithReady).toHaveBeenCalledOnce());
+  });
+
+  it("keeps one task subscription lease across transport reconnects", async () => {
+    const view = renderHook(() => subject("task-1"), { wrapper: cachedConnectedWrapper });
+    await waitFor(() => expect(websocket.subscribeTaskWithReady).toHaveBeenCalledOnce());
+
+    act(() => view.result.current.store.getState().setConnectionStatus("disconnected"));
+    act(() => view.result.current.store.getState().setConnectionStatus("connected"));
+
+    expect(websocket.subscribeTaskWithReady).toHaveBeenCalledOnce();
+    expect(websocket.unsubscribe).not.toHaveBeenCalled();
+    view.unmount();
+    expect(websocket.unsubscribe).toHaveBeenCalledOnce();
+  });
+
   it("refreshes authoritative state only after task subscription acknowledgement", async () => {
     let acknowledge!: () => void;
-    websocket.subscribeTaskWithReady.mockReturnValue({
-      ready: new Promise<void>((resolve) => {
+    mockTaskSubscriptionReady(
+      new Promise<void>((resolve) => {
         acknowledge = resolve;
       }),
-      unsubscribe: websocket.unsubscribe,
-    });
+    );
     let serverSnapshot = snapshot(language(4, "ready"));
     api.get.mockImplementation(async () => serverSnapshot);
-    const view = renderHook(() => subject("task-1"), { wrapper });
+    const view = renderHook(() => subject("task-1"), { wrapper: connectedWrapper });
     await waitFor(() => expect(view.result.current.lsp.byLanguage.kotlin?.phase).toBe("ready"));
     expect(api.get).toHaveBeenCalledTimes(1);
 
@@ -189,10 +236,7 @@ describe("useTaskLsp reconnection", () => {
     const callsBeforeReconnect = api.get.mock.calls.length;
 
     act(() => view.result.current.store.getState().setConnectionStatus("disconnected"));
-    websocket.subscribeTaskWithReady.mockReturnValue({
-      ready: Promise.resolve(),
-      unsubscribe: websocket.unsubscribe,
-    });
+    mockTaskSubscriptionReady(Promise.resolve());
     act(() => view.result.current.store.getState().setConnectionStatus("connected"));
 
     await waitFor(() => expect(view.result.current.lsp.loaded).toBe(true));
@@ -209,10 +253,7 @@ describe("useTaskLsp subscription hydration", () => {
 
     act(() => view.result.current.store.getState().setConnectionStatus("disconnected"));
     serverSnapshot = snapshot(language(5, "off"));
-    websocket.subscribeTaskWithReady.mockReturnValue({
-      ready: Promise.resolve(),
-      unsubscribe: websocket.unsubscribe,
-    });
+    mockTaskSubscriptionReady(Promise.resolve());
     act(() => view.result.current.store.getState().setConnectionStatus("connected"));
 
     await waitFor(() => expect(view.result.current.lsp.byLanguage.kotlin?.phase).toBe("off"));
@@ -220,10 +261,7 @@ describe("useTaskLsp subscription hydration", () => {
   });
 
   it("refreshes cached stable state when a connected subscription is established", async () => {
-    websocket.subscribeTaskWithReady.mockReturnValue({
-      ready: Promise.resolve(),
-      unsubscribe: websocket.unsubscribe,
-    });
+    mockTaskSubscriptionReady(Promise.resolve());
     api.get.mockResolvedValue(snapshot(language(5, "off")));
     const view = renderHook(() => subject("task-1"), { wrapper: cachedConnectedWrapper });
 
@@ -244,10 +282,7 @@ describe("useTaskLsp subscription hydration", () => {
       }),
     );
 
-    websocket.subscribeTaskWithReady.mockReturnValue({
-      ready: Promise.resolve(),
-      unsubscribe: websocket.unsubscribe,
-    });
+    mockTaskSubscriptionReady(Promise.resolve());
     act(() => view.result.current.store.getState().setConnectionStatus("connected"));
     await waitFor(() => expect(api.get.mock.calls.length).toBeGreaterThan(callsBeforeReconnect));
     act(() => view.result.current.store.getState().mergeTaskLspLanguage(language(6, "error")));

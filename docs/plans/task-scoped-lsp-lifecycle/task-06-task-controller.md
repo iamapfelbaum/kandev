@@ -5,7 +5,7 @@ status: completed
 wave: 3
 depends_on: ["02-state-contracts", "04-attachment-hub", "05-language-discovery"]
 plan: "plan.md"
-spec: "../../specs/lsp-file-intelligence/spec.md"
+spec: "../../specs/platform/requirements/lsp-file-intelligence.md"
 ---
 
 # Task 06: Authorized Task Controller
@@ -92,9 +92,10 @@ Completed 2026-08-05.
   settings, environment, capacity, execution, or task-host access; synchronized fakes cover every
   exported operation and prove hidden tasks stop at authorization.
 - Added a fail-closed executor resolver and a process-capacity controller keyed by
-  `(task_id, language)`. It parses `KANDEV_LSP_MAX_SERVERS`, uses the legacy connections variable
-  only when the new variable is absent, queues by accepted time/task/language, and never counts or
-  releases browser attachments. Unsupported and queued starts do not ensure task resources.
+  `(task_id, language)`. Current startup wiring consumes typed `limits.lspMaxServers`, with
+  `KANDEV_LSP_MAX_SERVERS` preferred over the legacy YAML/environment connection aliases, queues by
+  accepted time/task/language, and never counts or releases browser attachments. Unsupported and
+  queued starts do not ensure task resources.
 - Added per-key FIFO command serialization with duplicate in-flight coalescing and detached
   accepted work. Explicit Start is idempotent while already desired/live; Stop persists Disabled;
   Restart preserves policy and allocates exactly one monotonic replacement generation.

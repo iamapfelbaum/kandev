@@ -9,6 +9,7 @@ import (
 
 	agentctllsp "github.com/kandev/kandev/internal/agentctl/server/lsp"
 	"github.com/kandev/kandev/internal/auth/authn"
+	"github.com/kandev/kandev/internal/common/config"
 	"github.com/kandev/kandev/internal/common/logger"
 	"github.com/kandev/kandev/internal/events"
 	"github.com/kandev/kandev/internal/events/bus"
@@ -181,13 +182,14 @@ func (p taskLSPRuntimeProvider) DiscoverTaskLanguages(
 }
 
 func newTaskLSPController(
+	cfg *config.Config,
 	tasks *taskservice.Service,
 	store *sqliterepo.Repository,
 	users *userservice.Service,
 	taskHosts taskLSPTaskHostRuntime,
 	eventBus bus.EventBus,
 ) *tasklsp.Controller {
-	if tasks == nil || store == nil || users == nil || taskHosts == nil {
+	if cfg == nil || tasks == nil || store == nil || users == nil || taskHosts == nil {
 		return nil
 	}
 	return tasklsp.NewController(tasklsp.ControllerConfig{
@@ -196,7 +198,7 @@ func newTaskLSPController(
 			taskHosts: taskHosts,
 			tasks:     taskLSPWorkspaceAdapter{tasks: tasks},
 		},
-		Capacity:  tasklsp.NewCapacityFromEnv(),
+		Capacity:  tasklsp.NewCapacity(cfg.Limits.LSPMaxServers),
 		Publisher: taskLSPStatePublisher{events: eventBus},
 	})
 }
@@ -217,9 +219,6 @@ func configureTaskLSP(
 		defer cancel()
 		return controller.Close(closeCtx)
 	})
-	if err := controller.StartReconciler(ctx); err != nil && ctx.Err() == nil {
-		log.Warn("Task LSP startup reconciliation completed with errors", zap.Error(err))
-	}
 	orchestratorService.SetOnTaskEnvironmentReady(func(readyCtx context.Context, taskID string) {
 		if err := controller.ReconcileTask(readyCtx, taskID); err != nil && readyCtx.Err() == nil {
 			log.Warn("Task LSP environment-ready reconciliation failed",
@@ -227,6 +226,17 @@ func configureTaskLSP(
 		}
 	})
 	subscribeTaskLSPSettings(controller, eventBus, log, addCleanup)
+}
+
+func startTaskLSPReconciler(ctx context.Context, controller *tasklsp.Controller, log *logger.Logger) {
+	if controller == nil {
+		return
+	}
+	if err := controller.StartReconciler(ctx); err != nil && ctx.Err() == nil {
+		// Durable inventory failure is retained by the controller and returned by
+		// task-LSP controls. Other backend routes remain available after startup.
+		log.Warn("Task LSP startup reconciliation completed with errors", zap.Error(err))
+	}
 }
 
 func subscribeTaskLSPSettings(

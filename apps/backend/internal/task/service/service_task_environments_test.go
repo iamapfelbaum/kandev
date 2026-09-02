@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/kandev/kandev/internal/common/logger"
@@ -128,8 +129,15 @@ func (s *stubSharedEnvironmentSessions) HasLiveTaskSessionsByTaskEnvironmentExcl
 }
 
 type stubRuntimeSecretDeleter struct {
-	calls []string
-	err   error
+	calls    []string
+	requests []runtimeSecretDeleteRequest
+	err      error
+}
+
+type runtimeSecretDeleteRequest struct {
+	environmentID     string
+	authSecretID      string
+	bootstrapSecretID string
 }
 
 type stubTaskEnvironmentResetGuard struct {
@@ -142,9 +150,12 @@ func (g stubTaskEnvironmentResetGuard) ValidateTaskEnvironmentReset(context.Cont
 
 func (s *stubRuntimeSecretDeleter) DeleteTaskEnvironmentRuntimeSecrets(
 	_ context.Context,
-	environmentID, _, _ string,
+	environmentID, authSecretID, bootstrapSecretID string,
 ) error {
 	s.calls = append(s.calls, environmentID)
+	s.requests = append(s.requests, runtimeSecretDeleteRequest{
+		environmentID: environmentID, authSecretID: authSecretID, bootstrapSecretID: bootstrapSecretID,
+	})
 	return s.err
 }
 
@@ -297,6 +308,31 @@ func TestResetTaskEnvironmentDeletesRuntimeSecretsBeforeEnvironmentRow(t *testin
 	}
 	if !repo.deleted {
 		t.Fatal("environment row was not deleted after runtime secrets")
+	}
+}
+
+func TestResetTaskEnvironmentDeletesContainerAndTaskHostRuntimeSecrets(t *testing.T) {
+	repo := &stubEnvRepo{env: &models.TaskEnvironment{
+		ID: "env-1", TaskID: "task-1", ExecutorType: string(models.ExecutorTypeLocalDocker),
+		AgentctlAuthSecretID:              "task-host-auth",
+		AgentctlBootstrapSecretID:         "task-host-bootstrap",
+		ContainerControlAuthTokenSecretID: "container-control",
+		ContainerBootstrapNonceSecretID:   "container-bootstrap",
+	}}
+	deleter := &stubRuntimeSecretDeleter{}
+	svc := newResetTestService(t, repo)
+	svc.SetSessionRunningChecker(&stubRunningChecker{})
+	svc.SetTaskEnvironmentRuntimeSecretDeleter(deleter)
+
+	if err := svc.ResetTaskEnvironment(context.Background(), "task-1", ResetOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	want := []runtimeSecretDeleteRequest{
+		{environmentID: "env-1", authSecretID: "task-host-auth", bootstrapSecretID: "task-host-bootstrap"},
+		{environmentID: "env-1", authSecretID: "container-control", bootstrapSecretID: "container-bootstrap"},
+	}
+	if !reflect.DeepEqual(deleter.requests, want) {
+		t.Fatalf("runtime secret cleanup requests = %#v, want %#v", deleter.requests, want)
 	}
 }
 

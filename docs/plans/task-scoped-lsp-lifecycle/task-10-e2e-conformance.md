@@ -5,7 +5,7 @@ status: completed
 wave: 5
 depends_on: ["09-responsive-control-surface"]
 plan: "plan.md"
-spec: "../../specs/lsp-file-intelligence/spec.md"
+spec: "../../specs/platform/requirements/lsp-file-intelligence.md"
 ---
 
 # Task 10: LSP E2E Conformance

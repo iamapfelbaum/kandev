@@ -1,10 +1,7 @@
 package lsp
 
 import (
-	"os"
 	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -43,18 +40,6 @@ func NewCapacity(limit int) *Capacity {
 		queued: make(map[TaskLanguageKey]QueueEntry),
 		epoch:  time.Now().UTC().Format("20060102T150405.000000000Z"),
 	}
-}
-
-func NewCapacityFromEnv() *Capacity {
-	value, present := os.LookupEnv("KANDEV_LSP_MAX_SERVERS")
-	if !present {
-		value = os.Getenv("KANDEV_LSP_MAX_CONNECTIONS")
-	}
-	limit, err := strconv.Atoi(strings.TrimSpace(value))
-	if err != nil || limit <= 0 {
-		limit = DefaultMaxServers
-	}
-	return NewCapacity(limit)
 }
 
 // Admit reserves one server slot, or places the accepted command in the

@@ -279,6 +279,9 @@ func TestPersistRuntimeSecrets(t *testing.T) {
 	if !ok || controlSecretID == "" {
 		t.Fatalf("expected container control secret ID, got %v", rawControl)
 	}
+	if controlSecretID != authSecretID {
+		t.Fatalf("container control secret = %q, want environment auth owner %q", controlSecretID, authSecretID)
+	}
 
 	if got := m.revealRuntimeSecret(context.Background(), execution.MetadataSnapshot(), MetadataKeyAuthTokenSecret); got != "agentctl-token" {
 		t.Fatalf("revealed auth token = %q, want agentctl-token", got)
@@ -305,7 +308,7 @@ func TestRevealContainerControlAuthToken(t *testing.T) {
 	log, _ := logger.NewLogger(logger.LoggingConfig{Level: "error", Format: "json"})
 	store := newInMemorySecretStore()
 	store.store["session-auth"] = &secrets.SecretWithValue{Value: "legacy-session-token"}
-	m := &Manager{logger: log, secretStore: store}
+	m := &Manager{logger: log, runtimeSecretStore: store}
 
 	t.Run("uses the session token only when the environment control handle is absent", func(t *testing.T) {
 		got, err := m.revealContainerControlAuthToken(context.Background(), map[string]interface{}{
@@ -340,7 +343,7 @@ func TestResolveLaunchAuthToken(t *testing.T) {
 	t.Run("ssh with a session auth secret returns that token", func(t *testing.T) {
 		store := newInMemorySecretStore()
 		store.store["session-auth"] = &secrets.SecretWithValue{Value: "the-ssh-token"}
-		m := &Manager{logger: log, secretStore: store}
+		m := &Manager{logger: log, runtimeSecretStore: store}
 
 		req := &LaunchRequest{ExecutorType: string(models.ExecutorTypeSSH)}
 		metadata := map[string]interface{}{MetadataKeyAuthTokenSecret: "session-auth"}
@@ -359,7 +362,7 @@ func TestResolveLaunchAuthToken(t *testing.T) {
 		revealErr := errors.New("secret backend unavailable")
 		store.revealErr = revealErr
 		store.store["session-auth"] = &secrets.SecretWithValue{Value: "the-ssh-token"}
-		m := &Manager{logger: log, secretStore: store}
+		m := &Manager{logger: log, runtimeSecretStore: store}
 
 		req := &LaunchRequest{ExecutorType: string(models.ExecutorTypeSSH)}
 		metadata := map[string]interface{}{MetadataKeyAuthTokenSecret: "session-auth"}
@@ -375,7 +378,7 @@ func TestResolveLaunchAuthToken(t *testing.T) {
 
 	t.Run("ssh with no secret anywhere returns empty and resume still rejects it", func(t *testing.T) {
 		store := newInMemorySecretStore()
-		m := &Manager{logger: log, secretStore: store}
+		m := &Manager{logger: log, runtimeSecretStore: store}
 
 		req := &LaunchRequest{ExecutorType: string(models.ExecutorTypeSSH)}
 
@@ -394,7 +397,7 @@ func TestResolveLaunchAuthToken(t *testing.T) {
 	t.Run("docker with workspace reuse still prefers the container control token", func(t *testing.T) {
 		store := newInMemorySecretStore()
 		store.store["control-secret"] = &secrets.SecretWithValue{Value: "environment-control-token"}
-		m := &Manager{logger: log, secretStore: store}
+		m := &Manager{logger: log, runtimeSecretStore: store}
 
 		req := &LaunchRequest{ExecutorType: string(models.ExecutorTypeLocalDocker), WorkspaceReuseRequired: true}
 		metadata := map[string]interface{}{MetadataKeyContainerControlAuthSecret: "control-secret"}
@@ -411,7 +414,7 @@ func TestResolveLaunchAuthToken(t *testing.T) {
 	t.Run("docker with workspace reuse falls back to the session token when no control handle exists", func(t *testing.T) {
 		store := newInMemorySecretStore()
 		store.store["session-auth"] = &secrets.SecretWithValue{Value: "legacy-session-token"}
-		m := &Manager{logger: log, secretStore: store}
+		m := &Manager{logger: log, runtimeSecretStore: store}
 
 		req := &LaunchRequest{ExecutorType: string(models.ExecutorTypeRemoteDocker), WorkspaceReuseRequired: true}
 		metadata := map[string]interface{}{MetadataKeyAuthTokenSecret: "session-auth"}
@@ -428,7 +431,7 @@ func TestResolveLaunchAuthToken(t *testing.T) {
 	t.Run("docker without workspace reuse returns empty when no control handle exists", func(t *testing.T) {
 		store := newInMemorySecretStore()
 		store.store["session-auth"] = &secrets.SecretWithValue{Value: "legacy-session-token"}
-		m := &Manager{logger: log, secretStore: store}
+		m := &Manager{logger: log, runtimeSecretStore: store}
 
 		req := &LaunchRequest{ExecutorType: string(models.ExecutorTypeLocalDocker), WorkspaceReuseRequired: false}
 		metadata := map[string]interface{}{MetadataKeyAuthTokenSecret: "session-auth"}
@@ -479,18 +482,23 @@ func TestPersistDockerRuntimeSecretsDeletesSupersededLegacyIDs(t *testing.T) {
 	manager := &Manager{
 		logger: log, runtimeSecretStore: store, taskEnvironmentRuntimeSecretWriter: writer,
 	}
-	for id, value := range map[string]string{"legacy-auth-id": "old-auth", "legacy-nonce-id": "old-nonce"} {
+	for id, value := range map[string]string{
+		"legacy-auth-id": "old-auth", "legacy-nonce-id": "old-nonce",
+		"legacy-container-control-id": "old-container-control",
+	} {
 		store.store[id] = &secrets.SecretWithValue{Secret: secrets.Secret{ID: id}, Value: value}
 	}
 	execution := &AgentExecution{
 		ID: "exec-docker-1", RuntimeName: agentruntime.RuntimeDocker, TaskEnvironmentID: "env-1",
 		metadata: map[string]interface{}{
-			MetadataKeyAuthTokenSecret:      "legacy-auth-id",
-			MetadataKeyBootstrapNonceSecret: "legacy-nonce-id",
+			MetadataKeyAuthTokenSecret:            "legacy-auth-id",
+			MetadataKeyBootstrapNonceSecret:       "legacy-nonce-id",
+			MetadataKeyContainerControlAuthSecret: "legacy-container-control-id",
 		},
 	}
 	if err := manager.persistRuntimeSecrets(context.Background(), &ExecutorInstance{
-		InstanceID: execution.ID, AuthToken: "new-auth", BootstrapNonce: "new-nonce",
+		InstanceID: execution.ID, ContainerID: "container-1",
+		AuthToken: "new-auth", BootstrapNonce: "new-nonce",
 	}, execution); err != nil {
 		t.Fatal(err)
 	}
@@ -502,6 +510,9 @@ func TestPersistDockerRuntimeSecretsDeletesSupersededLegacyIDs(t *testing.T) {
 	}
 	if _, exists := store.store["legacy-nonce-id"]; exists {
 		t.Fatal("legacy nonce secret survived migration")
+	}
+	if _, exists := store.store["legacy-container-control-id"]; exists {
+		t.Fatal("legacy container control secret survived migration")
 	}
 }
 

@@ -5,7 +5,7 @@ status: done
 wave: 2
 depends_on: ["02-state-contracts"]
 plan: "plan.md"
-spec: "../../specs/lsp-file-intelligence/spec.md"
+spec: "../../specs/platform/requirements/lsp-file-intelligence.md"
 ---
 
 # Task 03: Task-Host Runtime Supervisor

@@ -250,6 +250,32 @@ describe("task subscription readiness", () => {
     initial.unsubscribe();
     reconnected.unsubscribe();
   });
+
+  it("exposes reconnect readiness without acquiring another task lease", async () => {
+    vi.useFakeTimers();
+    const { client, socket } = connectClient({ enabled: true, initialDelay: 0, maxAttempts: 1 });
+    const lease = client.subscribeTaskWithReady("task-1");
+    acknowledge(socket, taskSubscribeRequest(socket));
+    await expect(lease.ready).resolves.toBeUndefined();
+
+    socket.close();
+    vi.advanceTimersByTime(0);
+    const reconnectedSocket = FakeWebSocket.latest();
+    reconnectedSocket.open();
+
+    const readiness = client.getTaskSubscriptionReadiness("task-1");
+    const reconnectRequests = reconnectedSocket.sent.filter(
+      (message) => message.action === "task.subscribe",
+    );
+    expect(reconnectRequests).toHaveLength(1);
+    acknowledge(reconnectedSocket, reconnectRequests[0]);
+    await expect(readiness).resolves.toBeUndefined();
+
+    lease.unsubscribe();
+    expect(
+      reconnectedSocket.sent.filter((message) => message.action === "task.unsubscribe"),
+    ).toHaveLength(1);
+  });
 });
 
 describe("session subscription reconnect recovery", () => {

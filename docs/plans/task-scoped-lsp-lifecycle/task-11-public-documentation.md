@@ -5,7 +5,7 @@ status: completed
 wave: 5
 depends_on: ["10-e2e-conformance"]
 plan: "plan.md"
-spec: "../../specs/lsp-file-intelligence/spec.md"
+spec: "../../specs/platform/requirements/lsp-file-intelligence.md"
 ---
 
 # Task 11: Public LSP Documentation
@@ -15,8 +15,9 @@ spec: "../../specs/lsp-file-intelligence/spec.md"
 - Developer Tools explains task-scoped policy/control, aggregate and fallback surfaces, mobile value,
   discovery, persistence/recovery, Restart impact, progress honesty, supported executors, and trust
   boundaries without retaining browser/session/idle ownership claims.
-- Feature Status and Configuration accurately describe the shipped boundary and
-  `KANDEV_LSP_MAX_SERVERS`, including the deprecated connection-variable fallback.
+- Feature Status and Configuration accurately describe the shipped boundary,
+  `limits.lspMaxServers`, and `KANDEV_LSP_MAX_SERVERS`, including deprecated YAML/environment
+  connection-name fallbacks.
 - Scoped AGENTS guidance matches the implemented backend/task-host ownership, the spec/index becomes
   `shipped`, all plan/task results are synchronized, and public-doc/link/diff validation is clean.
 
@@ -48,7 +49,7 @@ current product and guidance must not.
 - `docs/public/developer-tools.md`
 - `docs/public/feature-status.md`
 - `docs/public/configuration.md`
-- `docs/specs/lsp-file-intelligence/spec.md`
+- `docs/specs/platform/requirements/lsp-file-intelligence.md`
 - `docs/specs/INDEX.md`
 - `docs/plans/task-scoped-lsp-lifecycle/plan.md`
 - `docs/plans/task-scoped-lsp-lifecycle/task-*.md`
@@ -81,9 +82,9 @@ Completed 2026-08-05.
 - Updated Developer Tools as the task-scoped LSP how-to: policy, Start/Stop/Restart, aggregate and
   fallback surfaces, phone/tablet composition, bounded discovery, reconnect/recovery, task cleanup,
   executor support, capacity, progress honesty, and binary trust boundaries.
-- Updated Configuration and Feature Status as references for `KANDEV_LSP_MAX_SERVERS`, its
-  deprecated fallback, and the shipped task/language ownership model. Updated the WebSocket route
-  reference and public coverage evidence.
+- Updated Configuration and Feature Status as references for `limits.lspMaxServers`,
+  `KANDEV_LSP_MAX_SERVERS`, their deprecated fallbacks, and the shipped task/language ownership
+  model. Updated the WebSocket route reference and public coverage evidence.
 - Updated backend and agentctl scoped AGENTS guidance for the dedicated task-host execution and
   instance-owned language manager. No web AGENTS change was needed; its store/UI conventions
   remain accurate.

@@ -2378,6 +2378,7 @@ func (s *Service) ArchiveTask(ctx context.Context, id string) error {
 		s.runAsyncTaskCleanup(
 			id, commit.inventory.sessions, commit.inventory.worktrees,
 			commit.inventory.stopTargets, commit.envCleanup,
+			false,
 			"task archived", "failed to stop session on task archive", "task archive cleanup completed")
 	}
 

@@ -61,6 +61,7 @@ export type TaskLspViewOptions = {
   forceVisibleLanguage?: string | null;
 };
 
+// i18n-exempt: programming language names are proper names and are not translated.
 const LABELS: Record<string, string> = {
   go: "Go",
   kotlin: "Kotlin",

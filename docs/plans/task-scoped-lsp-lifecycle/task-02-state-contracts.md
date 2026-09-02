@@ -5,7 +5,7 @@ status: done
 wave: 2
 depends_on: ["01-acceptance-harness"]
 plan: "plan.md"
-spec: "../../specs/lsp-file-intelligence/spec.md"
+spec: "../../specs/platform/requirements/lsp-file-intelligence.md"
 ---
 
 # Task 02: Task Language State Contract

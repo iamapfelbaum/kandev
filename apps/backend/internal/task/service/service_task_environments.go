@@ -446,17 +446,27 @@ func (s *Service) deleteTaskEnvironmentRuntimeSecrets(ctx context.Context, env *
 		return nil
 	}
 	needsCleanup := env.ExecutorType == string(models.ExecutorTypeLocalDocker) ||
-		env.AgentctlAuthSecretID != "" || env.AgentctlBootstrapSecretID != ""
+		env.AgentctlAuthSecretID != "" || env.AgentctlBootstrapSecretID != "" ||
+		env.ContainerControlAuthTokenSecretID != "" || env.ContainerBootstrapNonceSecretID != ""
 	if !needsCleanup {
 		return nil
 	}
 	if s.runtimeSecretDeleter == nil {
 		return fmt.Errorf("runtime secret deleter not configured; preserve task environment %s", env.ID)
 	}
-	if err := s.runtimeSecretDeleter.DeleteTaskEnvironmentRuntimeSecrets(
-		ctx, env.ID, env.AgentctlAuthSecretID, env.AgentctlBootstrapSecretID,
-	); err != nil {
-		return fmt.Errorf("delete task environment runtime secrets: %w", err)
+	secretPairs := [][2]string{{env.AgentctlAuthSecretID, env.AgentctlBootstrapSecretID}}
+	containerPair := [2]string{env.ContainerControlAuthTokenSecretID, env.ContainerBootstrapNonceSecretID}
+	if containerPair != [2]string{} && containerPair != secretPairs[0] {
+		secretPairs = append(secretPairs, containerPair)
+	}
+	var cleanupErr error
+	for _, pair := range secretPairs {
+		cleanupErr = errors.Join(cleanupErr, s.runtimeSecretDeleter.DeleteTaskEnvironmentRuntimeSecrets(
+			ctx, env.ID, pair[0], pair[1],
+		))
+	}
+	if cleanupErr != nil {
+		return fmt.Errorf("delete task environment runtime secrets: %w", cleanupErr)
 	}
 	return nil
 }

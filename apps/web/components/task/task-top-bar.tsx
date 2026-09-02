@@ -84,6 +84,7 @@ const TaskTopBar = memo(function TaskTopBar({
   return (
     <PageTopbar
       testId="task-topbar"
+      className="[@media(pointer:coarse)]:h-12"
       // Same fallback the rename control renders, so the crumb's accessible
       // name and the measured width never diverge from what is shown.
       title={taskTitle ?? t("task:taskDetails")}

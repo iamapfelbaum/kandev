@@ -5,7 +5,7 @@ status: completed
 wave: 4
 depends_on: ["08-frontend-protocol-bridge"]
 plan: "plan.md"
-spec: "../../specs/lsp-file-intelligence/spec.md"
+spec: "../../specs/platform/requirements/lsp-file-intelligence.md"
 ---
 
 # Task 09: Responsive Task Control Surface

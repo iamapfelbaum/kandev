@@ -1183,9 +1183,11 @@ func TestCascadeDeleteCleanupPersistsLegacyRuntimeSecretReferences(t *testing.T)
 	seedCleanupTaskAndSession(t, repo, taskID, "session-cascade-secret-cleanup")
 	if err := repo.CreateTaskEnvironment(ctx, &models.TaskEnvironment{
 		ID: "env-cascade-secret-cleanup", TaskID: taskID,
-		ExecutorType:              string(models.ExecutorTypeLocal),
-		AgentctlAuthSecretID:      "legacy-auth-secret-id",
-		AgentctlBootstrapSecretID: "legacy-bootstrap-secret-id",
+		ExecutorType:                      string(models.ExecutorTypeLocalDocker),
+		AgentctlAuthSecretID:              "legacy-auth-secret-id",
+		AgentctlBootstrapSecretID:         "legacy-bootstrap-secret-id",
+		ContainerControlAuthTokenSecretID: "container-control-secret-id",
+		ContainerBootstrapNonceSecretID:   "container-bootstrap-secret-id",
 	}); err != nil {
 		t.Fatalf("CreateTaskEnvironment: %v", err)
 	}
@@ -1200,13 +1202,20 @@ func TestCascadeDeleteCleanupPersistsLegacyRuntimeSecretReferences(t *testing.T)
 	}
 	waitForCleanupDone(t, taskSvc)
 
-	want := recordedRuntimeSecretDelete{
-		environmentID:     "env-cascade-secret-cleanup",
-		authSecretID:      "legacy-auth-secret-id",
-		bootstrapSecretID: "legacy-bootstrap-secret-id",
+	want := []recordedRuntimeSecretDelete{
+		{
+			environmentID:     "env-cascade-secret-cleanup",
+			authSecretID:      "legacy-auth-secret-id",
+			bootstrapSecretID: "legacy-bootstrap-secret-id",
+		},
+		{
+			environmentID:     "env-cascade-secret-cleanup",
+			authSecretID:      "container-control-secret-id",
+			bootstrapSecretID: "container-bootstrap-secret-id",
+		},
 	}
-	if len(secretDeleter.calls) != 1 || secretDeleter.calls[0] != want {
-		t.Fatalf("runtime secret cleanup calls = %#v, want [%#v]", secretDeleter.calls, want)
+	if !reflect.DeepEqual(secretDeleter.calls, want) {
+		t.Fatalf("runtime secret cleanup calls = %#v, want %#v", secretDeleter.calls, want)
 	}
 }
 

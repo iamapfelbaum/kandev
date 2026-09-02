@@ -209,6 +209,23 @@ export class WebSocketClient {
     };
   }
 
+  getTaskSubscriptionReadiness(taskId: string): Promise<void> {
+    if (!this.subscriptions.has(taskId)) return Promise.resolve();
+    if (
+      !this.taskSubscriptionReadiness.has(taskId) &&
+      (this.status === "disconnected" || this.status === "error")
+    ) {
+      const unavailable = Promise.reject<void>(new Error(WEBSOCKET_CONNECTION_CLOSED_ERROR));
+      void unavailable.catch(() => undefined);
+      return unavailable;
+    }
+    const readiness = this.taskSubscriptionReadiness.getOrCreate(taskId);
+    if (this.status === "connected" && this.socket) {
+      this.startTaskSubscription(taskId, readiness);
+    }
+    return readiness.promise;
+  }
+
   subscribeSession(sessionId: string) {
     return this.subscribeSessionWithReady(sessionId).unsubscribe;
   }

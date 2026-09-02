@@ -161,7 +161,7 @@ type Controller struct {
 func NewController(config ControllerConfig) *Controller {
 	capacity := config.Capacity
 	if capacity == nil {
-		capacity = NewCapacityFromEnv()
+		capacity = NewCapacity(DefaultMaxServers)
 	}
 	clock := config.Clock
 	if clock == nil {

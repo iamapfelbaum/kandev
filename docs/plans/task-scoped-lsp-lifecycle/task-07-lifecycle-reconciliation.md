@@ -5,7 +5,7 @@ status: completed
 wave: 3
 depends_on: ["06-task-controller"]
 plan: "plan.md"
-spec: "../../specs/lsp-file-intelligence/spec.md"
+spec: "../../specs/platform/requirements/lsp-file-intelligence.md"
 ---
 
 # Task 07: Lifecycle Reconciliation
