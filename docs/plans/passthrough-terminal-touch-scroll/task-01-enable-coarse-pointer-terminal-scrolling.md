@@ -28,7 +28,8 @@ Add red evidence for the coarse-pointer TUI path. Then activate the current touc
 - Add component tests for touch-scroll activation in `PassthroughToolbar`.
 - Add a trusted-touch TUI regression at an 820-pixel coarse-pointer viewport.
 - Keep document scroll position fixed during the terminal gesture.
-- Change the toolbar activation rule to `!isFinePointer`.
+- Resolve touch activation centrally in `PassthroughTerminal`: coarse-pointer shell callers default on, agent callers opt in, and fine pointers are always off.
+- Keep the toolbar activation request pointer-aware and remove the mobile shell pane's unconditional override.
 - Keep existing gesture, xterm, transport, and layout behavior.
 
 ## Out of scope
@@ -70,10 +71,15 @@ cd apps/web && pnpm run typecheck
 cd apps/web && pnpm e2e:run --project mobile-chrome tests/terminal/mobile-terminal-scroll.spec.ts -- --retries=0
 ```
 
-## Files likely touched
+## Files touched
 
+- `apps/web/components/task/passthrough-terminal.tsx`
+- `apps/web/components/task/use-passthrough-terminal.test.ts`
+- `apps/web/components/task/mobile/mobile-terminal-pane.tsx`
 - `apps/web/components/task/passthrough-toolbar.tsx`
 - `apps/web/components/task/passthrough-toolbar.test.tsx`
+- `apps/web/e2e/helpers/api-client.ts`
+- `apps/web/e2e/helpers/api-client.test.ts`
 - `apps/web/e2e/tests/terminal/mobile-terminal-scroll.spec.ts`
 
 ## Dependencies
@@ -100,7 +106,14 @@ None.
 
 - RED unit evidence: the coarse-pointer toolbar test failed before the production change because `enableTouchScroll` was `false`.
 - RED browser evidence: the trusted-touch 820-pixel coarse-pointer flow failed before the production change because `viewportY` stayed at `172` after the downward swipe.
-- GREEN focused tests: `pnpm exec vitest run components/task/passthrough-toolbar.test.tsx lib/terminal/touch-scroll.test.ts` passed with 2 files and 41 tests.
-- Focused lint: `pnpm exec eslint components/task/passthrough-toolbar.tsx components/task/passthrough-toolbar.test.tsx e2e/tests/terminal/mobile-terminal-scroll.spec.ts` passed.
-- Frontend typecheck: `pnpm run typecheck` passed.
-- GREEN browser regression: `pnpm e2e:run --project mobile-chrome tests/terminal/mobile-terminal-scroll.spec.ts -- --retries=0` passed with 1 test. The managed run built the production web bundle and verified trusted touch scrollback movement with stable document scroll.
+- GREEN focused tests: `(cd apps/web && pnpm exec vitest run components/task/passthrough-toolbar.test.tsx lib/terminal/touch-scroll.test.ts)` passed with 2 files and 41 tests.
+- Focused lint: `(cd apps/web && pnpm exec eslint components/task/passthrough-toolbar.tsx components/task/passthrough-toolbar.test.tsx e2e/tests/terminal/mobile-terminal-scroll.spec.ts)` passed.
+- Frontend typecheck: `(cd apps/web && pnpm run typecheck)` passed.
+- GREEN browser regression: `(cd apps/web && pnpm e2e:run --project mobile-chrome tests/terminal/mobile-terminal-scroll.spec.ts -- --retries=0)` passed with 1 test. The managed run built the production web bundle and verified trusted touch scrollback movement with stable document scroll.
+- Fixup RED evidence: the new shell resolver tests failed before centralization because the resolver was missing, and the API helper test failed because `auto_approve` was omitted from the request body.
+- Fixup GREEN focused tests: `(cd apps/web && pnpm exec vitest run components/task/use-passthrough-terminal.test.ts e2e/helpers/api-client.test.ts components/task/passthrough-toolbar.test.tsx lib/terminal/touch-scroll.test.ts)` passed with 4 files and 71 tests.
+- Fixup focused lint: `(cd apps/web && pnpm exec eslint components/task/passthrough-terminal.tsx components/task/use-passthrough-terminal.test.ts components/task/mobile/mobile-terminal-pane.tsx e2e/helpers/api-client.ts e2e/helpers/api-client.test.ts e2e/tests/terminal/mobile-terminal-scroll.spec.ts components/task/passthrough-toolbar.tsx components/task/passthrough-toolbar.test.tsx)` passed.
+- Fixup frontend typecheck: `(cd apps/web && pnpm run typecheck)` passed.
+- Fixup GREEN browser regression: `(cd apps/web && pnpm e2e:run --project mobile-chrome tests/terminal/mobile-terminal-scroll.spec.ts -- --retries=0)` passed with 1 test after centralizing shell activation and preserving the agent flow.
+- Specification lint: `python3 scripts/lint-spec-files.py --all` passed.
+- AC-UI-TERMINAL-TOUCH-SCROLLING-001.3 is verified for the Chromium trusted-touch flow. iOS Safari pull-to-refresh remains unverified in this Linux runner and is a device-level follow-up.

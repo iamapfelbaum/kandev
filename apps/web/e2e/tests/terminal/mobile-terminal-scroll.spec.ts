@@ -115,7 +115,10 @@ test.describe("Mobile passthrough terminal — touch scroll", () => {
     test.setTimeout(120_000);
     await testPage.setViewportSize({ width: 820, height: 851 });
     await expect
-      .poll(() => testPage.evaluate(() => matchMedia("(pointer: coarse)").matches))
+      .poll(() => testPage.evaluate(() => matchMedia("(pointer: coarse)").matches), {
+        message:
+          "Playwright project must emulate coarse pointer; check the mobile-chrome project config",
+      })
       .toBe(true);
     await seedTaskWithSession(testPage, apiClient, seedData, "Touch scroll");
     await testPage.getByTestId("passthrough-terminal").locator(".xterm").click();

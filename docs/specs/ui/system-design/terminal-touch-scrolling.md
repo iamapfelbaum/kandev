@@ -1,5 +1,5 @@
 ---
-status: draft
+status: current
 system: ui
 requirements:
   - REQ-UI-TERMINAL-TOUCH-SCROLLING-001
@@ -30,17 +30,17 @@ A trusted browser touch at 820 CSS pixels leaves the TUI viewport unchanged. The
 ## Components and responsibilities
 
 - `useResponsiveBreakpoint` reports pointer precision and the responsive layout.
-- `PassthroughToolbar` selects touch-scroll activation for agent passthrough terminals.
-- `PassthroughTerminal` passes the activation state to `useTouchScroll`.
+- `PassthroughToolbar` opts agent passthrough terminals into touch scrolling for coarse pointers.
+- `PassthroughTerminal` resolves the shared activation rule and passes the result to `useTouchScroll`.
 - `useTouchScroll` attaches and removes one handler for the current xterm instance.
 - `attachTouchScroll` converts vertical touch distance to xterm row movement.
 - The application shell prevents document overscroll through its existing global style.
 
 ## Pointer activation
 
-`PassthroughToolbar` must use `isFinePointer`, not `isMobile`, for the activation decision. The handler is active when `isFinePointer` is false.
+`PassthroughTerminal` resolves touch scrolling from pointer precision and terminal mode. Coarse-pointer shell terminals enable the handler by default. Agent terminals opt in through their caller, and fine pointers always disable the handler.
 
-This rule is independent of viewport width. A pointer-mode change causes the responsive hook to render again and updates the effect.
+This rule is independent of viewport width. A pointer-mode change causes the responsive hook to render again and updates the effect for every shell caller.
 
 Fine-pointer layouts do not install the custom handler. Their xterm selection and wheel behavior stay on the existing path.
 
@@ -61,7 +61,7 @@ The handler yields before activation for a tap, a multi-touch gesture, or a hori
 - **Nearest implementation:** `MobileTerminalPane` uses the same renderer and touch-scroll handler.
 - **Presentation:** Phone, tablet, and desktop layouts keep their current composition.
 - **Scroll owner:** Xterm owns terminal scrollback. The application document stays fixed to the viewport.
-- **Shared behavior:** All layouts use the same handler, buffer, connection, and pointer-capability rule.
+- **Shared behavior:** All layouts use the same handler, buffer, and connection. `PassthroughTerminal` enables shell scrolling for coarse pointers, while the agent toolbar opts in through its caller.
 
 ## Failure and recovery
 
