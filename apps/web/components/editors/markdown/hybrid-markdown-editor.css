@@ -197,7 +197,7 @@
 .kandev-hybrid-markdown-editor .md-table th,
 .kandev-hybrid-markdown-editor .md-table td {
   border: 1px solid color-mix(in oklab, var(--border) 70%, var(--foreground));
-  padding: 0.25rem 0.5rem;
+  padding: 0.5rem 0.75rem;
   font-size: 13px;
   vertical-align: top;
   overflow-wrap: anywhere;
@@ -211,8 +211,14 @@
 }
 
 .kandev-hybrid-markdown-editor .md-table-wrapper.kandev-markdown-table-edge-wrapper {
-  padding-top: 3.5rem;
-  padding-left: 1.75rem;
+  padding-top: 2.5rem;
+  padding-left: 1.5rem;
+}
+
+.kandev-hybrid-markdown-editor
+  .md-table-wrapper.kandev-markdown-table-edge-wrapper:has(> .md-table.md-block-active) {
+  background: transparent;
+  box-shadow: none;
 }
 
 .kandev-hybrid-markdown-editor .md-table {
@@ -222,17 +228,26 @@
 }
 
 .kandev-hybrid-markdown-editor .md-table th,
+.kandev-hybrid-markdown-editor .md-table tr:first-child td,
 .kandev-hybrid-markdown-editor .md-table tbody tr:nth-child(even) {
   background: color-mix(in oklab, var(--muted) 68%, var(--background));
 }
 
-.kandev-hybrid-markdown-editor .md-table.md-block-active th,
-.kandev-hybrid-markdown-editor .md-table.md-block-active tbody tr:nth-child(even) {
-  background: transparent;
-}
-
 .kandev-hybrid-markdown-editor .md-table.md-block-active td {
   border-color: color-mix(in oklab, var(--border) 70%, var(--foreground));
+  background: var(--background);
+}
+
+.kandev-hybrid-markdown-editor .md-table.md-block-active tr:first-child td {
+  padding: 0.5rem 0.75rem;
+  background: color-mix(in oklab, var(--muted) 68%, var(--background));
+}
+
+/* The upstream active-table theme paints Markdown pipe glue as its outline.
+   Kandev keeps those source spans mapped but lets the real cell borders carry
+   the visual structure, matching the rendered table in Preview. */
+.kandev-hybrid-markdown-editor .md-table.md-block-active td > .md-glue-tableCellGlue {
+  visibility: hidden !important;
 }
 
 .kandev-markdown-table-controls-host {
@@ -261,30 +276,38 @@
   height: 1.5rem;
   transform: translate(-50%, -50%);
   pointer-events: auto;
+  overflow: visible;
   opacity: 1;
   color: var(--muted-foreground);
   background: transparent;
   border-color: transparent;
+  border-radius: 999px;
   box-shadow: none;
 }
 
 .kandev-markdown-table-edge-action::before {
+  position: absolute;
+  top: 50%;
+  left: 50%;
   width: 0.375rem;
   height: 0.375rem;
+  transform: translate(-50%, -50%);
   border-radius: 999px;
   background: var(--muted-foreground);
   content: "";
 }
 
 .kandev-markdown-table-edge-action > svg {
+  position: relative;
+  z-index: 2;
   opacity: 0;
   transition: opacity 120ms ease;
 }
 
 .kandev-markdown-table-edge-action:is(:hover, :focus-visible) {
-  color: var(--foreground);
-  background: color-mix(in oklab, var(--background) 92%, transparent);
-  border-color: var(--border);
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border-color: var(--primary);
   box-shadow: var(--shadow-sm);
 }
 
@@ -296,21 +319,46 @@
   opacity: 1;
 }
 
+.kandev-markdown-table-edge-guide {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0;
+  background: var(--primary);
+  transition: opacity 120ms ease;
+}
+
+.kandev-markdown-table-row-guide {
+  height: 2px;
+  transform: translateY(-1px);
+}
+
+.kandev-markdown-table-column-guide {
+  width: 2px;
+  transform: translateX(-1px);
+}
+
+.kandev-markdown-table-edge-action:is(:hover, :focus-visible, :active)
+  + .kandev-markdown-table-edge-guide {
+  opacity: 1;
+}
+
 .kandev-markdown-table-resizer-guide {
   position: absolute;
   z-index: 1;
   width: 1px;
   transform: translateX(-0.5px);
   pointer-events: none;
-  background: color-mix(in oklab, var(--primary) 45%, transparent);
-  opacity: 0.35;
+  background: var(--primary);
+  opacity: 0;
+  transition: opacity 120ms ease;
 }
 
 .kandev-markdown-table-resizer {
   position: absolute;
   z-index: 3;
-  width: 0.75rem;
-  margin-left: -0.375rem;
+  width: 1.5rem;
+  margin-left: -0.75rem;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -321,11 +369,33 @@
   user-select: none;
 }
 
+.kandev-markdown-table-resizer::before {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 1rem;
+  height: 0.25rem;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--muted-foreground) 55%, transparent);
+  content: "";
+}
+
 .kandev-markdown-table-resizer:hover,
 .kandev-markdown-table-resizer:focus-visible,
 .kandev-markdown-table-resizer[data-active="true"] {
-  background: color-mix(in oklab, var(--primary) 45%, transparent);
+  background: transparent;
   outline: none;
+}
+
+.kandev-markdown-table-resizer:is(:hover, :focus-visible, [data-active="true"])::before {
+  background: var(--primary);
+}
+
+.kandev-markdown-table-resizer-guide:has(
+  + .kandev-markdown-table-resizer:is(:hover, :focus-visible, [data-active="true"])
+) {
+  opacity: 1;
 }
 
 .kandev-hybrid-markdown-editor .md-selection-path {
@@ -352,8 +422,8 @@
 
 @media (pointer: coarse) {
   .kandev-hybrid-markdown-editor .md-table-wrapper.kandev-markdown-table-edge-wrapper {
-    padding-top: 6rem;
-    padding-left: 3rem;
+    padding-top: 5.75rem;
+    padding-left: 2.75rem;
   }
 
   .kandev-markdown-table-edge-action {
@@ -362,8 +432,9 @@
     min-width: 44px;
     min-height: 44px;
     opacity: 1;
-    background: color-mix(in oklab, var(--background) 92%, transparent);
-    border-color: var(--border);
+    color: var(--primary-foreground);
+    background: var(--primary);
+    border-color: var(--primary);
     box-shadow: var(--shadow-sm);
   }
 
@@ -380,6 +451,11 @@
     min-width: 44px;
     margin-left: -22px;
     opacity: 0.55;
+  }
+
+  .kandev-markdown-table-resizer::before {
+    width: 1.375rem;
+    height: 0.375rem;
   }
 
   .kandev-markdown-table-resizer:active,

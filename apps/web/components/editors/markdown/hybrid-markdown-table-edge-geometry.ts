@@ -21,6 +21,7 @@ export type TableEdgeGeometry = {
   resizeHeight: number;
   resizeTop: number;
   rowActions: EdgeActionPosition[];
+  tableLeft: number;
   tableWidth: number;
   tableTop: number;
 };
@@ -29,7 +30,7 @@ export type TableEdgeGeometry = {
 // resize hitboxes occupy separate rows above the table so neither can cover a
 // cell, including on coarse pointers where both controls are 44px square.
 export const TABLE_EDGE_LAYOUT = {
-  fine: { actionSize: 24, laneGap: 4, resizeHeight: 24 },
+  fine: { actionSize: 24, laneGap: 4, resizeHeight: 12 },
   coarse: { actionSize: 44, laneGap: 4, resizeHeight: 44 },
 } as const;
 
@@ -94,6 +95,7 @@ export function readTableGeometry(
     resizeHeight: layout.resizeHeight,
     resizeTop,
     rowActions,
+    tableLeft,
     tableWidth: tableRect.width,
     tableTop,
   };
@@ -110,6 +112,7 @@ export function sameGeometry(
     left.layerWidth === right.layerWidth &&
     left.resizeHeight === right.resizeHeight &&
     left.resizeTop === right.resizeTop &&
+    left.tableLeft === right.tableLeft &&
     left.tableWidth === right.tableWidth &&
     left.tableTop === right.tableTop &&
     arraysEqual(left.boundaries, right.boundaries) &&

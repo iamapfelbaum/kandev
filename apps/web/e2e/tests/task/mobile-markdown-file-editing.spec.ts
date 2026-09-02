@@ -160,10 +160,18 @@ test.describe("Mobile Markdown file editing", () => {
     const table = hybrid.locator(".md-table");
     await table.scrollIntoViewIfNeeded();
     await table.locator("td").first().tap();
+    await expect(table.locator(".md-glue-tableCellGlue:visible")).toHaveCount(0);
+    expect(
+      await table
+        .locator("tr:not(.md-table-delimiter-row) td")
+        .last()
+        .evaluate((cell) => getComputedStyle(cell).backgroundColor),
+    ).not.toBe("rgba(0, 0, 0, 0)");
     const rowAction = hybrid.getByTestId("markdown-table-row-insert-0");
     const columnAction = hybrid.getByTestId("markdown-table-column-insert-1");
     for (const tableAction of [rowAction, columnAction]) {
       await expect(tableAction).toBeVisible();
+      await expect(tableAction.locator("svg")).toHaveCount(1);
       const box = await tableAction.boundingBox();
       expect(box).not.toBeNull();
       expect(box!.width).toBeGreaterThanOrEqual(44);
@@ -247,6 +255,12 @@ test.describe("Mobile Markdown file editing", () => {
     await expect(preview.locator("table")).toBeVisible();
     await expect(preview).toContainText("Long mobile paragraph 56");
     const previewScroll = viewer.getByTestId("markdown-preview-scroll-container");
+    expect(
+      await previewScroll.evaluate((element) => {
+        const styles = getComputedStyle(element);
+        return { left: styles.paddingLeft, right: styles.paddingRight };
+      }),
+    ).toEqual({ left: "16px", right: "16px" });
     const previewScrollTop = await previewScroll.evaluate((element) => {
       const scroller = element as HTMLElement;
       scroller.scrollTop = scroller.scrollHeight;

@@ -1,8 +1,8 @@
 "use client";
 
 import { Button } from "@kandev/ui/button";
-import { IconColumnInsertRight, IconRowInsertBottom } from "@tabler/icons-react";
-import type { CSSProperties } from "react";
+import { IconPlus } from "@tabler/icons-react";
+import { Fragment, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useResponsiveBreakpoint } from "@/hooks/use-responsive-breakpoint";
@@ -77,45 +77,67 @@ function MarkdownTableEdgeActions({
       aria-label={t("common:tableEditingActions")}
     >
       {geometry.rowActions.map(({ index, left, top }) => (
-        <Button
-          key={`row-${index}`}
-          type="button"
-          variant="secondary"
-          size="icon-sm"
-          className="kandev-markdown-table-edge-action kandev-markdown-table-row-action cursor-pointer"
-          aria-label={`${t("common:addTableRowBelow")} ${index + 1}`}
-          title={t("common:addTableRowBelow")}
-          data-testid={`markdown-table-row-insert-${index}`}
-          style={{ left, top }}
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation();
-            onInsertRow(index);
-          }}
-        >
-          <IconRowInsertBottom />
-        </Button>
+        <Fragment key={`row-${index}`}>
+          <Button
+            type="button"
+            variant="secondary"
+            size="icon-sm"
+            className="kandev-markdown-table-edge-action kandev-markdown-table-row-action cursor-pointer"
+            aria-label={`${t("common:addTableRowBelow")} ${index + 1}`}
+            title={t("common:addTableRowBelow")}
+            data-testid={`markdown-table-row-insert-${index}`}
+            style={{ left, top }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onInsertRow(index);
+            }}
+          >
+            <IconPlus />
+          </Button>
+          <span
+            aria-hidden="true"
+            className="kandev-markdown-table-edge-guide kandev-markdown-table-row-guide"
+            data-testid={`markdown-table-row-guide-${index}`}
+            style={{
+              left,
+              top,
+              width: geometry.tableLeft + geometry.tableWidth - left,
+            }}
+          />
+        </Fragment>
       ))}
       {geometry.columnActions.map(({ index, left, top }) => (
-        <Button
-          key={`column-${index}`}
-          type="button"
-          variant="secondary"
-          size="icon-sm"
-          className="kandev-markdown-table-edge-action kandev-markdown-table-column-action cursor-pointer"
-          aria-label={`${t("common:addTableColumnRight")} ${index + 1}`}
-          title={t("common:addTableColumnRight")}
-          data-testid={`markdown-table-column-insert-${index}`}
-          style={{ left, top }}
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation();
-            prepareColumnInsertion(index);
-            onInsertColumn(index);
-          }}
-        >
-          <IconColumnInsertRight />
-        </Button>
+        <Fragment key={`column-${index}`}>
+          <Button
+            type="button"
+            variant="secondary"
+            size="icon-sm"
+            className="kandev-markdown-table-edge-action kandev-markdown-table-column-action cursor-pointer"
+            aria-label={`${t("common:addTableColumnRight")} ${index + 1}`}
+            title={t("common:addTableColumnRight")}
+            data-testid={`markdown-table-column-insert-${index}`}
+            style={{ left, top }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              prepareColumnInsertion(index);
+              onInsertColumn(index);
+            }}
+          >
+            <IconPlus />
+          </Button>
+          <span
+            aria-hidden="true"
+            className="kandev-markdown-table-edge-guide kandev-markdown-table-column-guide"
+            data-testid={`markdown-table-column-guide-${index}`}
+            style={{
+              height: geometry.tableTop + geometry.height - top,
+              left,
+              top,
+            }}
+          />
+        </Fragment>
       ))}
     </div>
   );
