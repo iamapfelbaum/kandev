@@ -2,6 +2,7 @@
 status: draft
 system: tasks
 created: 2026-08-05
+updated: 2026-09-02
 owners:
   - Kandev
 ---
@@ -33,6 +34,34 @@ This document is the migrated task-system source for the capability. The source 
 - **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-002.4:** When turn quiescence or context replacement fails, the system shall not dispatch the automatic step prompt.
 - **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-002.5:** When a prompt waits for an unresolved dispatch-only completion, the wait shall end within a bounded period and release session admission.
 - **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-002.6:** A delayed completion from the replaced turn shall not complete or release a later prompt generation.
+
+### REQ-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003: Single-use task-description fallback
+
+**Intent:** Start an unprompted workflow session from its task description without
+repeating that description during later workflow entries.
+
+#### Acceptance criteria
+
+- **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003.1:** When an unprompted
+session enters an automatic-start step with no step prompt, the system shall send
+the task description once.
+- **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003.2:** When a prompted session
+enters an automatic-start step with no step prompt, the system shall not send the
+task description again.
+- **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003.3:** When an
+automatic-start step has a step prompt, the system shall send the evaluated step
+prompt regardless of earlier session prompts.
+- **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003.4:** When suppression removes
+all prompt content, the system shall not create a user message or dispatch an
+empty agent turn.
+- **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003.5:** The automatic
+`on_enter` path and the explicit workflow-step launch path shall use the same
+task-description fallback rule.
+- **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003.6:** ACP and passthrough
+sessions shall use the same task-description fallback rule.
+- **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003.7:** If prompt-history
+inspection fails, the system shall stop the automatic prompt and expose the
+existing workflow-start error behavior.
 
 ## Migrated source detail
 
@@ -152,3 +181,5 @@ read, which is a design change beyond this repair.
   force-kill rather than an independent defect.
 - Changing task `FAILED` semantics, the reconciliation path, or the
   lazy-recovery boot that follows a backend restart.
+- Changing plan-mode placement. Plan-mode creation continues to use the first
+  workflow step by position.

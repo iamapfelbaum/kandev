@@ -106,6 +106,24 @@ func (r *Repository) allocatePromptSeq(ctx context.Context, execer messageBounda
 	return seq, nil
 }
 
+// HasUserPromptHistory reports whether a session has accepted a user prompt.
+// The durable sequence is not decremented when a message is deleted, so this
+// remains true after the transcript row is removed. The single-row lookup is
+// bounded by the session primary key and does not scan message history.
+func (r *Repository) HasUserPromptHistory(ctx context.Context, sessionID string) (bool, error) {
+	var lastSeq int
+	err := r.ro.QueryRowContext(ctx, r.ro.Rebind(
+		`SELECT last_seq FROM task_session_prompt_seq WHERE task_session_id = ?`,
+	), sessionID).Scan(&lastSeq)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read session prompt history: %w", err)
+	}
+	return lastSeq > 0, nil
+}
+
 // readSessionMaxUserKey returns the session's newest user-message normalized
 // key in the exact key layout, and whether any user row exists. On SQLite the
 // key expression yields the text directly; on PostgreSQL the native TIMESTAMP

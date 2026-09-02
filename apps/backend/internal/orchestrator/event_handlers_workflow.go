@@ -2648,13 +2648,26 @@ func (s *Service) launchAfterOnEnterDispatch(
 ) {
 	sessionID := session.ID
 	isPassthrough := s.agentManager.IsPassthroughSession(ctx, sessionID)
+	var effectivePrompt string
+	if hasAutoStart || (sessionSwitched && step.Prompt != "") {
+		var err error
+		effectivePrompt, err = s.buildWorkflowEntryPrompt(
+			ctx, taskDescription, step, taskID, sessionID, isPassthrough,
+		)
+		if err != nil {
+			s.handleWorkflowEntryPromptError(ctx, taskID, session, step, err)
+			return
+		}
+	}
 
 	switch {
 	case hasAutoStart && isPassthrough && session.State != models.TaskSessionStateCreated:
 		// Started passthrough path: write prompt directly to PTY stdin.
 		// By the time processOnEnter runs (from an on_turn_complete transition),
 		// the agent has finished its previous turn and the PTY is waiting for input.
-		effectivePrompt := s.buildWorkflowPrompt(ctx, taskDescription, step, taskID, sessionID, isPassthrough)
+		if strings.TrimSpace(effectivePrompt) == "" {
+			return
+		}
 		if err := s.autoStartPassthroughPrompt(ctx, taskID, session, step.Name, effectivePrompt); err != nil {
 			s.logger.Error("failed to auto-start passthrough agent for step",
 				zap.String("task_id", taskID),
@@ -2670,7 +2683,6 @@ func (s *Service) launchAfterOnEnterDispatch(
 		// When called from applyEngineTransition (on_turn_complete), processOnEnter
 		// runs in a goroutine and the session is already WAITING_FOR_INPUT, so
 		// autoStartStepPrompt sends the prompt directly via PromptTask.
-		effectivePrompt := s.buildWorkflowPrompt(ctx, taskDescription, step, taskID, sessionID, isPassthrough)
 		if err := s.autoStartStepPrompt(ctx, taskID, session, step, effectivePrompt, hasPlanMode, true); err != nil {
 			if errors.Is(err, errWorkflowAutoStartSessionTerminalized) {
 				if workflowAutoStartWasCancelled(err) {
@@ -2688,9 +2700,13 @@ func (s *Service) launchAfterOnEnterDispatch(
 						zap.String("task_id", taskID), zap.String("session_id", sessionID), zap.Error(replacementErr))
 					return
 				}
-				replacementPrompt := s.buildWorkflowPrompt(
+				replacementPrompt, promptErr := s.buildWorkflowEntryPrompt(
 					ctx, taskDescription, step, taskID, replacement.ID, isPassthrough,
 				)
+				if promptErr != nil {
+					s.handleWorkflowEntryPromptError(ctx, taskID, replacement, step, promptErr)
+					return
+				}
 				if replacementErr = s.autoStartStepPrompt(
 					ctx, taskID, replacement, step, replacementPrompt, hasPlanMode, true,
 				); replacementErr != nil {
@@ -2715,7 +2731,6 @@ func (s *Service) launchAfterOnEnterDispatch(
 		// has no auto_start_agent, launch the agent anyway — the profile override
 		// implies the user wants this agent to run on this step.
 		if sessionSwitched && step.Prompt != "" {
-			effectivePrompt := s.buildWorkflowPrompt(ctx, taskDescription, step, taskID, sessionID, isPassthrough)
 			planMode := hasPlanMode
 			stepID := step.ID
 			s.logger.Info("auto-launching agent after profile switch (no explicit auto_start)",
@@ -2758,9 +2773,13 @@ func (s *Service) launchAfterOnEnterDispatch(
 							zap.String("task_id", taskID), zap.String("session_id", sessionID), zap.Error(replacementErr))
 						return
 					}
-					replacementPrompt := s.buildWorkflowPrompt(
+					replacementPrompt, promptErr := s.buildWorkflowEntryPrompt(
 						asyncCtx, taskDescription, step, taskID, replacement.ID, isPassthrough,
 					)
+					if promptErr != nil {
+						s.handleWorkflowEntryPromptError(asyncCtx, taskID, replacement, step, promptErr)
+						return
+					}
 					if replacementErr = s.autoStartStepPrompt(
 						asyncCtx, taskID, replacement, step, replacementPrompt, planMode, true,
 					); replacementErr != nil {
@@ -2792,9 +2811,13 @@ func (s *Service) launchAfterOnEnterDispatch(
 								zap.String("task_id", taskID), zap.String("session_id", sessionID), zap.Error(replacementErr))
 							return
 						}
-						replacementPrompt := s.buildWorkflowPrompt(
+						replacementPrompt, promptErr := s.buildWorkflowEntryPrompt(
 							asyncCtx, taskDescription, step, taskID, replacement.ID, isPassthrough,
 						)
+						if promptErr != nil {
+							s.handleWorkflowEntryPromptError(asyncCtx, taskID, replacement, step, promptErr)
+							return
+						}
 						if replacementErr = s.autoStartStepPrompt(
 							asyncCtx, taskID, replacement, step, replacementPrompt, planMode, true,
 						); replacementErr != nil {
@@ -2829,6 +2852,22 @@ func (s *Service) launchAfterOnEnterDispatch(
 		s.drainQueuedMessageForPromptableSession(ctx, sessionID)
 	}
 
+}
+
+func (s *Service) handleWorkflowEntryPromptError(
+	ctx context.Context,
+	taskID string,
+	session *models.TaskSession,
+	step *wfmodels.WorkflowStep,
+	err error,
+) {
+	s.logger.Error("failed to build workflow entry prompt",
+		zap.String("task_id", taskID),
+		zap.String("session_id", session.ID),
+		zap.String("step_name", step.Name),
+		zap.Error(err))
+	s.setSessionWaitingForInput(ctx, taskID, session.ID, session)
+	s.publishSessionWaitingEvent(ctx, taskID, session.ID, step.ID, session)
 }
 
 // dispatchEngineOwnedOnEnterAction executes an engine-owned on_enter action
@@ -3589,6 +3628,9 @@ func (s *Service) autoStartStepPrompt(
 	takenMsg, mergedPrompt, attachments, references := s.takeAndMergeHandoffMessage(ctx, sessionID, prompt)
 	prompt = mergedPrompt
 	agentPrompt := AppendEntityReferenceContext(prompt, references)
+	if strings.TrimSpace(agentPrompt) == "" && len(attachments) == 0 {
+		return nil
+	}
 
 	// requeueTaken puts the original queued message back so a manual retry can
 	// pick it up. Skip when shouldQueueIfBusy successfully re-queued the

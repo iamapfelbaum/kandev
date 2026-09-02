@@ -1,5 +1,7 @@
 import { test, expect } from "../../fixtures/test-base";
+import { waitForSessionDone } from "../../helpers/session";
 import { KanbanPage } from "../../pages/kanban-page";
+import { SessionPage } from "../../pages/session-page";
 
 /**
  * `is_start_step` and `auto_start_agent` are independent settings: the first
@@ -108,5 +110,124 @@ test.describe("start step vs auto-start step", () => {
       timeout: 15_000,
     });
     await expect(kanban.taskCardInColumn("Lands on the start step", backlog.id)).toHaveCount(0);
+  });
+
+  test("does not repeat the plan-mode task description when entering an empty auto-start step", async ({
+    testPage,
+    apiClient,
+    seedData,
+  }) => {
+    test.setTimeout(120_000);
+
+    const workflow = await apiClient.createWorkflow(
+      seedData.workspaceId,
+      "Plan Prompt Dedup Workflow",
+    );
+    const planStep = await apiClient.createWorkflowStep(workflow.id, "Plan", 0, {
+      is_start_step: true,
+    });
+    const autoStartStep = await apiClient.createWorkflowStep(workflow.id, "Auto Start", 1);
+    await apiClient.updateWorkflowStep(planStep.id, { events: {} });
+    await apiClient.updateWorkflowStep(autoStartStep.id, {
+      prompt: "",
+      events: { on_enter: [{ type: "auto_start_agent" }] },
+    });
+    await apiClient.saveUserSettings({
+      workspace_id: seedData.workspaceId,
+      workflow_filter_id: workflow.id,
+      task_create_last_used: {
+        repository_id: seedData.repositoryId,
+        branch: "main",
+        agent_profile_id: seedData.agentProfileId,
+        workflow_ids_by_workspace: { [seedData.workspaceId]: workflow.id },
+      },
+      enable_preview_on_click: false,
+    });
+
+    const description = "/e2e:simple-message";
+    const kanban = new KanbanPage(testPage);
+    await kanban.goto();
+
+    await kanban.createTaskButton.first().click();
+    const dialog = testPage.getByTestId("create-task-dialog");
+    await expect(dialog).toBeVisible();
+    await testPage.getByTestId("task-title-input").fill("Plan prompt deduplication");
+    await testPage.getByTestId("task-description-input").fill(description);
+
+    const startButton = testPage.getByTestId("submit-start-agent");
+    await expect(startButton).toBeEnabled({ timeout: 30_000 });
+    await testPage.getByTestId("submit-start-agent-chevron").click();
+    await expect(testPage.getByTestId("submit-plan-mode")).toBeVisible({ timeout: 5_000 });
+    await testPage.getByTestId("submit-plan-mode").click();
+    await expect(dialog).not.toBeVisible({ timeout: 10_000 });
+    await expect(testPage).toHaveURL(/\/t\/.*layout=plan/, { timeout: 15_000 });
+
+    const taskId = testPage.url().match(/\/t\/([^/?#]+)/)?.[1];
+    expect(taskId).toBeTruthy();
+    if (!taskId) throw new Error("Plan-mode task ID was missing from the session URL");
+
+    const session = new SessionPage(testPage);
+    await session.waitForLoad();
+    await expect(session.planPanel).toBeVisible({ timeout: 10_000 });
+
+    let sessionId: string | undefined;
+    await expect
+      .poll(
+        async () => {
+          const { sessions } = await apiClient.listTaskSessions(taskId);
+          sessionId = sessions[0]?.id;
+          return sessionId ?? null;
+        },
+        { timeout: 30_000, message: "Waiting for the plan-mode session to be created" },
+      )
+      .not.toBeNull();
+    if (!sessionId) throw new Error("Plan-mode session ID was not created");
+
+    await expect(
+      session.activeChat().getByText("simple mock response", { exact: false }),
+    ).toBeVisible({
+      timeout: 30_000,
+    });
+    await waitForSessionDone(
+      apiClient,
+      taskId,
+      sessionId,
+      "Waiting for the first plan-mode turn to finish",
+    );
+    await session.waitForChatIdle({ timeout: 30_000 });
+
+    await expect
+      .poll(
+        async () => {
+          const { tasks } = await apiClient.listTasks(seedData.workspaceId);
+          return tasks.find((task) => task.id === taskId)?.workflow_step_id ?? null;
+        },
+        { timeout: 15_000, message: "Waiting for the plan-mode task to remain on its first step" },
+      )
+      .toBe(planStep.id);
+
+    await apiClient.moveTask(taskId, workflow.id, autoStartStep.id);
+    await expect
+      .poll(
+        async () => {
+          const { tasks } = await apiClient.listTasks(seedData.workspaceId);
+          return tasks.find((task) => task.id === taskId)?.workflow_step_id ?? null;
+        },
+        { timeout: 15_000, message: "Waiting for the task to enter the empty auto-start step" },
+      )
+      .toBe(autoStartStep.id);
+
+    // If the empty step incorrectly re-sends the description, the duplicate
+    // turn must finish before the idle input becomes available again.
+    await session.showSessionContext();
+    await session.waitForChatIdle({ timeout: 30_000 });
+
+    const userDescriptionMessages = await apiClient.listSessionMessages(sessionId);
+    expect(
+      userDescriptionMessages.messages.filter(
+        (message) => message.author_type === "user" && message.content.includes(description),
+      ),
+    ).toHaveLength(1);
+    await expect(session.activeChat().getByText(description, { exact: true })).toHaveCount(1);
   });
 });

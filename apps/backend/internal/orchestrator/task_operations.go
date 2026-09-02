@@ -1922,6 +1922,30 @@ func (s *Service) buildWorkflowPrompt(ctx context.Context, basePrompt string, st
 	return prompt
 }
 
+// buildWorkflowEntryPrompt applies the task-description fallback for one
+// workflow entry. Empty steps use the description only for a session that has
+// never accepted a user prompt; non-empty step prompts keep their existing
+// placeholder and replacement semantics.
+func (s *Service) buildWorkflowEntryPrompt(
+	ctx context.Context,
+	taskDescription string,
+	step *wfmodels.WorkflowStep,
+	taskID, sessionID string,
+	isPassthrough bool,
+) (string, error) {
+	basePrompt := taskDescription
+	if step.Prompt == "" {
+		hasHistory, err := s.repo.HasUserPromptHistory(ctx, sessionID)
+		if err != nil {
+			return "", fmt.Errorf("failed to read workflow prompt history: %w", err)
+		}
+		if hasHistory {
+			basePrompt = ""
+		}
+	}
+	return s.buildWorkflowPrompt(ctx, basePrompt, step, taskID, sessionID, isPassthrough), nil
+}
+
 // workflowInstructionsHeading/End are stable, agent-facing markers for the
 // optional workflow-level prompt block. Chat collapses everything between
 // them by default. Do not i18n (sent to the model, same as step prompt English).
@@ -2371,7 +2395,12 @@ func (s *Service) StartSessionForWorkflowStep(ctx context.Context, taskID, sessi
 
 	s.advanceTaskWorkflowStep(ctx, dbTask, workflowStepID, session)
 
-	effectivePrompt := s.buildWorkflowPrompt(ctx, dbTask.Description, step, taskID, sessionID, session.IsPassthrough)
+	effectivePrompt, err := s.buildWorkflowEntryPrompt(
+		ctx, dbTask.Description, step, taskID, sessionID, session.IsPassthrough,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to build workflow prompt: %w", err)
+	}
 
 	if err := s.ensureSessionRunning(ctx, sessionID, session); err != nil {
 		return err
@@ -2381,6 +2410,13 @@ func (s *Service) StartSessionForWorkflowStep(ctx context.Context, taskID, sessi
 	// step prompt. The helper reloads the session so a resume-created runtime
 	// state cannot be overwritten by the stale request snapshot.
 	s.applyWorkflowSessionConfigOnEnter(ctx, taskID, session, step)
+	if strings.TrimSpace(effectivePrompt) == "" {
+		s.logger.Info("workflow step has no prompt after entry fallback",
+			zap.String("task_id", taskID),
+			zap.String("session_id", sessionID),
+			zap.String("workflow_step_id", workflowStepID))
+		return nil
+	}
 
 	stepPlanMode := step.HasOnEnterAction(wfmodels.OnEnterEnablePlanMode)
 	_, err = s.PromptTask(ctx, taskID, sessionID, effectivePrompt, "", stepPlanMode, nil, false)

@@ -4,6 +4,7 @@ system: tasks
 requirements:
   - REQ-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-001
   - REQ-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-002
+  - REQ-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003
 ---
 
 # Workflow Step Agent Start Ownership System Design
@@ -22,6 +23,7 @@ The design preserves runtime configuration through the existing reset contract. 
 | --- | --- |
 | `REQ-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-001` | [Session states](#session-states) |
 | `REQ-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-002` | [Active-turn reset flow](#active-turn-reset-flow), [Bounded predecessor wait](#bounded-predecessor-wait) |
+| `REQ-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003` | [Prompt fallback ownership](#prompt-fallback-ownership), [Prompt-history contract](#prompt-history-contract), [Workflow-entry prompt flow](#workflow-entry-prompt-flow) |
 
 ## Components and responsibilities
 
@@ -32,6 +34,9 @@ The cancellation coordinator owns active-turn quiescence. It uses the internal c
 `lifecycle.Manager.ResetAgentContext` replaces the provider session after quiescence. It restores runtime configuration through the existing reset contract.
 
 `lifecycle.SessionManager` owns prompt serialization and the dispatch-only completion barrier. Prompt generations continue to identify completion ownership.
+
+The orchestrator owns the task-description fallback. The task repository owns
+the durable prompt-history query that supports this decision.
 
 ## Session states
 
@@ -77,6 +82,55 @@ An unnumbered completion cannot release a pending numbered dispatch-only prompt.
 
 Internal cancellation finishes or escalates the old generation before provider replacement. The reset does not drain a completion signal from an active generation.
 
+## Prompt fallback ownership
+
+A non-empty `WorkflowStep.Prompt` is work for each applicable step entry. The
+orchestrator evaluates and dispatches this prompt with the current placeholder
+rules.
+
+An empty `WorkflowStep.Prompt` does not define new step work. For an unprompted
+session, the task description supplies the first prompt. After that first user
+prompt, the task description is no longer a workflow-entry prompt.
+
+This rule changes only the empty-step fallback. It preserves workflow-level
+instructions, prompt reference expansion, plan-mode context, and queued handoff
+behavior.
+
+## Prompt-history contract
+
+`task_session_prompt_seq.last_seq` is the durable session prompt counter. A
+value greater than zero means that the session has accepted a user prompt.
+
+The counter does not decrease after message deletion. This property prevents a
+deleted transcript row from making the task description eligible again.
+
+The task repository exposes a bounded existence query for this state. The
+orchestrator does not load the complete session transcript to make the fallback
+decision. This change needs no schema migration.
+
+## Workflow-entry prompt flow
+
+`launchAfterOnEnterDispatch` and `StartSessionForWorkflowStep` use one prompt
+composition helper. The helper applies these rules:
+
+1. If `WorkflowStep.Prompt` is non-empty, retain the task description for
+   placeholder evaluation.
+2. If the step prompt is empty, read the durable session prompt counter.
+3. If the counter is zero, use the task description as the base prompt.
+4. If the counter is greater than zero, use an empty base prompt.
+5. Build the workflow prompt with the existing workflow instructions and
+   reference expansion.
+
+The `on_enter` caller applies this result before it selects ACP or passthrough
+delivery. Thus, both transports use the same fallback rule.
+
+The ACP path still lets `autoStartStepPrompt` merge a queued handoff. If the
+merged result has no content or attachments, it returns without a message or
+agent dispatch.
+
+The explicit workflow-step launch keeps its existing resume and session-setting
+behavior. It does not call `PromptTask` when the composed prompt is empty.
+
 ## Failure and recovery
 
 If internal cancellation fails, the provider session remains unchanged. The workflow entry records the reset error and does not send the automatic prompt.
@@ -85,7 +139,14 @@ If provider reset or configuration restoration fails, the existing reset reconci
 
 If a stale predecessor barrier times out, the successor prompt fails before dispatch. The session guard becomes available for cancellation and recovery.
 
+If the prompt-history query fails, prompt composition returns an error. The
+automatic entry uses the existing waiting-state recovery. An explicit
+workflow-step launch returns the error to its caller.
+
 This repair does not reconcile sessions that became stuck before the new boundary existed. Users can replace such a session with a new session.
+
+The prompt-history query is durable across backend restarts. A restart cannot
+make an earlier task description eligible for another fallback dispatch.
 
 ## Observability
 
