@@ -24,6 +24,8 @@ func (a *Adapter) PublishesMCPAttachmentResults() bool { return true }
 
 // NewSession creates a new agent session.
 func (a *Adapter) NewSession(ctx context.Context, mcpServers []types.McpServer) (string, error) {
+	a.configChangeMu.Lock()
+	defer a.configChangeMu.Unlock()
 	a.mu.Lock()
 	conn := a.acpConn
 	a.mu.Unlock()
@@ -377,6 +379,8 @@ func mapToHTTPHeaders(headers map[string]string) []acp.HttpHeader {
 //
 //nolint:funlen // pre-existing length preserved from adapter.go file split
 func (a *Adapter) LoadSession(ctx context.Context, sessionID string, mcpServers []types.McpServer) error {
+	a.configChangeMu.Lock()
+	defer a.configChangeMu.Unlock()
 	a.mu.Lock()
 	conn := a.acpConn
 	supportsLoad := a.capabilities.LoadSession
@@ -529,6 +533,8 @@ func (a *Adapter) LoadSession(ctx context.Context, sessionID string, mcpServers 
 // replay. It is used for idle MCP reconfiguration when initialize advertised
 // sessionCapabilities.resume.
 func (a *Adapter) ResumeSession(ctx context.Context, sessionID string, mcpServers []types.McpServer) error {
+	a.configChangeMu.Lock()
+	defer a.configChangeMu.Unlock()
 	a.mu.Lock()
 	conn := a.acpConn
 	supportsResume := a.capabilities.SessionCapabilities.Resume != nil

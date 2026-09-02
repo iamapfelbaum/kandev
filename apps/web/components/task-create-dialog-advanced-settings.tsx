@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 
 type TaskCreateAdvancedSettingsProps = {
   isCreateMode: boolean;
+  isEditMode?: boolean;
   isTaskStarted: boolean;
   blockedBy: string[];
   onBlockedByChange: (next: string[]) => void;
@@ -64,6 +65,7 @@ function TaskCreateMCPSettingRow({
 
 export function TaskCreateAdvancedSettings({
   isCreateMode,
+  isEditMode = false,
   isTaskStarted,
   blockedBy,
   onBlockedByChange,
@@ -77,7 +79,7 @@ export function TaskCreateAdvancedSettings({
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
 
-  if (!isCreateMode || isTaskStarted) return null;
+  if ((!isCreateMode && !isEditMode) || isTaskStarted) return null;
 
   return (
     <Collapsible
