@@ -12,12 +12,9 @@ owners:
 ## Ownership
 
 UI owns reusable presentation and responsive interaction.
-
-## Exclusions
-
 [Tasks](../tasks/README.md), [Agents](../agents/README.md),
-[Plugins](../plugins/README.md), and [Integrations](../integrations/README.md)
-own feature behavior/state.
+[Plugins](../plugins/README.md), and [Integrations](../integrations/README.md) own
+feature behavior and state.
 
 ## Specification map
 
@@ -58,6 +55,7 @@ own feature behavior/state.
 - [Executor settings card spacing](requirements/executor-settings-card-spacing.md)
 - [External VCS File Links](requirements/external-vcs-file-links.md)
 - [File Tree Chat Context](requirements/file-tree-chat-context.md)
+- [File Tree Keyboard Scope](requirements/file-tree-keyboard-scope.md)
 - [Reload Kandev after frozen-tab restore](requirements/fix-duplicated-tab-stale-data.md)
 - [GitHub PR Review Actions](requirements/github-pr-review-actions.md)
 - [GitHub Saved-Query Default Views](requirements/github-saved-query-defaults.md)
@@ -68,16 +66,17 @@ own feature behavior/state.
 - [Mermaid Rendering](requirements/mermaid-rendering.md)
 - [Message favorite star mobile sizing](requirements/message-favorite-star-mobile-size.md)
 - [Message metadata dialog scroll containment](requirements/message-metadata-overflow.md)
-- [Automatically Merge Consecutive Queued Messages](requirements/message-queue-auto-merge.md)
+- [Message queue auto-merge](requirements/message-queue-auto-merge.md)
 - [Manage Pending Message Queues](requirements/message-queue-management.md)
 - [Merge Enqueued Messages Individually](requirements/message-queue-merge.md)
 - [Pin the Message Queue Panel](requirements/message-queue-pin.md)
 - [Reorder Queued Messages](requirements/message-queue-reorder.md)
 - [Control Pending Message Auto-run](requirements/message-queue-run.md)
 - [Send Queued Messages Now](requirements/message-queue-send-now.md)
-- [Mobile Workspace Topbar Actions](requirements/mobile-quick-chat-topbar.md)
+- [Mobile workspace topbar](requirements/mobile-quick-chat-topbar.md)
 - [Mobile Task Chrome](requirements/mobile-task-chrome.md)
 - [Mobile Task Navigation](requirements/mobile-task-navigation.md)
+- [Plan comments](requirements/plan-comment-drafts.md)
 - [Task-scoped port-forwarding discovery](requirements/port-forwarding-discovery.md)
 - [Open proxy URLs in the browser panel](requirements/port-proxy-browser-panel.md)
 - [Responsive PR Detail Header](requirements/pr-detail-header-width.md)
@@ -87,8 +86,8 @@ own feature behavior/state.
 - [Preview Sprites Transient Retry](requirements/preview-sprites-transient-retry.md)
 - [Persistent status motion](requirements/persistent-status-motion.md)
 - [Prompt History Panel](requirements/prompt-history-panel.md)
-- [Render Nerd Font glyphs pasted from a styled terminal](requirements/prompt-paste-nerd-font-glyphs.md)
-- [Prompt Turn Duration on Message Hover](requirements/prompt-turn-duration.md)
+- [Prompt paste: Nerd Font glyphs](requirements/prompt-paste-nerd-font-glyphs.md)
+- [Prompt turn duration](requirements/prompt-turn-duration.md)
 - [Published Docs Preview Reliability](requirements/published-docs-preview-reliability.md)
 - [Quick Chat elevation](requirements/quick-chat-elevation.md)
 - [Quick Chat viewport layout](requirements/quick-chat-viewport-layout.md)
@@ -157,6 +156,7 @@ own feature behavior/state.
 - [Task PR Automation Controls System Design Part 3](system-design/ci-pr-automation-03.md)
 - [Merge Queue Recovery Controls](system-design/ci-pr-merge-queue-recovery-controls.md)
 - [Entity Reference Composer](system-design/entity-reference-composer.md)
+- [File Tree Keyboard Scope](system-design/file-tree-keyboard-scope.md)
 - [Kandev MCP Tool Results](system-design/kandev-mcp-tool-results.md)
 - [Mobile Task Chrome](system-design/mobile-task-chrome.md)
 - [Persistent status motion](system-design/persistent-status-motion.md)
@@ -168,6 +168,7 @@ own feature behavior/state.
 - [Quick Chat and terminal elevation](system-design/quick-chat-elevation.md)
 - [Quick Chat viewport layout](system-design/quick-chat-viewport-layout.md)
 - [Quick Chat and Terminal Tabs](system-design/quick-terminal.md)
+- [Plan comments](system-design/plan-comment-drafts.md)
 - [Responsive Plan Formatting](system-design/responsive-plan-formatting.md)
 - [Confirmations](system-design/confirmation-warning-hierarchy.md)
 - [Resizable Markdown Table Columns](system-design/resizable-markdown-tables.md)
@@ -180,13 +181,8 @@ own feature behavior/state.
 - [Task Transcript History Visibility](system-design/task-prompt-transcript-visibility.md)
 - [Transcript Auto-scroll Stability](system-design/transcript-auto-scroll.md)
 
-## Migration record
-
-Legacy source detail is still moving to the canonical requirement and
-system-design documents above.
-
 ## Related systems
 
-- [Tasks](../tasks/README.md): task state.
-- [Plugins](../plugins/README.md): contributions.
-- [Platform](../platform/README.md): runtime state.
+- [Tasks](../tasks/README.md)
+- [Plugins](../plugins/README.md)
+- [Platform](../platform/README.md)
