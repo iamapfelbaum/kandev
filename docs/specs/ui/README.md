@@ -9,23 +9,12 @@ owners:
 
 # UI system
 
-## Purpose
-
-The UI system owns web presentation.
-
 ## Ownership
 
-The UI system owns reusable navigation, settings, task/review, chat, visual
-feedback, and responsive interaction contracts. Provider and task state remain
-with their owning systems.
-
-## Exclusions
-
-- Durable task behavior belongs to the [task system](../tasks/README.md).
-- Agent profile behavior belongs to the [agent system](../agents/README.md).
-- Plugin contribution contracts belong to the [plugin system](../plugins/README.md).
-- Provider-specific state and actions belong to the
-  [integration system](../integrations/README.md).
+UI owns reusable presentation and responsive interaction.
+[Tasks](../tasks/README.md), [Agents](../agents/README.md),
+[Plugins](../plugins/README.md), and [Integrations](../integrations/README.md) own
+feature behavior and state.
 
 ## Specification map
 
@@ -37,6 +26,7 @@ with their owning systems.
 - [Task Add-Panel PR Submenu](requirements/add-panel-pr-submenu.md)
 - [Agent Launch Prompt Composer](requirements/agent-launch-prompt-composer.md)
 - [Growing dialog content containment](requirements/dialog-content-containment.md)
+- [Surface text](requirements/surface-text-hierarchy.md)
 - [Agent-message inline comments](requirements/agent-message-comments.md)
 - [Agent Todo List Panel](requirements/agent-todo-list-panel.md)
 - [App Status Bar](requirements/app-status-bar.md)
@@ -50,6 +40,7 @@ with their owning systems.
 - [Clarification Shared Context](requirements/clarification-context.md)
 - [Clarification submit feedback](requirements/clarification-submit-feedback.md)
 - [Command-panel Sidebar Task Reveal](requirements/command-panel-sidebar-task-reveal.md)
+- [Command Panel Task Activity Icons](requirements/command-panel-task-activity-icons.md)
 - [Compact Workflow Step Navigation](requirements/compact-workflow-step-navigation.md)
 - [Comment Markdown Rendering](requirements/comment-markdown.md)
 - [Mention recency](requirements/composer-mention-recency.md)
@@ -64,6 +55,7 @@ with their owning systems.
 - [Executor settings card spacing](requirements/executor-settings-card-spacing.md)
 - [VCS File Links](requirements/external-vcs-file-links.md)
 - [File Tree Chat Context](requirements/file-tree-chat-context.md)
+- [File Tree Keyboard Scope](requirements/file-tree-keyboard-scope.md)
 - [Reload Kandev after frozen-tab restore](requirements/fix-duplicated-tab-stale-data.md)
 - [GitHub PR Review Actions](requirements/github-pr-review-actions.md)
 - [GitHub Saved-Query Default Views](requirements/github-saved-query-defaults.md)
@@ -74,16 +66,17 @@ with their owning systems.
 - [Mermaid Rendering](requirements/mermaid-rendering.md)
 - [Message favorite star mobile sizing](requirements/message-favorite-star-mobile-size.md)
 - [Message metadata dialog scroll containment](requirements/message-metadata-overflow.md)
-- [Queued Message Auto-Merge](requirements/message-queue-auto-merge.md)
+- [Queue auto-merge](requirements/message-queue-auto-merge.md)
 - [Manage Pending Message Queues](requirements/message-queue-management.md)
 - [Merge Enqueued Messages Individually](requirements/message-queue-merge.md)
 - [Pin the Message Queue Panel](requirements/message-queue-pin.md)
 - [Reorder Queued Messages](requirements/message-queue-reorder.md)
 - [Control Pending Message Auto-run](requirements/message-queue-run.md)
 - [Send Queued Messages Now](requirements/message-queue-send-now.md)
-- [Mobile Workspace Topbar Actions](requirements/mobile-quick-chat-topbar.md)
+- [Mobile workspace topbar](requirements/mobile-quick-chat-topbar.md)
 - [Mobile Task Chrome](requirements/mobile-task-chrome.md)
 - [Mobile Task Navigation](requirements/mobile-task-navigation.md)
+- [Plan comments](requirements/plan-comment-drafts.md)
 - [Task-scoped port-forwarding discovery](requirements/port-forwarding-discovery.md)
 - [Open proxy URLs in the browser panel](requirements/port-proxy-browser-panel.md)
 - [Responsive PR Detail Header](requirements/pr-detail-header-width.md)
@@ -93,10 +86,11 @@ with their owning systems.
 - [Preview Sprites Transient Retry](requirements/preview-sprites-transient-retry.md)
 - [Persistent status motion](requirements/persistent-status-motion.md)
 - [Prompt History Panel](requirements/prompt-history-panel.md)
-- [Pasted Nerd Font Glyphs](requirements/prompt-paste-nerd-font-glyphs.md)
-- [Prompt Turn Duration on Message Hover](requirements/prompt-turn-duration.md)
+- [Prompt paste glyphs](requirements/prompt-paste-nerd-font-glyphs.md)
+- [Turn duration](requirements/prompt-turn-duration.md)
 - [Published Docs Preview Reliability](requirements/published-docs-preview-reliability.md)
 - [Quick Chat elevation](requirements/quick-chat-elevation.md)
+- [Quick Chat viewport](requirements/quick-chat-viewport-layout.md)
 - [Quick Chat Idle Dot](requirements/quick-chat-idle-dot.md)
 - [Quick Chat and Terminal Tabs](requirements/quick-terminal.md)
 - [Relative Last Seen in Account Security](requirements/relative-last-seen.md)
@@ -111,7 +105,7 @@ with their owning systems.
 - [Settings Manual Save](requirements/settings-manual-save.md)
 - [Settings Prompt Editor](requirements/settings-prompt-editor.md)
 - [Consistent settings typography](requirements/settings-typography.md)
-- [Sidebar Automatic Task Colors](requirements/sidebar-automatic-task-colors.md)
+- [Automatic Task Colors](requirements/sidebar-automatic-task-colors.md)
 - [Sidebar Archived Task Views](requirements/sidebar-archived-filter.md)
 - [Sidebar Diff Stat Priority](requirements/sidebar-diff-stat-priority.md)
 - [Sidebar empty task alignment](requirements/sidebar-empty-task-alignment.md)
@@ -125,7 +119,7 @@ with their owning systems.
 - [Slash Command Composer Selection](requirements/slash-command-composer.md)
 - [Subagent Observability](requirements/subagent-observability.md)
 - [Nested Submodule Review](requirements/submodule-review.md)
-- [Task Confirmation Warning Hierarchy](requirements/confirmation-warning-hierarchy.md)
+- [Confirmations](requirements/confirmation-warning-hierarchy.md)
 - [Task Layout Profiles](requirements/task-layout-profiles.md)
 - [Task Agent Tab Reconciliation](requirements/task-agent-tab-reconciliation.md)
 - [Task Listing Display Preferences](requirements/task-listing-display-preferences.md)
@@ -149,6 +143,7 @@ with their owning systems.
 
 - [Clarification submit feedback](system-design/clarification-submit-feedback.md)
 - [Growing Dialog Content Containment](system-design/dialog-content-containment.md)
+- [Surface text](system-design/surface-text-hierarchy.md)
 - [Agent Todo List Panel](system-design/agent-todo-list-panel.md)
 - [App Status Bar](system-design/app-status-bar.md)
 - [Changes File Row Containment](system-design/changes-file-row-containment.md)
@@ -162,35 +157,34 @@ with their owning systems.
 - [Task PR Automation Controls System Design Part 3](system-design/ci-pr-automation-03.md)
 - [Merge Queue Recovery Controls](system-design/ci-pr-merge-queue-recovery-controls.md)
 - [Entity Reference Composer](system-design/entity-reference-composer.md)
+- [File Tree Keyboard Scope](system-design/file-tree-keyboard-scope.md)
 - [Kandev MCP Tool Results](system-design/kandev-mcp-tool-results.md)
 - [Mobile Task Chrome](system-design/mobile-task-chrome.md)
 - [Persistent status motion](system-design/persistent-status-motion.md)
 - [Repository Groups](system-design/sidebar-repository-grouping.md)
-- [Sidebar Automatic Task Colors](system-design/sidebar-automatic-task-colors.md)
+- [Automatic Task Colors](system-design/sidebar-automatic-task-colors.md)
 - [Sidebar Task Focus](system-design/sidebar-task-focus.md)
 - [Sidebar task row](system-design/sidebar-task-row-presentation.md)
 - [PR Task Status Summary](system-design/pr-task-status-summary.md)
 - [Prompt History Panel](system-design/prompt-history-panel.md)
-- [Quick Chat Elevation](system-design/quick-chat-elevation.md)
+- [Quick Chat elevation](system-design/quick-chat-elevation.md)
+- [Quick Chat viewport](system-design/quick-chat-viewport-layout.md)
 - [Quick Chat and Terminal Tabs](system-design/quick-terminal.md)
+- [Plan comments](system-design/plan-comment-drafts.md)
 - [Responsive Plan Formatting](system-design/responsive-plan-formatting.md)
-- [Task Confirmation Warning Hierarchy](system-design/confirmation-warning-hierarchy.md)
+- [Confirmations](system-design/confirmation-warning-hierarchy.md)
 - [Resizable Markdown Table Columns](system-design/resizable-markdown-tables.md)
 - [Task Layout Profiles](system-design/task-layout-profiles.md)
 - [Task Agent Tab Reconciliation](system-design/task-agent-tab-reconciliation.md)
 - [Command-panel Sidebar Task Reveal](system-design/command-panel-sidebar-task-reveal.md)
+- [Command Panel Task Activity Icons](system-design/command-panel-task-activity-icons.md)
 - [Terminal Rendering](system-design/terminal-rendering.md)
 - [Thinking Message Preview](system-design/thinking-message-preview.md)
 - [Task Transcript History Visibility](system-design/task-prompt-transcript-visibility.md)
 - [Transcript Auto-scroll Stability](system-design/transcript-auto-scroll.md)
 
-## Migration record
-
-Legacy source detail is still moving to the canonical requirement and
-system-design documents above.
-
 ## Related systems
 
-- [Tasks](../tasks/README.md): supplies task and workflow state.
-- [Plugins](../plugins/README.md): supplies plugin contributions.
-- [Platform](../platform/README.md): supplies shared runtime state.
+- [Tasks](../tasks/README.md)
+- [Plugins](../plugins/README.md)
+- [Platform](../platform/README.md)

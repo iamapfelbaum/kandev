@@ -153,6 +153,7 @@ export function buildSidebarItem(
     primaryExecutorProfileId: task.primaryExecutorProfileId ?? undefined,
     workflowStepColor: facts.workflowStepColor,
     isRemoteExecutor: task.isRemoteExecutor,
+    remoteExecutorId: task.primaryExecutorId ?? undefined,
     remoteExecutorType: task.primaryExecutorType ?? undefined,
     remoteExecutorName: task.primaryExecutorName ?? undefined,
     createdAt: task.createdAt,

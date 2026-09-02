@@ -115,6 +115,7 @@ export function toSheetItem(
     workflowStepColor: facts.workflowStepColor,
     isArchived: task.isArchived === true,
     isRemoteExecutor: task.isRemoteExecutor,
+    remoteExecutorId: task.primaryExecutorId ?? undefined,
     remoteExecutorType: task.primaryExecutorType ?? undefined,
     remoteExecutorName: task.primaryExecutorName ?? undefined,
     repositoryLinks: task.repositories,
