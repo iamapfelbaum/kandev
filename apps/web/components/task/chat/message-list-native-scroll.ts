@@ -19,6 +19,8 @@ import {
   shouldCatchUpOnAutoScrollEnable,
   resolveNativeInitialScrollTop,
   createFrameCoalescer,
+  scheduleAfterPanelRestore,
+  useActivationPending,
 } from "./transcript-auto-scroll";
 import { scheduleClampedScrollRestore } from "./clamped-scroll-restore";
 import { createDebugLogger, isDebug } from "@/lib/debug/log";
@@ -544,39 +546,144 @@ function useRetryPaginationOnUpwardScroll(
  * Two frames place this after SessionPanelContent's one-frame restore without
  * treating the initial visible mount as pagination intent. */
 function useRecheckPaginationOnVisible(isVisible: boolean, recheck: () => void) {
-  const previousVisibleRef = useRef(isVisible);
+  const { isVisibleRef, activationPendingRef } = useActivationPending(isVisible);
   useEffect(() => {
-    const becameVisible = !previousVisibleRef.current && isVisible;
-    previousVisibleRef.current = isVisible;
-    if (!becameVisible) return;
-    let secondFrame: number | null = null;
-    const firstFrame = requestAnimationFrame(() => {
-      secondFrame = requestAnimationFrame(recheck);
+    if (!isVisible || !activationPendingRef.current) return;
+    return scheduleAfterPanelRestore(() => {
+      if (!isVisibleRef.current) return;
+      activationPendingRef.current = false;
+      recheck();
     });
-    return () => {
-      cancelAnimationFrame(firstFrame);
-      if (secondFrame !== null) cancelAnimationFrame(secondFrame);
-    };
   }, [isVisible, recheck]);
 }
 
-function useScrollPositionPersistence({
+/** Duration a programmatic scroll's guard stays held if the browser never
+ * reports `scrollend` (Safari lacks it as of writing; some scroll targets
+ * fire it inconsistently). Comfortably longer than a `scrollIntoView`
+ * smooth-scroll's typical animation so the guard doesn't outlive it in the
+ * common case, but still bounded so a missed event can't wedge auto-scroll
+ * off indefinitely. */
+const PROGRAMMATIC_SCROLL_GUARD_MS = 1000;
+
+/**
+ * Auto-scrolls to bottom when new messages arrive (if user is near bottom)
+ * or when the agent starts working (isWorking transitions to true) — unless
+ * auto-scroll is disabled for this session, in which case both are
+ * suppressed and the current position is continuously persisted so it
+ * survives a dockview panel remount. Re-enabling catches the view up to the
+ * bottom if the transcript progressed past it while disabled (see
+ * `useCatchUpOnReEnable`).
+ *
+ * `isProgrammaticScrollLocked` suppresses both triggers while a user-initiated
+ * scroll-to-start/scroll-to-last-prompt animation (see
+ * `useProgrammaticScrollGuard`) is still in flight — otherwise a message
+ * streaming in mid-animation can silently snap the transcript back to the
+ * bottom, cancelling the user's action.
+ */
+export function useAutoScroll(params: {
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  messages: Message[];
+  isWorking: boolean;
+  sessionId: string | null;
+  enabled: boolean;
+  hasUnreadDivider: boolean;
+  isProgrammaticScrollLocked: () => boolean;
+  isVisible?: boolean;
+}) {
+  const {
+    scrollRef,
+    messages,
+    isWorking,
+    sessionId,
+    enabled,
+    hasUnreadDivider,
+    isProgrammaticScrollLocked,
+    isVisible = true,
+  } = params;
+  const storeApi = useAppStoreApi();
+  const isNearBottomRef = useRef(true);
+  const prevIsWorkingRef = useRef(isWorking);
+  const isVisibleRef = useRef(isVisible);
+  const enabledRef = useRef(enabled);
+  const hasUnreadDividerRef = useRef(hasUnreadDivider);
+  const sessionIdRef = useRef(sessionId);
+  const isProgrammaticScrollLockedRef = useRef(isProgrammaticScrollLocked);
+  isVisibleRef.current = isVisible;
+  enabledRef.current = enabled;
+  hasUnreadDividerRef.current = hasUnreadDivider;
+  sessionIdRef.current = sessionId;
+  isProgrammaticScrollLockedRef.current = isProgrammaticScrollLocked;
+
+  const resyncIsNearBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el || !isVisibleRef.current) return;
+    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+  }, [scrollRef]);
+  const markNotNearBottom = useCallback(() => {
+    isNearBottomRef.current = false;
+  }, []);
+
+  usePersistedTranscriptScroll({
+    scrollRef,
+    sessionId,
+    storeApi,
+    resyncIsNearBottom,
+    enabled,
+    isWorking,
+    isVisible,
+    isVisibleRef,
+    messages,
+  });
+
+  useAutoScrollOnContent({
+    scrollRef,
+    messages,
+    isWorking,
+    enabled,
+    hasUnreadDivider,
+    isNearBottomRef,
+    isVisibleRef,
+    isProgrammaticScrollLocked,
+    prevIsWorkingRef,
+  });
+
+  useCatchUpOnReEnable(scrollRef, messages, enabled, isNearBottomRef);
+  useCatchUpOnVisible({
+    scrollRef,
+    isVisible,
+    isNearBottomRef,
+    enabledRef,
+    hasUnreadDividerRef,
+    sessionIdRef,
+    isProgrammaticScrollLockedRef,
+  });
+
+  return { isNearBottomRef, resyncIsNearBottom, markNotNearBottom };
+}
+
+function usePersistedTranscriptScroll({
   scrollRef,
   sessionId,
-  enabled,
-  frozenScrollTopRef,
-  userScrollIntentUntilRef,
+  storeApi,
   resyncIsNearBottom,
+  enabled,
+  isWorking,
+  isVisible,
+  isVisibleRef,
+  messages,
 }: {
   scrollRef: React.RefObject<HTMLDivElement | null>;
   sessionId: string | null;
-  enabled: boolean;
-  frozenScrollTopRef: React.MutableRefObject<number | null>;
-  userScrollIntentUntilRef: React.MutableRefObject<number>;
+  storeApi: ReturnType<typeof useAppStoreApi>;
   resyncIsNearBottom: () => void;
+  enabled: boolean;
+  isWorking: boolean;
+  isVisible: boolean;
+  isVisibleRef: React.RefObject<boolean>;
+  messages: Message[];
 }) {
-  const storeApi = useAppStoreApi();
-
+  const frozenScrollTopRef = useRef<number | null>(null);
+  const userScrollIntentUntilRef = useRef(0);
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -592,9 +699,10 @@ function useScrollPositionPersistence({
     /** Persists the container's current scrollTop for the session (used when
      * auto-scroll is disabled). */
     const captureScrollTop = () => {
-      if (sessionId) {
-        const scrollTop = !enabled ? (frozenScrollTopRef.current ?? el.scrollTop) : el.scrollTop;
-        storeApi.getState().setTranscriptScrollTop(sessionId, scrollTop);
+      if (sessionId && (isVisibleRef.current || frozenScrollTopRef.current !== null)) {
+        storeApi
+          .getState()
+          .setTranscriptScrollTop(sessionId, frozenScrollTopRef.current ?? el.scrollTop);
       }
     };
     // Coalesce persisted writes to at most one per animation frame — native
@@ -604,6 +712,7 @@ function useScrollPositionPersistence({
     /** Scroll listener: resyncs the near-bottom flag and schedules a
      * coalesced persistence of the scroll position. */
     const onScroll = () => {
+      if (!isVisibleRef.current) return;
       resyncIsNearBottom();
       // A layout change can clamp a disabled transcript's scrollTop and emit a
       // native scroll event. Only adopt an offset when a recent user gesture
@@ -652,84 +761,17 @@ function useScrollPositionPersistence({
     frozenScrollTopRef,
     userScrollIntentUntilRef,
   ]);
-}
-
-/** Duration a programmatic scroll's guard stays held if the browser never
- * reports `scrollend` (Safari lacks it as of writing; some scroll targets
- * fire it inconsistently). Comfortably longer than a `scrollIntoView`
- * smooth-scroll's typical animation so the guard doesn't outlive it in the
- * common case, but still bounded so a missed event can't wedge auto-scroll
- * off indefinitely. */
-const PROGRAMMATIC_SCROLL_GUARD_MS = 1000;
-
-/**
- * Auto-scrolls to bottom when new messages arrive (if user is near bottom)
- * or when the agent starts working (isWorking transitions to true) — unless
- * auto-scroll is disabled for this session, in which case both are
- * suppressed and the current position is continuously persisted so it
- * survives a dockview panel remount. Re-enabling catches the view up to the
- * bottom if the transcript progressed past it while disabled (see
- * `useCatchUpOnReEnable`).
- *
- * `isProgrammaticScrollLocked` suppresses both triggers while a user-initiated
- * scroll-to-start/scroll-to-last-prompt animation (see
- * `useProgrammaticScrollGuard`) is still in flight — otherwise a message
- * streaming in mid-animation can silently snap the transcript back to the
- * bottom, cancelling the user's action.
- */
-export function useAutoScroll(params: {
-  scrollRef: React.RefObject<HTMLDivElement | null>;
-  messages: Message[];
-  isWorking: boolean;
-  sessionId: string | null;
-  enabled: boolean;
-  hasUnreadDivider: boolean;
-  isProgrammaticScrollLocked: () => boolean;
-}) {
-  const {
-    scrollRef,
-    messages,
-    isWorking,
-    sessionId,
-    enabled,
-    hasUnreadDivider,
-    isProgrammaticScrollLocked,
-  } = params;
-  const isNearBottomRef = useRef(true);
-  const prevIsWorkingRef = useRef(isWorking);
-  const prevEnabledRef = useRef(enabled);
-  const frozenScrollTopRef = useRef<number | null>(null);
-  const userScrollIntentUntilRef = useRef(0);
-
-  const resyncIsNearBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
-  }, [scrollRef]);
-  const markNotNearBottom = useCallback(() => {
-    isNearBottomRef.current = false;
-  }, []);
-
-  useScrollPositionPersistence({
-    scrollRef,
-    sessionId,
-    enabled,
-    frozenScrollTopRef,
-    userScrollIntentUntilRef,
-    resyncIsNearBottom,
-  });
 
   // Own the disabled offset across every transcript layout update. Sending a
   // prompt can briefly shrink the scroll range before the new message row is
   // committed, which makes the browser clamp scrollTop even with
   // overflow-anchor disabled. Keep the pre-update offset and reapply it after
-  // each message/working-state render so that transient clamp cannot move the
-  // reader. Real user scroll events update the owned offset above.
+  // each message/working-state render so that transient clamp cannot move
+  // the reader. Real user scroll events update the owned offset above.
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
-    const wasEnabled = prevEnabledRef.current;
-    prevEnabledRef.current = enabled;
+    if (!el || !isVisibleRef.current) return;
+    const wasEnabled = frozenScrollTopRef.current === null || enabled;
     if (enabled) {
       frozenScrollTopRef.current = null;
       return;
@@ -739,14 +781,37 @@ export function useAutoScroll(params: {
       return;
     }
     el.scrollTop = frozenScrollTopRef.current;
-  }, [enabled, isWorking, messages, scrollRef]);
+  }, [enabled, isWorking, isVisible, messages, scrollRef]);
+}
 
+function useAutoScrollOnContent({
+  scrollRef,
+  messages,
+  isWorking,
+  enabled,
+  hasUnreadDivider,
+  isNearBottomRef,
+  isVisibleRef,
+  isProgrammaticScrollLocked,
+  prevIsWorkingRef,
+}: {
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  messages: Message[];
+  isWorking: boolean;
+  enabled: boolean;
+  hasUnreadDivider: boolean;
+  isNearBottomRef: React.RefObject<boolean>;
+  isVisibleRef: React.RefObject<boolean>;
+  isProgrammaticScrollLocked: () => boolean;
+  prevIsWorkingRef: React.MutableRefObject<boolean>;
+}) {
   // When isWorking transitions to true, force scroll to bottom (unless
   // disabled, locked, or a layout rebuild scroll restore is pending).
   useEffect(() => {
     if (
       isWorking &&
       !prevIsWorkingRef.current &&
+      isVisibleRef.current &&
       shouldAutoScrollToBottom({
         isNearBottom: !hasUnreadDivider,
         isProgrammaticScrollLocked: isProgrammaticScrollLocked(),
@@ -767,7 +832,7 @@ export function useAutoScroll(params: {
   // layout rebuild scroll restore is pending).
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
+    if (!el || !isVisibleRef.current) return;
     if (
       shouldAutoScrollToBottom({
         isNearBottom: isNearBottomRef.current,
@@ -779,10 +844,51 @@ export function useAutoScroll(params: {
       scrollNativeToBottom(el);
     }
   }, [messages, scrollRef, enabled, isProgrammaticScrollLocked]);
+}
 
-  useCatchUpOnReEnable(scrollRef, messages, enabled, isNearBottomRef);
-
-  return { isNearBottomRef, resyncIsNearBottom, markNotNearBottom };
+function useCatchUpOnVisible({
+  scrollRef,
+  isVisible,
+  isNearBottomRef,
+  enabledRef,
+  hasUnreadDividerRef,
+  sessionIdRef,
+  isProgrammaticScrollLockedRef,
+}: {
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  isVisible: boolean;
+  isNearBottomRef: React.RefObject<boolean>;
+  enabledRef: React.RefObject<boolean>;
+  hasUnreadDividerRef: React.RefObject<boolean>;
+  sessionIdRef: React.RefObject<string | null>;
+  isProgrammaticScrollLockedRef: React.RefObject<() => boolean>;
+}) {
+  const { isVisibleRef, activationPendingRef } = useActivationPending(isVisible);
+  useEffect(() => {
+    if (!isVisible || !activationPendingRef.current) return;
+    return scheduleAfterPanelRestore(() => {
+      if (!isVisibleRef.current) return;
+      activationPendingRef.current = false;
+      if (
+        !enabledRef.current ||
+        hasUnreadDividerRef.current ||
+        !isNearBottomRef.current ||
+        (isProgrammaticScrollLockedRef.current?.() ?? false)
+      )
+        return;
+      const dockviewState = useDockviewStore.getState();
+      if (
+        dockviewState.pendingChatScrollTop !== null ||
+        dockviewState.scrollTarget?.sessionId === sessionIdRef.current
+      ) {
+        return;
+      }
+      const el = scrollRef.current;
+      if (!el) return;
+      scrollNativeToBottom(el);
+      isNearBottomRef.current = true;
+    });
+  }, [isVisible, scrollRef]);
 }
 
 /**
@@ -1028,58 +1134,99 @@ export function useScrollToMessage(
  * The enabled "scroll to bottom" path needs no retry and settles in a single
  * write.
  */
-function useInitialScrollPosition(
-  scrollRef: React.RefObject<HTMLDivElement | null>,
-  itemCount: number,
-  sessionId: string | null,
-  enabled: boolean,
-  isNearBottomRef: React.RefObject<boolean>,
-) {
+function useInitialScrollPosition({
+  scrollRef,
+  itemCount,
+  sessionId,
+  enabled,
+  isNearBottomRef,
+  isVisible,
+  isProgrammaticScrollLocked,
+}: {
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  itemCount: number;
+  sessionId: string | null;
+  enabled: boolean;
+  isNearBottomRef: React.RefObject<boolean>;
+  isVisible: boolean;
+  isProgrammaticScrollLocked: () => boolean;
+}) {
   const storeApi = useAppStoreApi();
   const didInitialScroll = useRef(false);
+  const { isVisibleRef, activationPendingRef } = useActivationPending(isVisible);
   useEffect(() => {
+    if (!isVisible) {
+      return;
+    }
     if (didInitialScroll.current || itemCount === 0) return;
     const el = scrollRef.current;
     if (!el) return;
-    const hasPendingLayoutRestore = useDockviewStore.getState().pendingChatScrollTop !== null;
-    const savedScrollTop = sessionId
-      ? (storeApi.getState().transcriptAutoScroll.scrollTopBySessionId[sessionId] ??
-        getStoredAutoScrollTop(sessionId) ??
-        undefined)
-      : undefined;
-    const scrollTop = resolveNativeInitialScrollTop({
-      enabled,
-      hasPendingLayoutRestore,
-      savedScrollTop,
-      scrollHeight: el.scrollHeight,
-    });
-    didInitialScroll.current = true;
-    if (scrollTop === null) return;
 
-    /** Derives and stores the near-bottom flag from the applied scrollTop
-     * against the container's current dimensions. */
-    const syncNearBottom = () => {
-      isNearBottomRef.current = !hasTranscriptProgressedPastView({
-        scrollTop,
+    const applyInitialScroll = () => {
+      if (!isVisibleRef.current) return;
+      const dockviewState = useDockviewStore.getState();
+      const hasPendingLayoutRestore = dockviewState.pendingChatScrollTop !== null;
+      const hasExplicitScrollTarget =
+        sessionId !== null && dockviewState.scrollTarget?.sessionId === sessionId;
+      if (hasPendingLayoutRestore || hasExplicitScrollTarget || isProgrammaticScrollLocked()) {
+        didInitialScroll.current = true;
+        activationPendingRef.current = false;
+        return;
+      }
+      const savedScrollTop = sessionId
+        ? (storeApi.getState().transcriptAutoScroll.scrollTopBySessionId[sessionId] ??
+          getStoredAutoScrollTop(sessionId) ??
+          undefined)
+        : undefined;
+      const scrollTop = resolveNativeInitialScrollTop({
+        enabled,
+        hasPendingLayoutRestore,
+        savedScrollTop,
         scrollHeight: el.scrollHeight,
-        clientHeight: el.clientHeight,
+      });
+      didInitialScroll.current = true;
+      activationPendingRef.current = false;
+      if (scrollTop === null) return;
+
+      /** Derives and stores the near-bottom flag from the applied scrollTop
+       * against the container's current dimensions. */
+      const syncNearBottom = () => {
+        isNearBottomRef.current = !hasTranscriptProgressedPastView({
+          scrollTop,
+          scrollHeight: el.scrollHeight,
+          clientHeight: el.clientHeight,
+        });
+      };
+
+      el.scrollTop = scrollTop;
+      syncNearBottom();
+
+      // Only a concrete disabled-restore offset can be clamped by a not-yet-
+      // settled layout; the enabled bottom target lands in one write, and a
+      // write that already reached its target needs no follow-up.
+      if (enabled || scrollTop <= 0 || el.scrollTop >= scrollTop - 1) return;
+
+      scheduleClampedScrollRestore({
+        element: el,
+        targetScrollTop: scrollTop,
+        onApply: syncNearBottom,
       });
     };
 
-    el.scrollTop = scrollTop;
-    syncNearBottom();
-
-    // Only a concrete disabled-restore offset can be clamped by a not-yet-
-    // settled layout; the enabled bottom target lands in one write, and a
-    // write that already reached its target needs no follow-up.
-    if (enabled || scrollTop <= 0 || el.scrollTop >= scrollTop - 1) return;
-
-    scheduleClampedScrollRestore({
-      element: el,
-      targetScrollTop: scrollTop,
-      onApply: syncNearBottom,
-    });
-  }, [itemCount, sessionId, enabled, isNearBottomRef, storeApi]);
+    if (activationPendingRef.current) {
+      return scheduleAfterPanelRestore(applyInitialScroll);
+    }
+    applyInitialScroll();
+  }, [
+    itemCount,
+    sessionId,
+    enabled,
+    isNearBottomRef,
+    storeApi,
+    isVisible,
+    isProgrammaticScrollLocked,
+    scrollRef,
+  ]);
 }
 
 /**
@@ -1130,6 +1277,7 @@ export function useNativeScrollManagement(params: {
     enabled,
     hasUnreadDivider,
     isProgrammaticScrollLocked,
+    isVisible,
   });
   const runGuardedScroll = useProgrammaticScrollGuard(
     scrollRef,
@@ -1164,13 +1312,22 @@ export function useNativeScrollManagement(params: {
   });
   useRetryPaginationOnUpwardScroll(scrollRef, onUserGesture, recheck, isProgrammaticScrollLocked);
   useRecheckPaginationOnVisible(isVisible, recheck);
-  useInitialScrollPosition(scrollRef, items.length, sessionId, enabled, isNearBottomRef);
+  useInitialScrollPosition({
+    scrollRef,
+    itemCount: items.length,
+    sessionId,
+    enabled,
+    isNearBottomRef,
+    isVisible,
+    isProgrammaticScrollLocked,
+  });
 
   return {
     handleScrollToMessage,
     sentinelRef,
     resyncIsNearBottom,
     markNotNearBottom,
+    isProgrammaticScrollLocked,
     retryLoadMore,
     showRecovery,
   };
