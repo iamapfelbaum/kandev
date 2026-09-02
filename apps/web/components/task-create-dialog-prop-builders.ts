@@ -11,7 +11,6 @@
 import type { TaskCreateDialogProps } from "@/components/task-create-dialog";
 import type { useTaskCreateDialogSetup } from "@/components/task-create-dialog-setup";
 import type { DialogFormBodyProps, DialogFormState } from "@/components/task-create-dialog-types";
-import { t } from "@/lib/i18n";
 
 export function computeHasAllBranches(fs: DialogFormState): boolean {
   if (fs.noRepository) return true;
@@ -125,6 +124,6 @@ export function buildDialogFooterProps(
     submitBlockedReason:
       props.submitBlockedReason ??
       pendingAttachmentUploadReason ??
-      (setup.hasUnavailableSavedBase ? t("task:repositorySetBaseUnavailable") : null),
+      setup.savedBaseSubmitBlockedReason,
   };
 }

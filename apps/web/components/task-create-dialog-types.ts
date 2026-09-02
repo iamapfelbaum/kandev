@@ -591,6 +591,7 @@ export type DialogFormBodyProps = {
       rows: TaskRepoRow[];
       repositories: Repository[];
       isLocalExecutor: boolean;
+      freshBranchEnabled: boolean;
       open: boolean;
       setOpen: (open: boolean) => void;
     } | null;

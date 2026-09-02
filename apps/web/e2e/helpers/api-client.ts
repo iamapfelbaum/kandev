@@ -913,7 +913,7 @@ export class ApiClient {
       id: string;
       name: string;
       description: string;
-      repositories: Array<{ repository_id: string; position: number }>;
+      repositories: Array<{ repository_id: string; position: number; base_branch?: string }>;
     }>;
     total: number;
   }> {

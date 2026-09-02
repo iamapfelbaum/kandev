@@ -244,6 +244,36 @@ function hasUnavailableSavedBase(
   });
 }
 
+function hasPendingSavedBaseValidation(
+  rows: DialogFormState["repositories"],
+  repositoryBranches: RepositoryBranchesState,
+): boolean {
+  return rows.some(
+    (row) =>
+      Boolean(row.repositoryId && row.baseBranch) &&
+      !repositoryBranches.loadedByRepositoryId[row.repositoryId as string],
+  );
+}
+
+function savedBaseSubmitBlockedReason(
+  hasPendingValidation: boolean,
+  hasUnavailableBase: boolean,
+): string | null {
+  if (hasPendingValidation) return t("task:loadingBranches2");
+  if (hasUnavailableBase) return t("task:repositorySetBaseUnavailable");
+  return null;
+}
+
+function savedBaseSubmitBlockedReasonForRows(
+  rows: DialogFormState["repositories"],
+  repositoryBranches: RepositoryBranchesState,
+): string | null {
+  return savedBaseSubmitBlockedReason(
+    hasPendingSavedBaseValidation(rows, repositoryBranches),
+    hasUnavailableSavedBase(rows, repositoryBranches),
+  );
+}
+
 function useDialogSetupData(
   props: TaskCreateDialogProps,
   fs: ReturnType<typeof useDialogFormState>,
@@ -305,7 +335,10 @@ function useDialogSetupData(
     executors,
     upsertWorkspaceRepository,
   });
-  const hasUnavailableSavedBaseValue = hasUnavailableSavedBase(fs.repositories, repositoryBranches);
+  const savedBaseSubmitBlockedReasonValue = savedBaseSubmitBlockedReasonForRows(
+    fs.repositories,
+    repositoryBranches,
+  );
   const refreshBranchPolicies = useCallback(async () => {
     const repositoryIds = [
       ...new Set(
@@ -339,7 +372,7 @@ function useDialogSetupData(
     handlers,
     refreshBranchPolicies,
     repositoryLocalPath: resolveSingleRowLocalPath(fs, repositories),
-    hasUnavailableSavedBase: hasUnavailableSavedBaseValue,
+    savedBaseSubmitBlockedReason: savedBaseSubmitBlockedReasonValue,
   };
 }
 
@@ -382,7 +415,7 @@ export function useTaskCreateDialogSetup(
     handlers,
     repositoryLocalPath,
     refreshBranchPolicies,
-    hasUnavailableSavedBase,
+    savedBaseSubmitBlockedReason,
   } = data;
   const submitHandlers = useSubmitHandlersWiring({
     props: resolvedProps,
@@ -398,7 +431,7 @@ export function useTaskCreateDialogSetup(
   });
   const guardedHandleSubmit = useGuardedSubmit(
     submitHandlers.handleSubmit,
-    resolvedProps.submitBlockedReason,
+    resolvedProps.submitBlockedReason ?? savedBaseSubmitBlockedReason,
   );
   const handleKeyDown = useKeyboardShortcutHandler(SHORTCUTS.SUBMIT, (event) => {
     guardedHandleSubmit(event as unknown as FormEvent);
@@ -440,7 +473,7 @@ export function useTaskCreateDialogSetup(
     enhance,
     handleJiraImport,
     handleLinearImport,
-    hasUnavailableSavedBase,
+    savedBaseSubmitBlockedReason,
   };
 }
 
@@ -460,6 +493,7 @@ function useDialogRepositorySets(
     setRepositoriesDirty: fs.setRepositoriesDirty,
     userSettingsLoaded,
     isLocalExecutor: computed.isLocalExecutor,
+    freshBranchEnabled: fs.freshBranchEnabled,
   });
 }
 
@@ -472,6 +506,7 @@ type RepositorySetsForDialogArgs = {
   setRepositoriesDirty: DialogFormState["setRepositoriesDirty"];
   userSettingsLoaded: boolean;
   isLocalExecutor: boolean;
+  freshBranchEnabled: boolean;
 };
 
 /**
@@ -491,6 +526,7 @@ function useRepositorySetsForDialog({
   setRepositoriesDirty,
   userSettingsLoaded,
   isLocalExecutor,
+  freshBranchEnabled,
 }: RepositorySetsForDialogArgs) {
   const { sets } = useRepositorySets(workspaceId, open);
   const onApply = useApplyRepositorySet({
@@ -514,6 +550,7 @@ function useRepositorySetsForDialog({
             rows,
             repositories,
             isLocalExecutor,
+            freshBranchEnabled,
             open: saveOpen,
             setOpen: setSaveOpen,
           }
