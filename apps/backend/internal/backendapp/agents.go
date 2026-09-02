@@ -113,6 +113,10 @@ func provideLifecycleManager(
 		cfg.ResolvedHomeDir(),
 		log,
 	)
+	configureMCPResolver(lifecycleMgr, agentSettingsRepo, mcpService, secretStore)
+	if stateRepo, ok := agentSettingsRepo.(mcpconfig.SessionMCPSelectionStateRepository); ok {
+		lifecycleMgr.SetMCPSelectionStateRepository(stateRepo)
+	}
 
 	// Register environment preparers (keyed by ExecutorType — the
 	// "local"/"worktree"/"local_docker"/"sprites" taxonomy, not Runtime).
@@ -168,6 +172,41 @@ func provideLifecycleManager(
 		zap.Int("runtimes", len(executorRegistry.List())),
 		zap.Int("agent_types", len(agentRegistry.List())))
 	return lifecycleMgr, nil
+}
+
+func configureMCPResolver(
+	lifecycleMgr *lifecycle.Manager,
+	agentSettingsRepo settingsstore.Repository,
+	mcpService *mcpconfig.Service,
+	secretStore secrets.SecretStore,
+) {
+	catalogRepo, ok := agentSettingsRepo.(mcpconfig.CatalogRepository)
+	if !ok {
+		return
+	}
+	selectionRepo, ok := agentSettingsRepo.(mcpconfig.SelectionRepository)
+	if !ok {
+		return
+	}
+	mcpResolver := mcpconfig.NewResolver(catalogRepo, selectionRepo)
+	var importStates mcpconfig.LegacyImportStateReader
+	if stateRepo, ok := agentSettingsRepo.(mcpconfig.LegacyImportStateReader); ok {
+		importStates = stateRepo
+	}
+	mcpResolver.SetLegacyProvider(mcpService, importStates)
+	if secretStore != nil {
+		mcpResolver.SetSecretResolver(mcpSecretResolver(secretStore))
+	}
+	lifecycleMgr.SetMCPResolver(mcpResolver)
+}
+
+func mcpSecretResolver(store secrets.SecretStore) mcpconfig.MCPSecretResolver {
+	return func(ctx context.Context, secretID, workspaceID string) (string, error) {
+		if scoped, ok := store.(secrets.ScopedSecretStore); ok {
+			return scoped.RevealForWorkspace(ctx, secretID, workspaceID)
+		}
+		return store.Reveal(ctx, secretID)
+	}
 }
 
 func credentialFilePath(cfg *config.Config) string {

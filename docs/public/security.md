@@ -54,9 +54,9 @@ An executor decides where the agent process runs. It does not reduce permissions
 
 Use separate profiles for different trust levels. Do not give a routine documentation or review task the same environment, secrets, and permission bypasses as a production automation. Review [Executors](executors.md) before changing from the seeded Worktree profile.
 
-## Scope agent profiles
+## Scope agent profiles and MCP definitions
 
-An agent profile combines a CLI, model, mode, flags, environment values, secret references, permissions, and optional MCP servers. Treat it as a reusable authority package.
+An agent profile combines a CLI, model, mode, flags, environment values, secret references, permissions, and runtime policy. Treat it as a reusable authority package. Workspace MCP definitions are separate reusable authority inputs. They can contain remote endpoints, exact managed package identities, existing commands, and references to workspace secrets.
 
 The configurable ACP command prefix is currently a launch-customization
 feature, not an isolation boundary. Kandev does not yet have a separate
@@ -75,11 +75,12 @@ share the operator origin.
 2. Select the least-privileged Git, provider, and cloud credentials that purpose needs.
 3. Leave approval or sandbox bypasses disabled unless the executor is disposable and the task is trusted.
 4. Allow only required MCP transports and servers in the executor policy.
-5. Test the profile on a disposable repository before enabling workflow auto-start or scheduled automation.
+5. Review every workspace MCP definition before selecting it for a profile, repository, task, or session. Saving a definition does not download or test its endpoint, and marketplace metadata is not a Kandev security review.
+6. Test the profile on a disposable repository before enabling workflow auto-start or scheduled automation.
 
 Agent CLIs can also discover authentication from their normal home-directory files, environment, keychain, or provider CLI. Removing a Kandev secret does not revoke a token stored elsewhere. Revoke credentials at the provider and remove retained executor copies when access should end.
 
-See [Agents and profiles](agents-and-profiles.md) for exact profile fields and [Automation and MCP](automation-and-mcp.md) for unattended and external-client boundaries.
+See [Agents and profiles](agents-and-profiles.md) for exact profile fields and workspace MCP setup, and [Automation and MCP](automation-and-mcp.md) for unattended and external-client boundaries.
 
 ### Treat copied agent configuration as an authority grant
 

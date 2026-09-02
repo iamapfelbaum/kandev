@@ -60,6 +60,7 @@ surface shared by task and Office consumers.
 - [Spawn Session Effective Agent Profile](requirements/spawn-session-effective-profile.md)
 - [Subagent context persistence](requirements/subagent-context-persistence.md)
 - [Profile-backed Utility Agents](requirements/utility-agent-profiles.md)
+- [Workspace MCP Configuration](requirements/workspace-mcp-configuration.md)
 
 ### System design
 
@@ -83,6 +84,7 @@ surface shared by task and Office consumers.
 - [Subagent context persistence System Design Part 7](system-design/subagent-context-persistence-07.md)
 - [Subagent context persistence System Design Part 8](system-design/subagent-context-persistence-08.md)
 - [Profile-backed Utility Agents](system-design/utility-agent-profiles.md)
+- [Workspace MCP Configuration](system-design/workspace-mcp-configuration.md)
 
 ## Migration record
 

@@ -30,6 +30,8 @@ import { useResolvedTaskCreateWorkflowContext } from "@/components/task-create-d
 import { truncateRemoteTaskTitle } from "@/lib/task-title";
 import { t } from "@/lib/i18n";
 import { listRepositoryBranchPolicies } from "@/lib/api";
+import { useTaskCreateDialogMCPSetup } from "@/components/task-create-dialog-mcp";
+import { useMCPSelectionEditor } from "@/hooks/domains/workspace/use-mcp-selection-editor";
 
 // Catalog key: module scope, so it is resolved at the call site.
 const PROMPT_INSERTED_MESSAGE_KEY = "task:enhancedPromptInserted";
@@ -123,6 +125,7 @@ type SubmitWiringArgs = {
   autoTitle: boolean;
   refreshBranchPolicies: () => Promise<void>;
   preserveQueuedLastUsedOnClose: () => void;
+  mcpSelectionEditor: ReturnType<typeof useMCPSelectionEditor>;
 };
 
 function useSubmitHandlersWiring({
@@ -136,6 +139,7 @@ function useSubmitHandlersWiring({
   autoTitle,
   refreshBranchPolicies,
   preserveQueuedLastUsedOnClose,
+  mcpSelectionEditor,
 }: SubmitWiringArgs) {
   const {
     workspaceId,
@@ -187,6 +191,8 @@ function useSubmitHandlersWiring({
     setRemoteRepos: fs.setRemoteRepos,
     setAgentProfileId: fs.setAgentProfileId,
     setExecutorId: fs.setExecutorId,
+    setMcpServerIds: fs.setMcpServerIds,
+    setMcpServerIdsDirty: fs.setMcpServerIdsDirty,
     setSelectedWorkflowId: fs.setSelectedWorkflowId,
     setFetchedSteps: fs.setFetchedSteps,
     clearDraft: fs.clearDraft,
@@ -196,6 +202,12 @@ function useSubmitHandlersWiring({
     noRepository: fs.noRepository,
     workspacePath: fs.workspacePath,
     blockedBy: fs.blockedBy,
+    mcpServerIds: fs.mcpServerIds,
+    mcpServerIdsDirty: fs.mcpServerIdsDirty,
+    saveTaskMCPSelections:
+      !isSessionMode && taskId && workspaceId
+        ? (definitionIds: string[]) => mcpSelectionEditor.save(definitionIds)
+        : undefined,
   });
 }
 
@@ -304,6 +316,28 @@ function useDialogSetupData(
   };
 }
 
+function useTaskCreateDialogInteractionSetup(args: SubmitWiringArgs) {
+  const { props, fs, computed } = args;
+  const submitHandlers = useSubmitHandlersWiring(args);
+  const guardedHandleSubmit = useGuardedSubmit(
+    submitHandlers.handleSubmit,
+    props.submitBlockedReason,
+  );
+  const handleKeyDown = useKeyboardShortcutHandler(SHORTCUTS.SUBMIT, (event) => {
+    guardedHandleSubmit(event as unknown as FormEvent);
+  });
+  const enhance = useEnhanceForDialog(fs, props.taskId, props.open);
+  const freshBranchAvailable =
+    !fs.useRemote && computed.isLocalExecutor && fs.repositories.length === 1;
+  return {
+    submitHandlers,
+    guardedHandleSubmit,
+    handleKeyDown,
+    enhance,
+    freshBranchAvailable,
+  };
+}
+
 export function useTaskCreateDialogSetup(
   props: TaskCreateDialogProps,
   options: { preserveQueuedLastUsedOnClose?: () => void } = {},
@@ -341,7 +375,17 @@ export function useTaskCreateDialogSetup(
     repositoryLocalPath,
     refreshBranchPolicies,
   } = data;
-  const submitHandlers = useSubmitHandlersWiring({
+  const mcp = useTaskCreateDialogMCPSetup({
+    open: resolvedProps.open,
+    workspaceId,
+    isSessionMode,
+    taskId: resolvedProps.taskId,
+    effectiveAgentProfileId: computed.effectiveAgentProfileId,
+    repositories: fs.repositories,
+    mcpServerIdsDirty: fs.mcpServerIdsDirty,
+    setMcpServerIds: fs.setMcpServerIds,
+  });
+  const interaction = useTaskCreateDialogInteractionSetup({
     props: resolvedProps,
     fs,
     computed,
@@ -352,19 +396,10 @@ export function useTaskCreateDialogSetup(
     autoTitle,
     refreshBranchPolicies,
     preserveQueuedLastUsedOnClose: options.preserveQueuedLastUsedOnClose ?? (() => undefined),
+    mcpSelectionEditor: mcp.editor,
   });
-  const guardedHandleSubmit = useGuardedSubmit(
-    submitHandlers.handleSubmit,
-    resolvedProps.submitBlockedReason,
-  );
-  const handleKeyDown = useKeyboardShortcutHandler(SHORTCUTS.SUBMIT, (event) => {
-    guardedHandleSubmit(event as unknown as FormEvent);
-  });
-  const enhance = useEnhanceForDialog(fs, resolvedProps.taskId, resolvedProps.open);
   const handleJiraImport = useJiraImportHandler(fs, data.handlers.handleTaskNameChange);
   const handleLinearImport = useLinearImportHandler(fs, data.handlers.handleTaskNameChange);
-  const freshBranchAvailable =
-    !fs.useRemote && computed.isLocalExecutor && fs.repositories.length === 1;
   const repositorySets = useRepositorySetsForDialog({
     workspaceId: resolvedProps.workspaceId ?? null,
     open: resolvedProps.open,
@@ -390,16 +425,16 @@ export function useTaskCreateDialogSetup(
     refreshRepositories,
     computed,
     handlers,
-    submitHandlers,
-    handleKeyDown,
-    freshBranchAvailable,
+    ...interaction,
+    handleJiraImport,
+    handleLinearImport,
     repositorySets,
     taskCreateLastUsed,
     userSettingsLoaded,
-    guardedHandleSubmit,
-    enhance,
-    handleJiraImport,
-    handleLinearImport,
+
+    mcpDefinitions: mcp.definitions,
+    mcpDefinitionsLoading: mcp.definitionsLoading,
+    mcpInheritedSelections: mcp.inheritedSelections,
   };
 }
 
