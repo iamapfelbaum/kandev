@@ -3,6 +3,7 @@ created: 2026-09-02
 status: done
 requirements:
   - REQ-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003
+  - REQ-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-004
   - REQ-TASKS-MCP-TOOL-NAMES-001
 system_design:
   - ../../specs/tasks/system-design/workflow-step-agent-start-ownership.md
@@ -15,9 +16,11 @@ legacy_specs:
 
 ## Overview
 
-The backend will use an atomically claimed durable session prompt boundary before it applies the task-description fallback. Then the frontend will correct two plan-tool names.
+The backend uses an atomically claimed session prompt boundary before it applies
+the task-description fallback. The frontend uses the canonical plan-tool names.
 
-The backend work owns the duplicate dispatch. The frontend correction is independent, but the primary session will implement work orders sequentially.
+The follow-up work makes immediate agent-start placement independent of agent
+mode. This keeps the task in the workflow step that owns automatic starts.
 
 ## Scope
 
@@ -29,11 +32,15 @@ The backend work owns the duplicate dispatch. The frontend correction is indepen
 - Preserve the first task-description prompt for unprompted sessions.
 - Correct `plan_get` and `plan_update` in the active-plan context.
 - Add focused Go, TypeScript, and Playwright regressions.
+- Route an immediate plan-mode agent start to the first automatic-start step.
+- Prove the routing through desktop and mobile task creation.
+- Update the public workflow guidance.
 
 ### Out of scope
 
-- Do not change plan-mode placement at the first workflow step.
-- Do not change `is_start_step` or `auto_start_agent` routing.
+- Do not change the first-step placement of plan-only prepared sessions when
+  `start_agent=false`.
+- Do not change the configured start-step behavior for no-agent task creation.
 - Do not change workflow prompts that contain text.
 - Do not add a database column or migration.
 - Do not change MCP tool registration or transport names.
@@ -62,6 +69,20 @@ Change the active-plan context in `apps/web/hooks/use-message-handler.ts`. Use `
 
 Export the pure context helper for focused unit coverage. Do not localize this model-facing instruction.
 
+### Immediate-launch placement
+
+Change `task.Service.resolveWorkflowStep` so `StartAgent` is evaluated before
+`PlanMode`. A request with both values uses `ResolveAutoStartStep`. A request
+with only `PlanMode` continues to use `ResolveFirstStep`.
+
+Keep explicit `workflow_step_id` precedence and the existing automatic-start
+fallback chain. No transport, API, persistence, or frontend production change
+is required.
+
+Update the existing desktop workflow E2E scenario. Add a mobile scenario that
+uses the visible plan-mode action. Update the public task-creation reference
+and troubleshooting text.
+
 ## Tests
 
 - `AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003.1`: add a Go test for an unprompted session on an empty automatic-start step.
@@ -71,20 +92,38 @@ Export the pure context helper for focused unit coverage. Do not localize this m
 - `AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003.5`: add a focused `StartSessionForWorkflowStep` regression.
 - `AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003.6`: cover the shared decision before the transport split.
 - `AC-TASKS-MCP-TOOL-NAMES-001.3`: add a TypeScript test for canonical plan-tool names.
+- `AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-004.1`: update service and
+  transport routing tests for `start_agent=true` with `plan_mode=true`.
+- `AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-004.2`: retain the existing
+  automatic-start fallback test.
+- `AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-004.3`: retain the explicit-step
+  precedence test.
 
 ## E2E tests
 
-Extend `apps/web/e2e/tests/workflow/start-step-vs-auto-start-step.spec.ts`. Create a plan-mode task in the first step and wait for its first turn to finish.
+Update `apps/web/e2e/tests/workflow/start-step-vs-auto-start-step.spec.ts`.
+Start a plan-mode agent through the desktop task dialog. Assert that the task
+lands in the first automatic-start step.
 
-Move the idle task into an empty automatic-start step. Wait for the asynchronous on-enter session write and a stable backend transcript/turn snapshot. Assert that the description appears in exactly one user message, no empty user row exists, and no additional turn was created.
+Keep the duplicate-prompt scenario by making Plan the first automatic-start
+destination. Move the idle task into a second empty automatic-start step.
+Assert that the description appears once and that no extra turn exists.
 
-Use backend state polling for session readiness. Use the transcript only for the final user-visible assertion.
+Add `apps/web/e2e/tests/workflow/mobile-start-step-vs-auto-start-step.spec.ts`.
+Use the mobile plan-mode button and assert the same destination. These tests
+change behavior only. The current task dialog layout and mobile composition
+remain unchanged.
+
+The current mobile task-create footer is the nearest mobile exemplar. It keeps
+the plan-mode action visible as a touch-sized button. The desktop split menu
+and the mobile button continue to use one submission handler.
 
 ## Work orders
 
 - [x] [Task 01: Deduplicate empty workflow prompts](task-01-deduplicate-empty-workflow-prompts.md)
 - [x] [Task 02: Correct plan-tool names](task-02-correct-plan-tool-names.md)
 - [x] [Task 03: Prove the plan-mode workflow flow](task-03-prove-plan-mode-workflow-flow.md)
+- [x] [Task 04: Route immediate plan-mode starts](task-04-route-immediate-plan-mode-starts.md)
 
 ## Verification results
 
@@ -98,6 +137,13 @@ Use backend state polling for session readiness. Use the transcript only for the
 - Frontend focused hook suite: 27 tests passed.
 - Frontend typecheck, targeted ESLint, i18n check, and i18n ratchet: passed.
 - Frontend production build and targeted Playwright regression: passed.
+- Task 04 focused backend suite: 14 tests passed in 2 packages.
+- Task 04 desktop Playwright suite: 3 tests passed, including the retained
+  duplicate-prompt regression.
+- Task 04 mobile Chrome Playwright suite: 1 test passed through the phone-only
+  Plan mode action and phone board navigation.
+- Public documentation validation: 61 tests passed and 41 published pages
+  validated.
 
 ## Risks
 
@@ -106,3 +152,5 @@ Use backend state polling for session readiness. Use the transcript only for the
 - A broad guard can suppress non-empty step prompts. The claim applies only to the empty `WorkflowStep.Prompt` fallback; non-empty prompts, including `{{task_prompt}}`, retain their existing semantics.
 - A session-ID reuse can leak a prompt claim if the counter is not removed with the session. Delete the counter explicitly because the replay-safe table has no foreign key.
 - The explicit workflow-step path also manages resume state. Prompt suppression must not change its existing lifecycle behavior.
+- The current desktop E2E scenario encodes the old plan-mode destination. Task
+  04 must replace that assertion without removing duplicate-prompt coverage.

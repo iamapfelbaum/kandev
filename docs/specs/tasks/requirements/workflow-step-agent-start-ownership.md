@@ -2,7 +2,7 @@
 status: draft
 system: tasks
 created: 2026-08-05
-updated: 2026-09-02
+updated: 2026-09-03
 owners:
   - Kandev
 ---
@@ -66,6 +66,27 @@ sessions shall use the same task-description fallback rule.
 - **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003.7:** If prompt-history
 inspection fails, the system shall stop the automatic prompt and expose the
 existing workflow-start error behavior.
+
+### REQ-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-004: Immediate-launch placement
+
+**Intent:** Place a new task in the workflow step that owns its requested agent
+start, regardless of the selected agent mode.
+
+#### Acceptance criteria
+
+- **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-004.1:** When task creation
+starts an agent immediately, the system shall place the task in the first
+positional step with an `auto_start_agent` entry action. Plan mode shall not
+change this destination.
+- **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-004.2:** When no workflow step
+has an `auto_start_agent` entry action, an immediate agent start shall use the
+configured start step. If no start step exists, it shall use the first
+positional step.
+- **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-004.3:** When a creator supplies
+an explicit workflow step, the system shall use that step instead of an
+intent-derived destination.
+- **AC-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-004.4:** Desktop and mobile task
+creation shall apply the same immediate-launch placement rule.
 
 ## Migrated source detail
 
@@ -185,5 +206,6 @@ read, which is a design change beyond this repair.
   force-kill rather than an independent defect.
 - Changing task `FAILED` semantics, the reconciliation path, or the
   lazy-recovery boot that follows a backend restart.
-- Changing plan-mode placement. Plan-mode creation continues to use the first
-  workflow step by position.
+- Changing placement for a plan-only prepared session that does not request an
+  immediate agent start. This path continues to use the first workflow step by
+  position.

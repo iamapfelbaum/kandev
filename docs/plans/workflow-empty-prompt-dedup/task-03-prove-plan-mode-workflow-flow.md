@@ -87,3 +87,5 @@ Add a Playwright regression for the reported task flow. The test will prove the 
 - No mobile-only test was added because this is a transport-neutral prompt
   decision with no mobile layout or interaction change; the existing shared
   session surface is exercised by the browser regression.
+- Task 04 supersedes the initial placement assertion. It will retain this
+  prompt regression by making Plan the first automatic-start destination.

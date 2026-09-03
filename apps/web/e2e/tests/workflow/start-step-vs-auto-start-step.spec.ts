@@ -16,7 +16,7 @@ import { SessionPage } from "../../pages/session-page";
  * where the routing is visible at all.
  */
 test.describe("start step vs auto-start step", () => {
-  test("parks a no-agent create and starts an agent create on the automated step", async ({
+  test("routes immediate agent starts to the automated step in either agent mode", async ({
     testPage,
     apiClient,
     seedData,
@@ -72,6 +72,22 @@ test.describe("start step vs auto-start step", () => {
     });
     // The parked card is untouched by the second create.
     await expect(kanban.taskCardInColumn("Parked for later", backlog.id)).toBeVisible();
+
+    // --- Start task in plan mode -> the same auto-start destination ---
+    await kanban.createTaskButton.click();
+    await expect(dialog).toBeVisible();
+    await testPage.getByTestId("task-title-input").fill("Plans right now");
+    await testPage.getByTestId("task-description-input").fill("/e2e:simple-message");
+    await expect(start).toBeEnabled({ timeout: 30_000 });
+    await testPage.getByTestId("submit-start-agent-chevron").click();
+    await testPage.getByTestId("submit-plan-mode").click();
+    await expect(dialog).not.toBeVisible({ timeout: 15_000 });
+
+    await kanban.goto();
+    await expect(kanban.taskCardInColumn("Plans right now", inProgress.id)).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(kanban.taskCardInColumn("Plans right now", backlog.id)).toHaveCount(0);
   });
 
   // The dialog used to send its own `workflow_step_id`, taken from whatever the
@@ -127,7 +143,13 @@ test.describe("start step vs auto-start step", () => {
       is_start_step: true,
     });
     const autoStartStep = await apiClient.createWorkflowStep(workflow.id, "Auto Start", 1);
-    await apiClient.updateWorkflowStep(planStep.id, { events: {} });
+    // The first step is also the first auto-start destination. This keeps the
+    // task on Plan under immediate-start routing, then exercises suppression
+    // when the existing session enters a second empty auto-start step.
+    await apiClient.updateWorkflowStep(planStep.id, {
+      prompt: "",
+      events: { on_enter: [{ type: "auto_start_agent" }] },
+    });
     await apiClient.updateWorkflowStep(autoStartStep.id, {
       prompt: "",
       events: { on_enter: [{ type: "auto_start_agent" }] },

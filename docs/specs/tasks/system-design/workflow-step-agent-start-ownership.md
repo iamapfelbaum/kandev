@@ -5,6 +5,7 @@ requirements:
   - REQ-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-001
   - REQ-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-002
   - REQ-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003
+  - REQ-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-004
 ---
 
 # Workflow Step Agent Start Ownership System Design
@@ -24,6 +25,7 @@ The design preserves runtime configuration through the existing reset contract. 
 | `REQ-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-001` | [Session states](#session-states) |
 | `REQ-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-002` | [Active-turn reset flow](#active-turn-reset-flow), [Bounded predecessor wait](#bounded-predecessor-wait) |
 | `REQ-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-003` | [Prompt fallback ownership](#prompt-fallback-ownership), [Prompt-history contract](#prompt-history-contract), [Workflow-entry prompt flow](#workflow-entry-prompt-flow) |
+| `REQ-TASKS-WORKFLOW-STEP-AGENT-START-OWNERSHIP-004` | [Creation destination routing](#creation-destination-routing) |
 
 ## Components and responsibilities
 
@@ -39,6 +41,35 @@ The orchestrator owns the task-description fallback decision. The task
 repository owns the durable prompt counter and its atomic initial-fallback
 claim. Direct user-message persistence and the fallback claim use the same
 per-session write boundary.
+
+The task service owns the initial workflow-step destination. It derives the
+destination from explicit step selection and agent-start intent. Agent mode is
+an execution setting and cannot override an immediate start.
+
+## Creation destination routing
+
+`task.Service.resolveWorkflowStep` applies this precedence:
+
+1. Use an explicit `workflow_step_id` without further resolution.
+2. If `StartAgent` is true, call `ResolveAutoStartStep` regardless of
+   `PlanMode`.
+3. If only `PlanMode` is true, call `ResolveFirstStep` for the existing
+   plan-only prepared-session path.
+4. Otherwise, call `ResolveStartStep`.
+
+`ResolveAutoStartStep` selects the first positional step whose `on_enter`
+actions include `auto_start_agent`. If no such step exists, it calls
+`ResolveStartStep`. That resolver uses the configured start step and then the
+first positional step as its fallback.
+
+The HTTP and WebSocket create transports preserve both `start_agent` and
+`plan_mode` in `CreateTaskRequest`. The service uses `start_agent` as the launch
+intent before session preparation or launch begins.
+
+Desktop and mobile use the same task-create payload builder and submission
+handler. The implementation does not change their layout, labels, touch
+targets, or navigation. Separate Playwright scenarios exercise the desktop
+split-menu action and the mobile plan-mode action.
 
 ## Session states
 
