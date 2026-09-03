@@ -40,7 +40,7 @@ Applied to schematics:
 
 - Every node represents a distinct idea. Two nodes that always travel together are one node.
 - Every connection carries information. If the relationship is obvious from layout, remove the line.
-- Coral is **editorial, not a flag.** 1–2 focal nodes per diagram. Using it on 5 nodes erases the signal.
+- Focal accent is **editorial, not a flag.** 1–2 focal nodes per diagram. Using it on 5 nodes erases the signal.
 - The schematic isn't done when everything is added. It's done when nothing can be removed.
 
 **Target density: 4/10.** Enough to be technically complete. Not so dense it needs a guide. Above 9 nodes, it's probably two diagrams.
@@ -371,6 +371,7 @@ Run before producing any diagram.
 - [ ] `viewBox` expanded for the legend strip (~60px)?
 - [ ] Every font size, coord, width, height, gap divisible by 4?
 - [ ] From the installed skill directory, did `python3 scripts/self_check.py <file>` pass? (Accessible-SVG contract, single-file safety, motion basics; ships with the skill.)
+- [ ] When changing a shared validator or import parser, did `python3 scripts/test-diagram-tools.py` pass from the installed skill directory?
 - [ ] If animated, does the complete static/no-JS frame work, does reduced motion hide/disable playback, and is the controller copied verbatim from `assets/template-motion.html`? From the installed skill directory, also run `python3 scripts/verify-motion.py path/to/generated.html` and `python3 scripts/lint-skin.py path/to/generated.html`.
 
 **Typography:**
@@ -473,3 +474,13 @@ When the target is a page under `docs/public/**`, load
 [kandev-public-docs.md](references/kandev-public-docs.md). It defines the
 Kandev publication path: author and validate a self-contained HTML source,
 export the reviewed diagram, and publish the local image with accessible prose.
+
+The installed skill ships shared gates for accessibility and file safety
+(`self_check.py`), label-mask geometry (`verify-geometry.py`), motion
+(`verify-motion.py`), palette usage (`lint-skin.py`), and focused parser/
+validator regression tests (`test-diagram-tools.py`). Some historical chart
+references describe specialized verifiers or extended examples that are not
+part of this installed skill. Treat those as project-specific contracts: add a
+local verifier/test when the chart needs executable checks, or use the shipped
+shared gates. Never copy a historical command into a workflow unless its file
+exists in the resolved skill directory.

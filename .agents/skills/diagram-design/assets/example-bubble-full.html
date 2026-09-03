@@ -40,7 +40,7 @@
     <div class="diagram-container">
       <!-- X: 0-500ms p95 over 880px, x = 80 + 1.76·ms. Y: 0-4% error rate over
            380px, y = 420 - 95·pct. AREA encodes requests per second: r = 1.4·√v,
-           so area = π·1.96·v, exactly proportional. scripts/verify-bubble.py
+           so area = π·1.96·v, exactly proportional. A project-specific bubble verifier
            derives all three maps from the values each bubble declares and flags
            any bubble that disagrees with its peers. -->
       <svg viewBox="0 0 1000 500" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="bubble-full-title bubble-full-desc">
@@ -75,7 +75,7 @@
         <line x1="80" y1="420" x2="960" y2="420" stroke="rgba(45,49,66,0.25)" stroke-width="1"/>
 
         <!-- Tick labels are BOUND: data-tick names the axis, data-value the number
-             the tick claims to sit at. verify-bubble.py cross-checks each against
+             the tick claims to sit at. A project-specific bubble verifier cross-checks each against
              the scale the bubbles themselves describe, so the printed axis and
              the drawn positions cannot drift apart. -->
         <text data-tick="y" data-value="1" x="72" y="329" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="end">1</text>
@@ -131,7 +131,7 @@
 
         <!-- Labels: the focal bubble plus the two poles of the area story — the
              giant that is healthy and the sliver that is slow. Each label is
-             bound to its bubble by data-name, so verify-bubble.py can prove it
+             bound to its bubble by data-name, so a project-specific bubble verifier can prove it
              sits nearer its own bubble than anyone else's. -->
         <rect x="506" y="99" width="64" height="12" rx="2" fill="#f5f5f5"/>
         <text data-name="Payments" data-role="label" x="538" y="108" fill="#2d3142" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PAYMENTS</text>

@@ -29,6 +29,11 @@ MODES = {"none", "reveal", "step", "loop"}
 ACTIONS = {"play", "pause", "replay", "prev", "next"}
 ASCII_DECIMAL_RE = re.compile(r"^[0-9]+$")
 REFERENCE_ATTRS = {"src", "href", "xlink:href", "poster", "srcset", "action", "formaction"}
+CSS_IMPORT_RE = re.compile(r"@import\b", re.IGNORECASE)
+CSS_URL_RE = re.compile(
+    r"""url\(\s*(?:(?P<single>'[^']*')|(?P<double>\"[^\"]*\")|(?P<bare>[^)]*))\s*\)""",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 class DiagramParser(HTMLParser):
@@ -197,6 +202,22 @@ def reference_error(tag: str, rel: str, value: str) -> str | None:
     return f"remote reference on <{tag}>: {stripped[:80]}"
 
 
+def css_reference_errors(styles: list[str]) -> list[str]:
+    """Reject CSS resource loading that would escape the single-file output."""
+    errors: list[str] = []
+    stylesheet = "".join(styles)
+    if CSS_IMPORT_RE.search(stylesheet):
+        errors.append("CSS @import is not allowed")
+    for match in CSS_URL_RE.finditer(stylesheet):
+        raw = match.group("single") or match.group("double") or match.group("bare") or ""
+        value = raw[1:-1] if raw[:1] in {"'", '\"'} else raw
+        value = value.strip()
+        if value and value.startswith("#"):
+            continue
+        errors.append(f"non-fragment CSS url() is not allowed: {value[:80]}")
+    return errors
+
+
 def canonical_controller() -> str:
     if not MOTION_TEMPLATE.is_file():
         raise RuntimeError(
@@ -355,6 +376,7 @@ def verify(path: Path) -> list[str]:
     parser = parsed_document(source)
     errors: list[str] = []
     errors.extend(parser.unsafe)
+    errors.extend(css_reference_errors(parser.styles))
     for tag, rel, value in parser.references:
         finding = reference_error(tag, rel, value)
         if finding:

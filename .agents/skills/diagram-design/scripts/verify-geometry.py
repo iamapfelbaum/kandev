@@ -39,14 +39,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ASSET_DIR = ROOT / "assets"
 
-RECT_RE = re.compile(
-    r"<rect\b[^>]*?"
-    r'\bx="(?P<x>-?[\d.]+)"\s+'
-    r'y="(?P<y>-?[\d.]+)"\s+'
-    r'width="(?P<w>[\d.]+)"\s+'
-    r'height="(?P<h>[\d.]+)"',
-    re.IGNORECASE,
+RECT_TAG_RE = re.compile(r"<rect\b[^>]*>", re.IGNORECASE | re.DOTALL)
+ATTRIBUTE_RE = re.compile(
+    r"""(?P<name>[A-Za-z_:][\w:.-]*)\s*=\s*(?:(?P<single>'[^']*')|(?P<double>\"[^\"]*\")|(?P<bare>[^\s\"'=<>`]+))""",
+    re.DOTALL,
 )
+NUMBER_RE = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)")
 
 NODE_MIN_W = 60.0
 NODE_MIN_H = 40.0
@@ -78,13 +76,25 @@ class Rect:
 
 def parse_rects(source: str) -> list[Rect]:
     rects: list[Rect] = []
-    for match in RECT_RE.finditer(source):
+    for match in RECT_TAG_RE.finditer(source):
+        attributes: dict[str, str] = {}
+        for attribute in ATTRIBUTE_RE.finditer(match.group(0)):
+            raw = (
+                attribute.group("single")
+                or attribute.group("double")
+                or attribute.group("bare")
+                or ""
+            )
+            attributes[attribute.group("name").casefold()] = raw[1:-1] if raw[:1] in {"'", '\"'} else raw
+        values = [attributes.get(name, "").strip() for name in ("x", "y", "width", "height")]
+        if not all(NUMBER_RE.fullmatch(value or "") for value in values):
+            continue
         rects.append(
             Rect(
-                float(match.group("x")),
-                float(match.group("y")),
-                float(match.group("w")),
-                float(match.group("h")),
+                float(values[0]),
+                float(values[1]),
+                float(values[2]),
+                float(values[3]),
                 source.count("\n", 0, match.start()) + 1,
                 match.start(),
             )

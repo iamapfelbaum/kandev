@@ -32,7 +32,7 @@
          The vertical (swarm) axis carries NO meaning: each dot's y offset is
          greedy packing at pitch 10 (2r+2) around the y=230 midline, first
          free slot alternating above/below, and overlap is never resolved by
-         moving a dot along the value axis. scripts/verify-beeswarm.py derives
+         moving a dot along the value axis. A project-specific beeswarm verifier derives
          the value scale from the dots themselves and flags any dot that
          disagrees with its peers, any overlapping pair, and any second dot
          radius or non-focal fill. -->
@@ -63,7 +63,7 @@
       <line x1="80" y1="420" x2="960" y2="420" stroke="rgba(45,49,66,0.25)" stroke-width="1"/>
 
       <!-- Tick labels are BOUND: data-tick names the (one) value axis and
-           data-value the number the tick claims to sit at. verify-beeswarm.py
+           data-value the number the tick claims to sit at. A project-specific beeswarm verifier
            cross-checks each against the scale the dots themselves describe. -->
       <text data-tick="x" data-value="0" x="80" y="440" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">0</text>
       <text data-tick="x" data-value="100" x="280" y="440" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">100</text>
@@ -357,7 +357,7 @@
 
       <!-- Labels: the p99 tail only, one tier per label, alternating sides,
            each bound to its dot by data-name and tied to it by a hairline
-           leader. verify-beeswarm.py proves each label sits nearer its own
+           leader. A project-specific beeswarm verifier proves each label sits nearer its own
            dot than any other named dot along the value axis. -->
       <line x1="856" y1="222" x2="856" y2="158" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
       <rect x="826" y="141" width="60" height="12" rx="2" fill="#f5f5f5"/>

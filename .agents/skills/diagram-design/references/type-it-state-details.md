@@ -39,8 +39,7 @@ Before emitting SVG, verify **every** item:
 - `assets/example-it-state.html` — minimal light (NatStat canonical: 3 zones, 9 components, 8 connectors, 0 footer bars, SQL Server tinted olive). Gallery default.
 - `assets/example-it-state-dark.html` — same, dark skin.
 - `assets/example-it-state-full.html` — same, editorial-card frame with summary cards.
-- `assets/example-it-state-extended.html` — exercises §4 color override + footer bars: 2 footer bars (Identity Manager + Observability) below the zones, third custom color on Analyst Machines (slate-blue, data-quality concern).
-- `assets/example-it-state-extended-dark.html` — extended pattern, dark skin.
+- Extended color-override and footer-bar variants are not bundled with this installed skill; use the canonical examples above as the starting point for a project-specific variant.
 
 ---
 
