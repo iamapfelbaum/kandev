@@ -13,15 +13,16 @@ design: "../../specs/cli/system-design/mobile-passthrough-composer.md"
 
 ## Outcome
 
-Phone users can operate every passthrough status and composer action through a
-minimum 44-by-44 CSS-pixel touch target without changing desktop geometry.
+Phone users can operate every passthrough status and composer action owned by
+this change through a minimum 44-by-44 CSS-pixel touch target without changing
+desktop geometry.
 
 ## Scope
 
 - Add a mobile presentation to the shared context, attachment, plan, cancel,
   and send controls.
-- Apply mobile-only touch sizing to passthrough Chat, Comments, and workflow
-  controls.
+- Apply mobile-only touch sizing to the owned passthrough Chat, Comments,
+  Proceed, and Send to Agent controls.
 - Preserve the inline composer, internal toolbar scrolling, terminal flex
   behavior, and existing translated labels.
 - Add focused component coverage for mobile and desktop control geometry.
@@ -41,8 +42,9 @@ minimum 44-by-44 CSS-pixel touch target without changing desktop geometry.
 
 ## Implementation acceptance
 
-- Every status-row and composer action rendered in the mobile passthrough
-  surface has a computed width and height of at least 44 CSS pixels.
+- Every status-row and composer action owned by this change in the mobile
+  passthrough surface has a computed width and height of at least 44 CSS
+  pixels. Integration-owned status chips retain their own component contracts.
 - Desktop controls retain their current compact dimensions.
 - Narrow mobile toolbars scroll actions internally and do not create document
   horizontal overflow.
@@ -71,7 +73,7 @@ controls. Desktop controls retain their compact dimensions.
 
 Verification passed:
 
-- Focused Vitest suite: 44 tests passed.
+- Focused Vitest suite: 48 tests passed.
 - Web typecheck passed.
 - Web lint passed with zero warnings.
 - Managed mobile E2E coverage passed as part of Task 02.

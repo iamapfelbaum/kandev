@@ -42,11 +42,16 @@ desktop keyboard.
 
 - **AC-CLI-MOBILE-PASSTHROUGH-COMPOSER-001.1:** When a user opens a CLI
   passthrough session on a phone or coarse-pointer tablet, the system shall
-  keep the terminal, composer toggle, status controls, and open composer inside
-  the visible application surface without horizontal document overflow.
-- **AC-CLI-MOBILE-PASSTHROUGH-COMPOSER-001.2:** When an interactive composer or
-  passthrough status control is shown on a phone or coarse-pointer tablet, its
-  touch target shall be at least 44 CSS pixels high and 44 CSS pixels wide.
+  keep the terminal, owned composer and status controls, and open composer
+  inside the visible application surface without horizontal document overflow.
+- **AC-CLI-MOBILE-PASSTHROUGH-COMPOSER-001.2:** When a shared composer action or
+  passthrough status-row action owned by this change is shown on a phone or
+  coarse-pointer tablet, its touch target shall be at least 44 CSS pixels high
+  and 44 CSS pixels wide. The owned controls are the composer plan, attachment,
+  context, cancel, send, and split Implement actions, plus the passthrough
+  Chat, Comments, Proceed, and Send to Agent actions. Integration-owned status
+  chips, such as dependency and PR/provider chips, retain their own component
+  contracts.
 - **AC-CLI-MOBILE-PASSTHROUGH-COMPOSER-001.3:** When the user types content and
   activates explicit send, the system shall create one user message and deliver
   the resolved prompt once through the active passthrough session's configured

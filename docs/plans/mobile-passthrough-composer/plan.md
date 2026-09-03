@@ -17,10 +17,11 @@ input as separate contracts.
 ## Implementation
 
 - Add an explicit mobile touch presentation for shared composer controls so
-  context, attachment, plan, cancel, and send targets are at least 44-by-44 CSS
-  pixels. Retain current desktop geometry.
-- Apply the same mobile-only touch geometry to passthrough Chat, Comments, and
-  workflow controls in the status row.
+  context, attachment, plan, cancel, send, and split Implement targets are at
+  least 44-by-44 CSS pixels. Retain current desktop geometry.
+- Apply the same mobile-only touch geometry to the owned passthrough Chat,
+  Comments, Proceed, and Send to Agent controls in the status row. Integration
+  status chips remain governed by their own component contracts.
 - Keep the composer inline and preserve the existing `100dvh`, safe-area,
   visual-viewport overlay, and single flexible terminal layout.
 - Add focused tests for touch geometry and mobile passthrough flows. Do not add

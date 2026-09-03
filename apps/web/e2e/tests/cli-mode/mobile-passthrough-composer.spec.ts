@@ -289,7 +289,10 @@ test.describe("mobile CLI mode: passthrough composer", () => {
 
     await testPage.getByTestId("passthrough-toggle-composer").tap();
     const composer = passthroughComposer(testPage);
-    await composer.locator('input[type="file"]').setInputFiles(attachmentPath);
+    const fileChooserPromise = testPage.waitForEvent("filechooser");
+    await composer.getByTestId("chat-attachments-button").tap();
+    const fileChooser = await fileChooserPromise;
+    await fileChooser.setFiles(attachmentPath);
     await expect(composer.getByText(attachmentName, { exact: true })).toBeVisible({
       timeout: 10_000,
     });
@@ -351,7 +354,10 @@ test.describe("mobile CLI mode: passthrough composer", () => {
     const attachmentName = "mobile-passthrough-draft.txt";
     const attachmentPath = path.join(testInfo.outputDir, attachmentName);
     fs.writeFileSync(attachmentPath, "mobile passthrough draft attachment body");
-    await firstComposer.locator('input[type="file"]').setInputFiles(attachmentPath);
+    const fileChooserPromise = testPage.waitForEvent("filechooser");
+    await firstComposer.getByTestId("chat-attachments-button").tap();
+    const fileChooser = await fileChooserPromise;
+    await fileChooser.setFiles(attachmentPath);
     await expect(firstComposer.getByText(attachmentName, { exact: true })).toBeVisible({
       timeout: 10_000,
     });
@@ -363,8 +369,12 @@ test.describe("mobile CLI mode: passthrough composer", () => {
     await secondSession.waitForPassthroughLoad(20_000);
     await secondSession.waitForPassthroughLoaded(20_000);
     await secondSession.expectPassthroughHasText("Processed:", 20_000);
-    await expect(testPage.getByTestId("passthrough-composer")).toHaveCount(0);
-    await expect(testPage.getByText(attachmentName, { exact: true })).toHaveCount(0);
+    await testPage.getByTestId("passthrough-toggle-composer").tap();
+    const secondComposer = passthroughComposer(testPage);
+    await expect(secondComposer).toBeVisible();
+    await expect(secondComposer.locator(".tiptap.ProseMirror")).toHaveText("");
+    await expect(secondComposer.getByText(promptName, { exact: true })).toHaveCount(0);
+    await expect(secondComposer.getByText(attachmentName, { exact: true })).toHaveCount(0);
 
     await testPage.goto(`/t/${first.task.id}`);
     const restoredSession = new SessionPage(testPage);

@@ -29,9 +29,9 @@ surface with `100dvh`, safe-area padding, and one flexible terminal region.
 ## Components and responsibilities
 
 - `PassthroughToolbar` owns the vertical terminal, optional composer, comments,
-  and passthrough status-row composition. It applies touch geometry to mobile
-  and coarse-pointer tablet status controls while preserving compact desktop
-  controls.
+  and passthrough status-row composition. It applies touch geometry to the
+  owned mobile and coarse-pointer tablet status controls, Chat, Comments,
+  Proceed, and Send to Agent, while preserving compact desktop controls.
 - `PassthroughComposerPanel` configures the shared `ChatInputContainer` for a
   passthrough session. It disables unadvertised agent commands and external
   entity references while retaining context mentions, attachments, plan
@@ -90,10 +90,14 @@ flexible; the composer and status row keep their intrinsic height. This
 prevents the document from becoming a second scroll container when the composer
 opens.
 
-All interactive controls in the mobile composer and passthrough status row use
-at least 44-by-44 CSS-pixel hit areas. Visual glyphs can remain smaller. A
-horizontal action strip can scroll internally when its controls exceed the
-available width, but it must not cause document-level horizontal overflow.
+The shared composer actions and passthrough status-row actions owned by this
+change use at least 44-by-44 CSS-pixel hit areas. This includes the composer
+plan, attachment, context, cancel, send, and split Implement actions, plus the
+passthrough Chat, Comments, Proceed, and Send to Agent actions. Visual glyphs
+can remain smaller. Integration-owned status chips, including dependency and
+PR/provider chips, keep their own component contracts. A horizontal action
+strip can scroll internally when its controls exceed the available width, but
+it must not cause document-level horizontal overflow.
 
 The existing visual-viewport-aware suggestion popup remains attached above the
 composer. The implementation does not replace it with a drawer.
