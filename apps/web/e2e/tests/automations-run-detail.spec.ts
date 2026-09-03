@@ -211,7 +211,9 @@ test.describe("Automation run composer", () => {
     const replyTurnId = updatedTurns.turns.find((turn) => turn.id !== initialTurnId)?.id;
     expect(replyTurnId).toBeTruthy();
     await expect(transcript).toContainText(reply, { timeout: 15_000 });
-    await expect(transcript.locator(`[data-turn-id="${replyTurnId}"]`)).toBeVisible();
+    await expect(
+      transcript.locator(`[data-turn-id="${replyTurnId}"]`).filter({ hasText: reply }),
+    ).toBeVisible();
   });
 
   test("sits on the run page's own background, not the task workbench's card", async ({
