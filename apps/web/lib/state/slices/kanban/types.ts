@@ -124,6 +124,9 @@ export type KanbanState = {
     primaryExecutorProfileId?: string | null;
     primaryExecutorType?: string | null;
     primaryExecutorName?: string | null;
+    primaryAgentProfileId?: string | null;
+    primaryAgentName?: string | null;
+    labels?: string[];
     isRemoteExecutor?: boolean;
     parentTaskId?: string | null;
     workspaceMode?: "inherit_parent" | "new_workspace" | "shared_group";
