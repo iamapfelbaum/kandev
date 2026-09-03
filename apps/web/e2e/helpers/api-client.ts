@@ -9,6 +9,7 @@ import type {
   MCPTaskAgentProfileDefault,
   RepositoryBranchPolicy,
   AgentProfileRecentUseApiRecord,
+  SidebarTaskColorPatchApi,
 } from "../../lib/types/http";
 import type { Agent, AgentProfile } from "../../lib/types/http-agents";
 import type { SidebarTaskColorAutomation } from "../../lib/task-color-automation-settings";
@@ -1176,6 +1177,7 @@ export class ApiClient {
     kanban_hidden_step_ids?: Record<string, string[]>;
     workflow_ids_with_auto_hide_empty_steps?: string[];
     sidebar_task_color_automation?: SidebarTaskColorAutomation;
+    sidebar_task_color_patch?: SidebarTaskColorPatchApi;
   }): Promise<void> {
     await this.request("PATCH", "/api/v1/user/settings", settings);
   }

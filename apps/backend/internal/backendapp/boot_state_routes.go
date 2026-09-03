@@ -654,6 +654,7 @@ func mapUserSettingsState(response userdto.UserSettingsResponse, workspaceID str
 		"sidebarDraft":                      mapSidebarDraft(settings.SidebarDraft),
 		"sidebarTaskPrefs":                  mapSidebarTaskPrefs(settings.SidebarTaskPrefs),
 		"sidebarTaskColorAutomation":        settings.SidebarTaskColorAutomation,
+		"sidebarTaskColors":                 settings.SidebarTaskColors,
 		"taskCreateLastUsed":                mapTaskCreateLastUsed(settings.TaskCreateLastUsed),
 		"defaultUtilityAgentId":             nullString(settings.DefaultUtilityAgentID),
 		"keyboardShortcuts":                 mapStringAny(settings.KeyboardShortcuts),

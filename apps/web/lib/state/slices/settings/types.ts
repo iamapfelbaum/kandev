@@ -28,6 +28,7 @@ import type {
   AgentProfileRecentUseState,
 } from "@/lib/agent-profile-recent-use";
 import type { AgentProfileRecentUseContext } from "@/lib/types/http-agent-profile-recent-use";
+import type { TaskColor } from "@/lib/task-colors";
 
 export type {
   AgentProfileRecentUseRecord,
@@ -432,6 +433,7 @@ export type UserSettingsState = {
   sidebarDraft: SidebarViewDraft | null;
   sidebarTaskPrefs: SidebarTaskPrefsState;
   sidebarTaskColorAutomation: SidebarTaskColorAutomation;
+  sidebarTaskColors: Record<string, TaskColor | null>;
   taskCreateLastUsed: TaskCreateLastUsedState;
   jiraSavedViews: unknown;
   jiraTaskPresets: unknown;

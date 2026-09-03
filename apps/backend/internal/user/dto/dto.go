@@ -53,6 +53,7 @@ type UserSettingsDTO struct {
 	SidebarDraft                      *models.SidebarViewDraft            `json:"sidebar_draft"`
 	SidebarTaskPrefs                  models.SidebarTaskPrefs             `json:"sidebar_task_prefs"`
 	SidebarTaskColorAutomation        models.SidebarTaskColorAutomation   `json:"sidebar_task_color_automation"`
+	SidebarTaskColors                 map[string]*string                  `json:"sidebar_task_colors"`
 	TaskCreateLastUsed                models.TaskCreateLastUsed           `json:"task_create_last_used"`
 	JiraSavedViews                    json.RawMessage                     `json:"jira_saved_views,omitempty"`
 	JiraTaskPresets                   json.RawMessage                     `json:"jira_task_presets,omitempty"`
@@ -157,6 +158,7 @@ type UpdateUserSettingsRequest struct {
 	SidebarDraft                      NullableSidebarDraft               `json:"sidebar_draft,omitempty"`
 	SidebarTaskPrefs                  *models.SidebarTaskPrefs           `json:"sidebar_task_prefs,omitempty"`
 	SidebarTaskColorAutomation        *models.SidebarTaskColorAutomation `json:"sidebar_task_color_automation,omitempty"`
+	SidebarTaskColorPatch             *models.SidebarTaskColorPatch      `json:"sidebar_task_color_patch,omitempty"`
 	TaskCreateLastUsed                *models.TaskCreateLastUsed         `json:"task_create_last_used,omitempty"`
 	JiraSavedViews                    NullableRawMessage                 `json:"jira_saved_views,omitempty"`
 	JiraTaskPresets                   NullableRawMessage                 `json:"jira_task_presets,omitempty"`
@@ -314,6 +316,7 @@ func FromUserSettings(settings *models.UserSettings) UserSettingsDTO {
 		SidebarDraft:                      settings.SidebarDraft,
 		SidebarTaskPrefs:                  settings.SidebarTaskPrefs,
 		SidebarTaskColorAutomation:        automaticColors,
+		SidebarTaskColors:                 models.CloneSidebarTaskColors(settings.SidebarTaskColors),
 		TaskCreateLastUsed:                settings.TaskCreateLastUsed,
 		JiraSavedViews:                    settings.JiraSavedViews,
 		JiraTaskPresets:                   settings.JiraTaskPresets,
