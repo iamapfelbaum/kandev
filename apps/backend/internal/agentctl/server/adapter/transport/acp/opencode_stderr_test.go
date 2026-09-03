@@ -151,6 +151,18 @@ func TestParseOpenCodeStderrLineWeeklyLimitResetInDays(t *testing.T) {
 	if diagnostic.ProviderError.ResetAt == nil || !diagnostic.ProviderError.ResetAt.Equal(wantReset) {
 		t.Fatalf("reset at = %v, want %s", diagnostic.ProviderError.ResetAt, wantReset)
 	}
+
+	t.Run("mixed units", func(t *testing.T) {
+		line := `timestamp=2026-09-03T07:19:45.000Z level=ERROR run=4120ce87 message="stream error" providerID=opencode-go modelID=deepseek-v4-flash session.id=ses_f99491a97ffeeWlCMErV9o00vr small=false agent=build mode=primary error.error="AI_APICallError: Weekly usage limit reached. Resets in 3 days 4 hours 19 min."`
+		diagnostic, ok := parseOpenCodeStderrLine(line)
+		if !ok {
+			t.Fatal("parseOpenCodeStderrLine() rejected a mixed-unit weekly usage-limit stream error")
+		}
+		wantReset := wantOccurred.Add(3*24*time.Hour + 4*time.Hour + 19*time.Minute)
+		if diagnostic.ProviderError.ResetAt == nil || !diagnostic.ProviderError.ResetAt.Equal(wantReset) {
+			t.Fatalf("reset at = %v, want %s", diagnostic.ProviderError.ResetAt, wantReset)
+		}
+	})
 }
 
 func TestParseOpenCodeStderrLineAcceptsForegroundStreamError(t *testing.T) {

@@ -399,7 +399,8 @@ func classifyKanbanFailure(data watcher.AgentEventData) *routingerr.Error {
 		// model-provider ID instead ("opencode-go"), which has no rules; keeping
 		// the agent ID there lets the OpenCode usage-limit rule classify the
 		// failure so dynamic routing can advance to the next candidate.
-		if id := providerError.ProviderID; id != "" && routingerr.HasProviderRules(id) {
+		if id := providerError.ProviderID; id != "" &&
+			!routingerr.HasProviderRules(providerID) && routingerr.HasProviderRules(id) {
 			providerID = id
 		}
 		if providerError.Message != "" {

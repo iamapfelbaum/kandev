@@ -30,3 +30,24 @@ func TestClassifyKanbanFailure_OpenCodeModelProviderIDKeepsAgentRules(t *testing
 		t.Fatalf("quota_limited must allow dynamic fallback: %+v", classified)
 	}
 }
+
+func TestClassifyKanbanFailure_OpenCodeModelProviderCollisionKeepsAgentRules(t *testing.T) {
+	classified := classifyKanbanFailure(watcher.AgentEventData{
+		AgentID:      "opencode-acp",
+		ErrorMessage: "AI_APICallError: Weekly usage limit reached. Resets in 3 days.",
+		ProviderError: &streams.ProviderError{
+			Source:     streams.ProviderErrorSourceOpenCodeStderr,
+			ProviderID: "claude-acp",
+			Message:    "AI_APICallError: Weekly usage limit reached. Resets in 3 days.",
+		},
+	})
+	if classified == nil {
+		t.Fatal("classification = nil, want high-confidence quota_limited")
+	}
+	if classified.Code != routingerr.CodeQuotaLimited || classified.Confidence != routingerr.ConfHigh {
+		t.Fatalf("classification = %+v, want high-confidence quota_limited", classified)
+	}
+	if !classified.FallbackAllowed {
+		t.Fatalf("quota_limited must allow dynamic fallback: %+v", classified)
+	}
+}
