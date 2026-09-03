@@ -4984,7 +4984,7 @@ func (s *Service) processOnTurnCompleteViaEngineWithCause(
 	if cause == turnCompletionCauseUserCancellation {
 		ctx = cancellationTransitionAttribution(ctx)
 	}
-	return s.applyEngineTransition(ctx, taskID, session, result, engine.TriggerOnTurnComplete, task.Description, true)
+	return s.applyEngineTransitionWithMode(ctx, taskID, session, result, engine.TriggerOnTurnComplete, task.Description, transitionLifecycleWithOnEnter)
 }
 
 // acquireTurnCompletionCriticalSection serializes on_turn_complete
@@ -5171,10 +5171,32 @@ func (s *Service) allowEngineSignalCompletion(
 	return true
 }
 
+// transitionLifecycleMode identifies the caller-owned part of a transition.
+// Guarded decisions use a session-independent mode because the session passed
+// by the engine is the decider's session, not the assignee's destination
+// session. Keeping this distinction explicit prevents the on_turn_start
+// lifecycle from being reused for quorum transitions by accident.
+type transitionLifecycleMode uint8
+
+const (
+	transitionLifecycleWithOnEnter transitionLifecycleMode = iota
+	transitionLifecycleOnTurnStart
+	transitionLifecycleGuardedDecision
+)
+
 // applyGuardedTransitionLifecycle is the service-owned lifecycle bridge for
 // quorum re-evaluation. The engine still selects the target and owns the CAS,
-// but credential checks, on_exit, history, signal cleanup, terminal handling,
-// session/profile state, and on_enter stay in the orchestrator path.
+// but transition history and task-level terminal handling stay in the
+// orchestrator path. The decider session is not changed.
+//
+// Session-shaped on_enter work is deliberately NOT triggered here:
+// sessionID is the decider's session (reviewer/approver), not the task's
+// assignee, so dispatching on_enter would hand auto_start_agent's session
+// continuation that same decider session. Office's reactivity
+// (office/dashboard.runReactivityForDecision) is what wakes the assignee.
+// Engine-owned on_enter actions (clear_decisions, ensure_participant_seat,
+// queue_run_for_each_participant) are unaffected — they run unconditionally
+// via the CAS commit's dispatchStepEntry call below.
 func (s *Service) applyGuardedTransitionLifecycle(
 	ctx context.Context, taskID, sessionID, fromStepID, toStepID string, trigger engine.Trigger,
 ) (bool, error) {
@@ -5192,14 +5214,14 @@ func (s *Service) applyGuardedTransitionLifecycle(
 
 	casAttempted := false
 	casApplied := false
-	lifecycleApplied := s.applyEngineTransitionWithCommit(
+	lifecycleApplied := s.applyEngineTransitionWithCommitMode(
 		ctx,
 		taskID,
 		session,
 		engine.HandleResult{Transitioned: true, FromStepID: fromStepID, ToStepID: toStepID},
 		trigger,
 		task.Description,
-		true,
+		transitionLifecycleGuardedDecision,
 		func(commitCtx context.Context) (bool, error) {
 			casAttempted = true
 			transitionCtx := commitCtx
@@ -5217,7 +5239,7 @@ func (s *Service) applyGuardedTransitionLifecycle(
 			}
 			casApplied = true
 			// The raw CAS commit intentionally has no side effects. The shared
-			// lifecycle helper performs session state and on_enter work below.
+			// lifecycle helper performs the remaining task-level work below.
 			s.publishTaskUpdated(ctx, committedTask, oldWorkflowID)
 			s.workflowStore.pullNextTaskOnVacate(ctx, fromStepID, taskID)
 			return true, nil
@@ -5233,14 +5255,45 @@ func (s *Service) applyGuardedTransitionLifecycle(
 	return false, errors.New("guarded transition lifecycle did not apply")
 }
 
-// applyEngineTransition applies an engine-evaluated transition: on_exit, DB transition,
-// data patches, and optionally on_enter processing. Returns true if the transition was applied.
+// applyEngineTransition is the legacy wrapper for session-originated
+// transitions. Guarded decisions must use applyEngineTransitionWithMode so
+// they cannot be mistaken for an on_turn_start transition.
 func (s *Service) applyEngineTransition(
 	ctx context.Context, taskID string, session *models.TaskSession,
 	result engine.HandleResult, trigger engine.Trigger, taskDescription string,
 	triggerOnEnter bool,
 ) bool {
-	return s.applyEngineTransitionWithCommit(ctx, taskID, session, result, trigger, taskDescription, triggerOnEnter,
+	mode := transitionLifecycleOnTurnStart
+	if triggerOnEnter {
+		mode = transitionLifecycleWithOnEnter
+	}
+	return s.applyEngineTransitionWithMode(ctx, taskID, session, result, trigger, taskDescription, mode)
+}
+
+// applyEngineTransitionWithCommit preserves the legacy helper contract for
+// session-originated transitions. Guarded decisions use the explicit mode
+// variant so they cannot be mistaken for on_turn_start.
+func (s *Service) applyEngineTransitionWithCommit(
+	ctx context.Context, taskID string, session *models.TaskSession,
+	result engine.HandleResult, trigger engine.Trigger, taskDescription string,
+	triggerOnEnter bool, commit func(context.Context) (bool, error),
+) bool {
+	mode := transitionLifecycleOnTurnStart
+	if triggerOnEnter {
+		mode = transitionLifecycleWithOnEnter
+	}
+	return s.applyEngineTransitionWithCommitMode(ctx, taskID, session, result, trigger, taskDescription, mode, commit)
+}
+
+// applyEngineTransitionWithMode applies an engine-evaluated transition with
+// an explicit lifecycle mode: on_exit, DB transition, data patches, and
+// optional on_enter processing. Returns true if the transition was applied.
+func (s *Service) applyEngineTransitionWithMode(
+	ctx context.Context, taskID string, session *models.TaskSession,
+	result engine.HandleResult, trigger engine.Trigger, taskDescription string,
+	mode transitionLifecycleMode,
+) bool {
+	return s.applyEngineTransitionWithCommitMode(ctx, taskID, session, result, trigger, taskDescription, mode,
 		func(commitCtx context.Context) (bool, error) {
 			if err := s.workflowStore.ApplyTransition(commitCtx, taskID, session.ID, result.FromStepID, result.ToStepID, trigger); err != nil {
 				return false, err
@@ -5249,50 +5302,40 @@ func (s *Service) applyEngineTransition(
 		})
 }
 
-// applyEngineTransitionWithCommit applies the shared lifecycle around a
+// applyEngineTransitionWithCommitMode applies the shared lifecycle around a
 // transition commit. The default path commits through ApplyTransition. The
 // quorum decision path supplies a CAS commit so lifecycle hooks cannot be
 // bypassed by the engine's guarded-transition re-evaluation.
 //
-//nolint:cyclop,funlen // this coordinates independent transition lifecycle stages.
-func (s *Service) applyEngineTransitionWithCommit(
+//nolint:cyclop,gocognit,funlen // this coordinates independent transition lifecycle stages.
+func (s *Service) applyEngineTransitionWithCommitMode(
 	ctx context.Context, taskID string, session *models.TaskSession,
 	result engine.HandleResult, trigger engine.Trigger, taskDescription string,
-	triggerOnEnter bool, commit func(context.Context) (bool, error),
+	mode transitionLifecycleMode, commit func(context.Context) (bool, error),
 ) bool {
 	ctx = withWorkflowMetaCache(ctx)
+	sessionLifecycle := mode != transitionLifecycleGuardedDecision
 	// Validate the target step exists BEFORE persisting the transition.
 	// This prevents the task from being moved to an invalid step_id
 	// (e.g., a template-level alias like "review" that doesn't resolve to a real UUID).
-	var targetStep *wfmodels.WorkflowStep
-	if triggerOnEnter {
-		var err error
-		targetStep, err = s.workflowStepGetter.GetStep(ctx, result.ToStepID)
-		if err != nil {
-			s.logger.Warn("target step not found, skipping transition",
-				zap.String("step_id", result.ToStepID),
-				zap.Error(err))
-			s.setSessionWaitingForInput(ctx, taskID, session.ID, session)
-			return false
-		}
-	} else {
-		// Even without on_enter, load the target step — needed for profile switch check.
-		var err error
-		targetStep, err = s.workflowStepGetter.GetStep(ctx, result.ToStepID)
-		if err != nil {
-			s.logger.Warn("target step not found, skipping transition",
-				zap.String("step_id", result.ToStepID),
-				zap.Error(err))
-			s.setSessionWaitingForInput(ctx, taskID, session.ID, session)
-			return false
-		}
-	}
-	if err := s.preflightWorkflowStepCredentials(ctx, taskID, session, targetStep); err != nil {
-		s.logger.Warn("target profile credential preflight failed, skipping transition",
-			zap.String("task_id", taskID),
+	targetStep, err := s.workflowStepGetter.GetStep(ctx, result.ToStepID)
+	if err != nil {
+		s.logger.Warn("target step not found, skipping transition",
 			zap.String("step_id", result.ToStepID),
 			zap.Error(err))
+		if sessionLifecycle {
+			s.setSessionWaitingForInput(ctx, taskID, session.ID, session)
+		}
 		return false
+	}
+	if sessionLifecycle {
+		if err := s.preflightWorkflowStepCredentials(ctx, taskID, session, targetStep); err != nil {
+			s.logger.Warn("target profile credential preflight failed, skipping transition",
+				zap.String("task_id", taskID),
+				zap.String("step_id", result.ToStepID),
+				zap.Error(err))
+			return false
+		}
 	}
 
 	terminalTarget := s.workflowStepIsTerminal(ctx, targetStep.ID)
@@ -5302,19 +5345,22 @@ func (s *Service) applyEngineTransitionWithCommit(
 		s.logger.Warn("failed to load from-step for on_exit",
 			zap.String("step_id", result.FromStepID),
 			zap.Error(err))
-		s.setSessionWaitingForInput(ctx, taskID, session.ID, session)
+		if sessionLifecycle {
+			s.setSessionWaitingForInput(ctx, taskID, session.ID, session)
+		}
 		return false
 	}
-	s.processOnExit(ctx, taskID, session, fromStep)
+	if sessionLifecycle {
+		s.processOnExit(ctx, taskID, session, fromStep)
+	}
 
 	// A ResultHolder is only attached when this transition will actually
 	// trigger on_enter (triggerOnEnter) — an on_turn_start transition never
-	// reaches launchProcessOnEnter below, so allocating a step-entry it will
-	// never dispatch would be a needless write. See applyTransition's
-	// matching gate in workflow_store.go.
+	// reaches launchProcessOnEnter below, and a guarded decision is dispatched
+	// through the repository's session-independent step-entry path.
 	var stepEntry *stepentry.AllocationResult
 	applyCtx := ctx
-	if triggerOnEnter {
+	if mode == transitionLifecycleWithOnEnter {
 		stepEntry = &stepentry.AllocationResult{}
 		applyCtx = stepentry.WithResultHolder(applyCtx, stepEntry)
 	}
@@ -5324,7 +5370,9 @@ func (s *Service) applyEngineTransitionWithCommit(
 			zap.String("task_id", taskID),
 			zap.String("session_id", session.ID),
 			zap.Error(err))
-		s.setSessionWaitingForInput(ctx, taskID, session.ID, session)
+		if sessionLifecycle {
+			s.setSessionWaitingForInput(ctx, taskID, session.ID, session)
+		}
 		return false
 	}
 	if !applied {
@@ -5332,11 +5380,10 @@ func (s *Service) applyEngineTransitionWithCommit(
 	}
 
 	// ADR 0015 — record the audit row before the pending signal (if any) is
-	// cleared. Only an on_turn_complete transition can have consumed a
-	// signal; on_turn_start and on_children_completed transitions record
-	// with no signal metadata.
+	// cleared. Only an on_turn_complete transition can have consumed a signal;
+	// guarded decision transitions do not mutate the decider's signal bag.
 	var consumedSignal *models.PendingStepCompletionSignal
-	if trigger == engine.TriggerOnTurnComplete {
+	if sessionLifecycle && trigger == engine.TriggerOnTurnComplete {
 		if signal, has := models.LoadPendingStepSignal(session.Metadata); has && signal.StepID == result.FromStepID {
 			consumedSignal = &signal
 		}
@@ -5352,12 +5399,13 @@ func (s *Service) applyEngineTransitionWithCommit(
 
 	// ADR 0015 — a successful on_turn_complete transition consumes any
 	// pending step-completion signal for the source step. The bag must be
-	// cleared so the next step's gating starts from a clean slate.
-	if trigger == engine.TriggerOnTurnComplete {
+	// cleared so the next step's gating starts from a clean slate. A guarded
+	// decision must leave the decider session untouched.
+	if sessionLifecycle && trigger == engine.TriggerOnTurnComplete {
 		s.clearPendingStepSignal(ctx, session)
 	}
 
-	if len(result.DataPatch) > 0 {
+	if len(result.DataPatch) > 0 && sessionLifecycle {
 		if err := s.workflowStore.PersistData(ctx, session.ID, result.DataPatch); err != nil {
 			s.logger.Warn("failed to persist workflow data patch",
 				zap.String("session_id", session.ID),
@@ -5369,7 +5417,9 @@ func (s *Service) applyEngineTransitionWithCommit(
 	if queuedErr == nil && queuedTask != nil && queuedTask.QueuedForStepID == result.ToStepID && !queuedTask.WIPAdmitted {
 		// The source transition is committed, but destination state and
 		// on_enter behavior wait for the queue promotion event.
-		s.setSessionWaitingForInput(ctx, taskID, session.ID, session)
+		if sessionLifecycle {
+			s.setSessionWaitingForInput(ctx, taskID, session.ID, session)
+		}
 		return true
 	}
 
@@ -5377,10 +5427,14 @@ func (s *Service) applyEngineTransitionWithCommit(
 		s.markTaskCompletedForTerminalStep(ctx, taskID, targetStep.ID)
 	}
 
-	if !triggerOnEnter {
-		// on_turn_start transitions: user is about to send a message, no on_enter needed.
-		// However, we still need to switch the agent profile if the target step requires
-		// a different one — the user's prompt should go to the correct agent.
+	if mode == transitionLifecycleGuardedDecision {
+		return true
+	}
+	if mode == transitionLifecycleOnTurnStart {
+		// on_turn_start transitions: user is about to send a message, no
+		// on_enter needed. We still need to switch the agent profile if the
+		// target step requires a different one — the next prompt should go
+		// to the correct agent.
 		effectiveSession, ok := s.maybySwitchSessionForProfile(ctx, taskID, session, targetStep, fromStep)
 		if !ok {
 			return false
@@ -5505,5 +5559,5 @@ func (s *Service) processOnTurnStartViaEngine(ctx context.Context, taskID string
 		zap.String("to_step_id", result.ToStepID))
 
 	// on_turn_start does NOT trigger on_enter (user's message is the next prompt).
-	return s.applyEngineTransition(ctx, taskID, session, result, engine.TriggerOnTurnStart, "", false)
+	return s.applyEngineTransitionWithMode(ctx, taskID, session, result, engine.TriggerOnTurnStart, "", transitionLifecycleOnTurnStart)
 }
