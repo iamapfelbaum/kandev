@@ -72,8 +72,9 @@ teaches more than prose, a table, or bullets. If it does, use
 - Use `doc-inline`, `balanced`, and `mixed` for normal docs-column figures
   unless the page or source requires another output dial.
 - Author a self-contained HTML source, run the diagram self-check, geometry
-  check, and skin check, then export a reviewed local PNG. Store the published
-  image under `docs/screenshots/` and reference it relatively.
+  check, and skin check, then export a reviewed local SVG. Use PNG only when a
+  raster fallback is required. Store the published image under
+  `docs/screenshots/` and reference it relatively.
 - Give every image precise alt text and explain the diagram's essential result
   in nearby prose. Use real Kandev names from authoritative source material.
 - For an existing Mermaid diagram, use the skill's Mermaid import workflow

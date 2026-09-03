@@ -8,8 +8,9 @@ Use this reference when the diagram will support a page under
 The design artifact is a self-contained HTML file. Keep that source outside
 `docs/public/**`, for example in `docs/diagrams/`. Public docs
 currently publish local images and Mermaid blocks. For a branded diagram, run
-the HTML through the export procedure and publish a reviewed PNG under
+the HTML through the export procedure and publish a reviewed SVG under
 `docs/screenshots/`, then reference it with a relative Markdown image link.
+Use PNG only when a raster fallback is required by the publishing target.
 
 Keep the HTML source available during review so the diagram can be regenerated.
 Do not publish skill templates, mutable third-party images, browser captures, or
