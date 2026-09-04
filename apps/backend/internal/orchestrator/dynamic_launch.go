@@ -575,7 +575,52 @@ func (s *Service) launchDynamicSuccessorAfterFailure(
 			zap.String("session_id", session.ID), zap.Error(err))
 		return false
 	}
-	return s.relaunchDynamicTaskAfterFailure(ctx, data, next.ExecutionProfileID)
+	s.launchDynamicSuccessorDetached(ctx, data, next.ExecutionProfileID)
+	return true
+}
+
+// launchDynamicSuccessorDetached runs the predecessor stop and successor
+// launch outside the agent.failed dispatch that decided the route.
+//
+// The failure event is published synchronously by the lifecycle completion
+// handler while it still holds the execution's prompt lifecycle lock, and the
+// in-memory event bus delivers it on the publisher's goroutine. Stopping the
+// predecessor from that goroutine publishes agent.stopped for the same
+// execution, which needs the same lock to snapshot the prompt turn: the
+// dispatch deadlocks, the successor never starts, and the session stays
+// RUNNING without a process. Leaving the dispatch first lets the completion
+// handler release the lock before the stop runs.
+func (s *Service) launchDynamicSuccessorDetached(
+	ctx context.Context,
+	data watcher.AgentEventData,
+	executionProfileID string,
+) {
+	go s.runDetachedDynamicSuccessorLaunch(context.WithoutCancel(ctx), data, executionProfileID)
+}
+
+// runDetachedDynamicSuccessorLaunch serializes with the session's cancel guard
+// like every other session-backed failure decision, then launches the
+// successor. A launch that cannot complete falls back to the ordinary
+// recoverable-failure surface instead of leaving the session RUNNING.
+func (s *Service) runDetachedDynamicSuccessorLaunch(
+	ctx context.Context,
+	data watcher.AgentEventData,
+	executionProfileID string,
+) {
+	lock, release := s.acquireCancelInFlightGuard(data.SessionID)
+	defer release()
+	lock.Lock()
+	defer lock.Unlock()
+	if s.relaunchDynamicTaskAfterFailure(ctx, data, executionProfileID) {
+		return
+	}
+	s.logger.Warn("dynamic successor launch failed; surfacing recoverable failure",
+		zap.String("task_id", data.TaskID),
+		zap.String("session_id", data.SessionID),
+		zap.String("agent_execution_id", data.AgentExecutionID),
+		zap.String("execution_profile_id", executionProfileID))
+	s.retireExecutionActivityAndPublish(ctx, data.TaskID, data.SessionID, data.AgentExecutionID)
+	s.handleRecoverableFailureLocked(ctx, data)
 }
 
 // LaunchDynamicRouteAction completes a manual retry/try-next operation after
