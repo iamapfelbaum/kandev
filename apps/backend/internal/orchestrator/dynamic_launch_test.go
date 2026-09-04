@@ -307,6 +307,75 @@ func TestRunDetachedDynamicSuccessorLaunch_FinalizesAutomationRunOnFailure(t *te
 	}
 }
 
+// A service shutdown can cancel the detached worker while predecessor teardown
+// is in progress. The worker must not surface a second failure after shutdown,
+// because that would mutate the session after the service-owned cancellation.
+func TestRunDetachedDynamicSuccessorLaunch_DoesNotRecoverAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	const (
+		taskID      = "task-dynamic-detached-shutdown"
+		sessionID   = "session-dynamic-detached-shutdown"
+		executionID = "execution-dynamic-detached-shutdown"
+	)
+
+	repo := setupTestRepo(t)
+	seedTaskAndSession(t, repo, taskID, sessionID, models.TaskSessionStateRunning)
+	seedExecutorRunning(t, repo, sessionID, taskID, executionID)
+	taskRepo := newMockTaskRepo()
+	seedMockTaskState(taskRepo, taskID, v1.TaskStateInProgress)
+
+	stopEntered := make(chan struct{})
+	releaseStop := make(chan struct{})
+	stopErr := errors.New("runtime teardown failed")
+	var stopStartOnce sync.Once
+	agentManager := &mockAgentManager{
+		repoForExecutionLookup: repo,
+		stopAgentWithReasonFunc: func(_ context.Context, _ string, _ string, _ bool) error {
+			stopStartOnce.Do(func() { close(stopEntered) })
+			<-releaseStop
+			return stopErr
+		},
+	}
+	svc := createTestServiceWithScheduler(repo, newMockStepGetter(), taskRepo, agentManager)
+	svc.lastTurnPrompt.Store(sessionID, capturedPrompt{text: "retry the task"})
+
+	done := make(chan struct{})
+	go func() {
+		svc.runDetachedDynamicSuccessorLaunch(ctx, watcher.AgentEventData{
+			TaskID:           taskID,
+			SessionID:        sessionID,
+			AgentExecutionID: executionID,
+			ErrorMessage:     "provider quota exhausted",
+		}, "fallback-profile")
+		close(done)
+	}()
+
+	select {
+	case <-stopEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("predecessor stop did not start")
+	}
+	cancel()
+	close(releaseStop)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("detached launch did not finish after cancellation")
+	}
+
+	session, err := repo.GetTaskSession(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if session.State != models.TaskSessionStateRunning {
+		t.Fatalf("session state = %q, want RUNNING after shutdown cancellation", session.State)
+	}
+	if len(agentManager.startAgentProcessCalls) != 0 {
+		t.Fatalf("successor launch started %d processes after shutdown cancellation", len(agentManager.startAgentProcessCalls))
+	}
+}
+
 // context.WithoutCancel would let the worker keep mutating session state after
 // Stop began. The launch runs under a service-owned context instead, so a
 // stopped service schedules nothing and reports the route as not taken.

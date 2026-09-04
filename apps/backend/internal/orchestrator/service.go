@@ -2613,6 +2613,10 @@ func (s *Service) Stop() error {
 	s.mu.Unlock()
 
 	s.logger.Info("stopping orchestrator service")
+	// Stop detached dynamic successors before the scheduler and watcher. Their
+	// workers can otherwise observe the shutdown only after those components
+	// have already stopped, and may launch or recover a session during teardown.
+	s.stopDynamicSuccessorWorkers()
 	s.stopDynamicPolicyRecovery()
 
 	// Stop components in reverse order
@@ -2634,7 +2638,6 @@ func (s *Service) Stop() error {
 	s.cancelAllTransientRetries()
 	s.stopSendNowWorkers()
 	s.stopCIAutomationWorkers()
-	s.stopDynamicSuccessorWorkers()
 
 	if len(errs) > 0 {
 		return errs[0]

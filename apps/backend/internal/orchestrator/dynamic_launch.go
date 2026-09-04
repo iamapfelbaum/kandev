@@ -644,6 +644,14 @@ func (s *Service) runDetachedDynamicSuccessorLaunch(
 	defer release()
 	lock.Lock()
 	defer lock.Unlock()
+	if ctx.Err() != nil {
+		s.logger.Warn("dynamic successor launch abandoned before validation",
+			zap.String("task_id", data.TaskID),
+			zap.String("session_id", data.SessionID),
+			zap.String("execution_profile_id", executionProfileID),
+			zap.Error(ctx.Err()))
+		return
+	}
 	// A coordinator stop can win the guard between the route decision and this
 	// goroutine: it persists the session as cancelled and releases the guard
 	// before the launch acquires it. Relaunching from the stale event would
@@ -668,6 +676,14 @@ func (s *Service) runDetachedDynamicSuccessorLaunch(
 		return
 	}
 	if s.relaunchDynamicTaskAfterFailure(ctx, data, executionProfileID) {
+		return
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		s.logger.Warn("dynamic successor launch abandoned after cancellation",
+			zap.String("task_id", data.TaskID),
+			zap.String("session_id", data.SessionID),
+			zap.String("execution_profile_id", executionProfileID),
+			zap.Error(ctx.Err()))
 		return
 	}
 	s.logger.Warn("dynamic successor launch failed; surfacing recoverable failure",
